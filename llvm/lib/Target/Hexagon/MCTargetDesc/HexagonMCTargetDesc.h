@@ -16,6 +16,7 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/CommandLine.h"
 #include <cstdint>
+#include <string>
 
 #define Hexagon_POINTER_SIZE 4
 
@@ -81,11 +82,7 @@ namespace Hexagon_MC {
   unsigned GetELFFlags(const MCSubtargetInfo &STI);
 
   llvm::ArrayRef<MCPhysReg> GetVectRegRev();
-
-  std::optional<unsigned> getHVXVersion(const FeatureBitset &Features);
-
-  unsigned getArchVersion(const FeatureBitset &Features);
-  } // namespace Hexagon_MC
+}
 
 MCCodeEmitter *createHexagonMCCodeEmitter(const MCInstrInfo &MCII,
                                           MCContext &MCT);

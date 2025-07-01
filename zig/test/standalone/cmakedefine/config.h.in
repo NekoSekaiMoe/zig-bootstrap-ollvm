@@ -94,6 +94,8 @@
 // test10
 // @noval@@stringval@@trueval@@zeroval@
 
+// ${} substition
+
 // no substition
 // ${noval}
 

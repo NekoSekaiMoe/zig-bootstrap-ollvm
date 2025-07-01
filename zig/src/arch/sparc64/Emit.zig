@@ -5,9 +5,11 @@ const std = @import("std");
 const Endian = std.builtin.Endian;
 const assert = std.debug.assert;
 const link = @import("../../link.zig");
-const Zcu = @import("../../Zcu.zig");
-const ErrorMsg = Zcu.ErrorMsg;
+const Module = @import("../../Module.zig");
+const ErrorMsg = Module.ErrorMsg;
+const Liveness = @import("../../Liveness.zig");
 const log = std.log.scoped(.sparcv9_emit);
+const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
 
 const Emit = @This();
 const Mir = @import("Mir.zig");
@@ -17,11 +19,11 @@ const Register = bits.Register;
 
 mir: Mir,
 bin_file: *link.File,
-debug_output: link.File.DebugInfoOutput,
+debug_output: DebugInfoOutput,
 target: *const std.Target,
 err_msg: ?*ErrorMsg = null,
-src_loc: Zcu.LazySrcLoc,
-code: *std.ArrayListUnmanaged(u8),
+src_loc: Module.SrcLoc,
+code: *std.ArrayList(u8),
 
 prev_di_line: u32,
 prev_di_column: u32,
@@ -29,16 +31,16 @@ prev_di_column: u32,
 prev_di_pc: usize,
 
 /// The branch type of every branch
-branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .empty,
+branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .{},
 /// For every forward branch, maps the target instruction to a list of
 /// branches which branch to this target instruction
-branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .empty,
+branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .{},
 /// For backward branches: stores the code offset of the target
 /// instruction
 ///
 /// For forward branches: stores the code offset of the branch
 /// instruction
-code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .empty,
+code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .{},
 
 const InnerError = error{
     OutOfMemory,
@@ -509,7 +511,7 @@ fn dbgAdvancePCAndLine(emit: *Emit, line: u32, column: u32) !void {
 }
 
 fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
-    @branchHint(.cold);
+    @setCold(true);
     assert(emit.err_msg == null);
     const comp = emit.bin_file.comp;
     const gpa = comp.gpa;
@@ -570,7 +572,7 @@ fn lowerBranches(emit: *Emit) !void {
                 if (emit.branch_forward_origins.getPtr(target_inst)) |origin_list| {
                     try origin_list.append(gpa, inst);
                 } else {
-                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .empty;
+                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .{};
                     try origin_list.append(gpa, inst);
                     try emit.branch_forward_origins.put(gpa, target_inst, origin_list);
                 }
@@ -677,13 +679,10 @@ fn optimalBranchType(emit: *Emit, tag: Mir.Inst.Tag, offset: i64) !BranchType {
 }
 
 fn writeInstruction(emit: *Emit, instruction: Instruction) !void {
-    const comp = emit.bin_file.comp;
-    const gpa = comp.gpa;
-
     // SPARCv9 instructions are always arranged in BE regardless of the
     // endianness mode the CPU is running in (Section 3.1 of the ISA specification).
     // This is to ease porting in case someone wants to do a LE SPARCv9 backend.
-    const endian: Endian = .big;
+    const endian = Endian.big;
 
-    std.mem.writeInt(u32, try emit.code.addManyAsArray(gpa, 4), instruction.toU32(), endian);
+    std.mem.writeInt(u32, try emit.code.addManyAsArray(4), instruction.toU32(), endian);
 }

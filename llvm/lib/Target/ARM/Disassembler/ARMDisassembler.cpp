@@ -135,9 +135,9 @@ public:
   ARMDisassembler(const MCSubtargetInfo &STI, MCContext &Ctx,
                   const MCInstrInfo *MCII)
       : MCDisassembler(STI, Ctx), MCII(MCII) {
-        InstructionEndianness = STI.hasFeature(ARM::ModeBigEndianInstructions)
-                                    ? llvm::endianness::big
-                                    : llvm::endianness::little;
+    InstructionEndianness = STI.hasFeature(ARM::ModeBigEndianInstructions)
+                                ? llvm::support::big
+                                : llvm::support::little;
   }
 
   ~ARMDisassembler() override = default;
@@ -166,7 +166,7 @@ private:
   DecodeStatus AddThumbPredicate(MCInst&) const;
   void UpdateThumbVFPPredicate(DecodeStatus &, MCInst&) const;
 
-  llvm::endianness InstructionEndianness;
+  llvm::support::endianness InstructionEndianness;
 };
 
 } // end anonymous namespace
@@ -700,9 +700,6 @@ DecodeMVEOverlappingLongShift(MCInst &Inst, unsigned Insn, uint64_t Address,
 static DecodeStatus DecodeT2AddSubSPImm(MCInst &Inst, unsigned Insn,
                                         uint64_t Address,
                                         const MCDisassembler *Decoder);
-static DecodeStatus DecodeLazyLoadStoreMul(MCInst &Inst, unsigned Insn,
-                                           uint64_t Address,
-                                           const MCDisassembler *Decoder);
 
 #include "ARMGenDisassemblerTables.inc"
 
@@ -894,13 +891,12 @@ void ARMDisassembler::AddThumb1SBit(MCInst &MI, bool InITBlock) const {
         MCID.operands()[i].RegClass == ARM::CCRRegClassID) {
       if (i > 0 && MCID.operands()[i - 1].isPredicate())
         continue;
-      MI.insert(I,
-                MCOperand::createReg(InITBlock ? ARM::NoRegister : ARM::CPSR));
+      MI.insert(I, MCOperand::createReg(InITBlock ? 0 : ARM::CPSR));
       return;
     }
   }
 
-  MI.insert(I, MCOperand::createReg(InITBlock ? ARM::NoRegister : ARM::CPSR));
+  MI.insert(I, MCOperand::createReg(InITBlock ? 0 : ARM::CPSR));
 }
 
 bool ARMDisassembler::isVectorPredicable(const MCInst &MI) const {
@@ -993,7 +989,7 @@ ARMDisassembler::AddThumbPredicate(MCInst &MI) const {
     CCI = MI.insert(CCI, MCOperand::createImm(CC));
     ++CCI;
     if (CC == ARMCC::AL)
-      MI.insert(CCI, MCOperand::createReg(ARM::NoRegister));
+      MI.insert(CCI, MCOperand::createReg(0));
     else
       MI.insert(CCI, MCOperand::createReg(ARM::CPSR));
   } else if (CC != ARMCC::AL) {
@@ -1060,7 +1056,7 @@ void ARMDisassembler::UpdateThumbVFPPredicate(
       I->setImm(CC);
       ++I;
       if (CC == ARMCC::AL)
-        I->setReg(ARM::NoRegister);
+        I->setReg(0);
       else
         I->setReg(ARM::CPSR);
       return;
@@ -1529,19 +1525,15 @@ static const uint16_t DPRDecoderTable[] = {
     ARM::D28, ARM::D29, ARM::D30, ARM::D31
 };
 
-// Does this instruction/subtarget permit use of registers d16-d31?
-static bool PermitsD32(const MCInst &Inst, const MCDisassembler *Decoder) {
-  if (Inst.getOpcode() == ARM::VSCCLRMD || Inst.getOpcode() == ARM::VSCCLRMS)
-    return true;
-  const FeatureBitset &featureBits =
-    ((const MCDisassembler*)Decoder)->getSubtargetInfo().getFeatureBits();
-  return featureBits[ARM::FeatureD32];
-}
-
 static DecodeStatus DecodeDPRRegisterClass(MCInst &Inst, unsigned RegNo,
                                            uint64_t Address,
                                            const MCDisassembler *Decoder) {
-  if (RegNo > (PermitsD32(Inst, Decoder) ? 31u : 15u))
+  const FeatureBitset &featureBits =
+    ((const MCDisassembler*)Decoder)->getSubtargetInfo().getFeatureBits();
+
+  bool hasD32 = featureBits[ARM::FeatureD32];
+
+  if (RegNo > 31 || (!hasD32 && RegNo > 15))
     return MCDisassembler::Fail;
 
   unsigned Register = DPRDecoderTable[RegNo];
@@ -1648,7 +1640,7 @@ static DecodeStatus DecodePredicateOperand(MCInst &Inst, unsigned Val,
     Check(S, MCDisassembler::SoftFail);
   Inst.addOperand(MCOperand::createImm(Val));
   if (Val == ARMCC::AL) {
-    Inst.addOperand(MCOperand::createReg(ARM::NoRegister));
+    Inst.addOperand(MCOperand::createReg(0));
   } else
     Inst.addOperand(MCOperand::createReg(ARM::CPSR));
   return S;
@@ -1660,7 +1652,7 @@ static DecodeStatus DecodeCCOutOperand(MCInst &Inst, unsigned Val,
   if (Val)
     Inst.addOperand(MCOperand::createReg(ARM::CPSR));
   else
-    Inst.addOperand(MCOperand::createReg(ARM::NoRegister));
+    Inst.addOperand(MCOperand::createReg(0));
   return MCDisassembler::Success;
 }
 
@@ -1744,7 +1736,7 @@ static DecodeStatus DecodeRegListOperand(MCInst &Inst, unsigned Val,
   DecodeStatus S = MCDisassembler::Success;
 
   bool NeedDisjointWriteback = false;
-  MCRegister WritebackReg;
+  unsigned WritebackReg = 0;
   bool CLRM = false;
   switch (Inst.getOpcode()) {
   default:
@@ -1820,11 +1812,10 @@ static DecodeStatus DecodeDPRRegListOperand(MCInst &Inst, unsigned Val,
   unsigned regs = fieldFromInstruction(Val, 1, 7);
 
   // In case of unpredictable encoding, tweak the operands.
-  unsigned MaxReg = PermitsD32(Inst, Decoder) ? 32 : 16;
-  if (regs == 0 || (Vd + regs) > MaxReg) {
-    regs = Vd + regs > MaxReg ? MaxReg - Vd : regs;
+  if (regs == 0 || regs > 16 || (Vd + regs) > 32) {
+    regs = Vd + regs > 32 ? 32 - Vd : regs;
     regs = std::max( 1u, regs);
-    regs = std::min(MaxReg, regs);
+    regs = std::min(16u, regs);
     S = MCDisassembler::SoftFail;
   }
 
@@ -6213,7 +6204,7 @@ static DecodeStatus DecoderForMRRC2AndMCRR2(MCInst &Inst, unsigned Val,
   // We have to check if the instruction is MRRC2
   // or MCRR2 when constructing the operands for
   // Inst. Reason is because MRRC2 stores to two
-  // registers so it's tablegen desc has two
+  // registers so it's tablegen desc has has two
   // outputs whereas MCRR doesn't store to any
   // registers so all of it's operands are listed
   // as inputs, therefore the operand order for
@@ -6452,31 +6443,20 @@ static DecodeStatus DecodeVSCCLRM(MCInst &Inst, unsigned Insn, uint64_t Address,
 
   Inst.addOperand(MCOperand::createImm(ARMCC::AL));
   Inst.addOperand(MCOperand::createReg(0));
-  unsigned regs = fieldFromInstruction(Insn, 0, 8);
-  if (regs == 0) {
-    // Register list contains only VPR
-  } else if (Inst.getOpcode() == ARM::VSCCLRMD) {
-    unsigned reglist = regs | (fieldFromInstruction(Insn, 12, 4) << 8) |
+  if (Inst.getOpcode() == ARM::VSCCLRMD) {
+    unsigned reglist = (fieldFromInstruction(Insn, 1, 7) << 1) |
+                       (fieldFromInstruction(Insn, 12, 4) << 8) |
                        (fieldFromInstruction(Insn, 22, 1) << 12);
     if (!Check(S, DecodeDPRRegListOperand(Inst, reglist, Address, Decoder))) {
       return MCDisassembler::Fail;
     }
   } else {
-    unsigned Vd = (fieldFromInstruction(Insn, 12, 4) << 1) |
-                  fieldFromInstruction(Insn, 22, 1);
-    // Registers past s31 are permitted and treated as being half of a d
-    // register, though both halves of each d register must be present.
-    unsigned max_reg = Vd + regs;
-    if (max_reg > 64 || (max_reg > 32 && (max_reg & 1)))
-      S = MCDisassembler::SoftFail;
-    unsigned max_sreg = std::min(32u, max_reg);
-    unsigned max_dreg = std::min(32u, max_reg / 2);
-    for (unsigned i = Vd; i < max_sreg; ++i)
-      if (!Check(S, DecodeSPRRegisterClass(Inst, i, Address, Decoder)))
-        return MCDisassembler::Fail;
-    for (unsigned i = 16; i < max_dreg; ++i)
-      if (!Check(S, DecodeDPRRegisterClass(Inst, i, Address, Decoder)))
-        return MCDisassembler::Fail;
+    unsigned reglist = fieldFromInstruction(Insn, 0, 8) |
+                       (fieldFromInstruction(Insn, 22, 1) << 8) |
+                       (fieldFromInstruction(Insn, 12, 4) << 9);
+    if (!Check(S, DecodeSPRRegListOperand(Inst, reglist, Address, Decoder))) {
+      return MCDisassembler::Fail;
+    }
   }
   Inst.addOperand(MCOperand::createReg(ARM::VPR));
 
@@ -6686,13 +6666,6 @@ static unsigned FixedRegForVSTRVLDR_SYSREG(unsigned Opcode) {
   case ARM::VLDR_P0_pre:
   case ARM::VLDR_P0_post:
     return ARM::P0;
-  case ARM::VSTR_FPSCR_NZCVQC_off:
-  case ARM::VSTR_FPSCR_NZCVQC_pre:
-  case ARM::VSTR_FPSCR_NZCVQC_post:
-  case ARM::VLDR_FPSCR_NZCVQC_off:
-  case ARM::VLDR_FPSCR_NZCVQC_pre:
-  case ARM::VLDR_FPSCR_NZCVQC_post:
-    return ARM::FPSCR;
   default:
     return 0;
   }
@@ -7056,24 +7029,4 @@ static DecodeStatus DecodeT2AddSubSPImm(MCInst &Inst, unsigned Insn,
   }
 
   return DS;
-}
-
-static DecodeStatus DecodeLazyLoadStoreMul(MCInst &Inst, unsigned Insn,
-                                           uint64_t Address,
-                                           const MCDisassembler *Decoder) {
-  DecodeStatus S = MCDisassembler::Success;
-
-  const unsigned Rn = fieldFromInstruction(Insn, 16, 4);
-  // Adding Rn, holding memory location to save/load to/from, the only argument
-  // that is being encoded.
-  // '$Rn' in the assembly.
-  if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
-    return MCDisassembler::Fail;
-  // An optional predicate, '$p' in the assembly.
-  DecodePredicateOperand(Inst, ARMCC::AL, Address, Decoder);
-  // An immediate that represents a floating point registers list. '$regs' in
-  // the assembly.
-  Inst.addOperand(MCOperand::createImm(0)); // Arbitrary value, has no effect.
-
-  return S;
 }

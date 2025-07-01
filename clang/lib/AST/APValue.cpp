@@ -90,7 +90,7 @@ QualType APValue::LValueBase::getType() const {
   // For a materialized temporary, the type of the temporary we materialized
   // may not be the type of the expression.
   if (const MaterializeTemporaryExpr *MTE =
-          llvm::dyn_cast<MaterializeTemporaryExpr>(Base)) {
+          clang::dyn_cast<MaterializeTemporaryExpr>(Base)) {
     SmallVector<const Expr *, 2> CommaLHSs;
     SmallVector<SubobjectAdjustment, 2> Adjustments;
     const Expr *Temp = MTE->getSubExpr();
@@ -308,8 +308,7 @@ APValue::UnionData::~UnionData () {
   delete Value;
 }
 
-APValue::APValue(const APValue &RHS)
-    : Kind(None), AllowConstexprUnknown(RHS.AllowConstexprUnknown) {
+APValue::APValue(const APValue &RHS) : Kind(None) {
   switch (RHS.getKind()) {
   case None:
   case Indeterminate:
@@ -380,29 +379,22 @@ APValue::APValue(const APValue &RHS)
   }
 }
 
-APValue::APValue(APValue &&RHS)
-    : Kind(RHS.Kind), AllowConstexprUnknown(RHS.AllowConstexprUnknown),
-      Data(RHS.Data) {
+APValue::APValue(APValue &&RHS) : Kind(RHS.Kind), Data(RHS.Data) {
   RHS.Kind = None;
 }
 
 APValue &APValue::operator=(const APValue &RHS) {
   if (this != &RHS)
     *this = APValue(RHS);
-
-  AllowConstexprUnknown = RHS.AllowConstexprUnknown;
   return *this;
 }
 
 APValue &APValue::operator=(APValue &&RHS) {
-  if (this != &RHS) {
-    if (Kind != None && Kind != Indeterminate)
-      DestroyDataAndMakeUninit();
-    Kind = RHS.Kind;
-    Data = RHS.Data;
-    AllowConstexprUnknown = RHS.AllowConstexprUnknown;
-    RHS.Kind = None;
-  }
+  if (Kind != None && Kind != Indeterminate)
+    DestroyDataAndMakeUninit();
+  Kind = RHS.Kind;
+  Data = RHS.Data;
+  RHS.Kind = None;
   return *this;
 }
 
@@ -432,7 +424,6 @@ void APValue::DestroyDataAndMakeUninit() {
   else if (Kind == AddrLabelDiff)
     ((AddrLabelDiffData *)(char *)&Data)->~AddrLabelDiffData();
   Kind = None;
-  AllowConstexprUnknown = false;
 }
 
 bool APValue::needsCleanup() const {
@@ -475,10 +466,6 @@ bool APValue::needsCleanup() const {
 void APValue::swap(APValue &RHS) {
   std::swap(Kind, RHS.Kind);
   std::swap(Data, RHS.Data);
-  // We can't use std::swap w/ bit-fields
-  bool tmp = AllowConstexprUnknown;
-  AllowConstexprUnknown = RHS.AllowConstexprUnknown;
-  RHS.AllowConstexprUnknown = tmp;
 }
 
 /// Profile the value of an APInt, excluding its bit-width.
@@ -715,9 +702,6 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
     return;
   }
 
-  if (const auto *AT = Ty->getAs<AtomicType>())
-    Ty = AT->getValueType();
-
   switch (getKind()) {
   case APValue::None:
     Out << "<out of lifetime>";
@@ -855,10 +839,6 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
           Out << *VD;
           ElemTy = VD->getType();
         }
-      } else if (ElemTy->isAnyComplexType()) {
-        // The lvalue refers to a complex type
-        Out << (Path[I].getAsArrayIndex() == 0 ? ".real" : ".imag");
-        ElemTy = ElemTy->castAs<ComplexType>()->getElementType();
       } else {
         // The lvalue must refer to an array.
         Out << '[' << Path[I].getAsArrayIndex() << ']';
@@ -919,8 +899,7 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
     for (const auto *FI : RD->fields()) {
       if (!First)
         Out << ", ";
-      if (FI->isUnnamedBitField())
-        continue;
+      if (FI->isUnnamedBitfield()) continue;
       getStructField(FI->getFieldIndex()).
         printPretty(Out, Policy, FI->getType(), Ctx);
       First = false;
@@ -958,6 +937,7 @@ std::string APValue::getAsString(const ASTContext &Ctx, QualType Ty) const {
   std::string Result;
   llvm::raw_string_ostream Out(Result);
   printPretty(Out, Ctx, Ty);
+  Out.flush();
   return Result;
 }
 
@@ -1098,6 +1078,10 @@ void APValue::MakeArray(unsigned InitElts, unsigned Size) {
   Kind = Array;
 }
 
+MutableArrayRef<APValue::LValuePathEntry>
+setLValueUninit(APValue::LValueBase B, const CharUnits &O, unsigned Size,
+                bool OnePastTheEnd, bool IsNullPtr);
+
 MutableArrayRef<const CXXRecordDecl *>
 APValue::setMemberPointerUninit(const ValueDecl *Member, bool IsDerivedMember,
                                 unsigned Size) {
@@ -1125,7 +1109,7 @@ LinkageInfo LinkageComputer::getLVForValue(const APValue &V,
 
   auto MergeLV = [&](LinkageInfo MergeLV) {
     LV.merge(MergeLV);
-    return LV.getLinkage() == Linkage::Internal;
+    return LV.getLinkage() == InternalLinkage;
   };
   auto Merge = [&](const APValue &V) {
     return MergeLV(getLVForValue(V, computation));

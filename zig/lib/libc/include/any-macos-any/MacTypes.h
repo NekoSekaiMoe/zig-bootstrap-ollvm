@@ -37,11 +37,9 @@
 #ifndef __MACTYPES__
 #define __MACTYPES__
 
-#if __has_include(<ConditionalMacros.h>)
+#ifndef __CONDITIONALMACROS__
 #include <ConditionalMacros.h>
 #endif
-
-#include <TargetConditionals.h>
 
 #include <stdbool.h>
 
@@ -155,7 +153,7 @@ typedef struct UnsignedWide             UnsignedWide;
 
 #endif
 
-#if TYPE_LONGLONG || 0
+#if TYPE_LONGLONG
 /*
   Note:   wide and UnsignedWide must always be structs for source code
            compatibility. On the other hand UInt64 and SInt64 can be
@@ -180,7 +178,7 @@ typedef struct UnsignedWide             UnsignedWide;
 
 typedef wide                            SInt64;
 typedef UnsignedWide                    UInt64;
-#endif  
+#endif  /* TYPE_LONGLONG */
 
 /********************************************************************************
 
@@ -309,8 +307,6 @@ typedef ResType *                       ResTypePtr;
         
 *********************************************************************************/
 typedef unsigned char                   Boolean;
-
-#if !0
 /********************************************************************************
 
     Function Pointer Types
@@ -334,8 +330,6 @@ typedef ProcPtr                         UniversalProcPtr;
 
 typedef ProcPtr *                       ProcHandle;
 typedef UniversalProcPtr *              UniversalProcHandle;
-#endif
-
 /********************************************************************************
 
     RefCon Types
@@ -697,8 +691,6 @@ typedef UnsignedWide *                  UnsignedWidePtr;
 typedef Float80                         extended80;
 typedef Float96                         extended96;
 typedef SInt8                           VHSelect;
-
-#if !0
 /*********************************************************************************
 
     Debugger functions
@@ -726,7 +718,7 @@ Debugger(void)                                                __OSX_AVAILABLE_BU
  */
 extern void 
 DebugStr(ConstStr255Param debuggerMsg)                        __OSX_AVAILABLE_BUT_DEPRECATED(__MAC_10_0, __MAC_10_8, __IPHONE_NA, __IPHONE_NA);
-#endif 
+
 
 /*
  *  debugstr()

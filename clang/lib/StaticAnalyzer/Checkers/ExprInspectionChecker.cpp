@@ -25,7 +25,7 @@ using namespace ento;
 namespace {
 class ExprInspectionChecker
     : public Checker<eval::Call, check::DeadSymbols, check::EndAnalysis> {
-  const BugType BT{this, "Checking analyzer assumptions", "debug"};
+  mutable std::unique_ptr<BugType> BT;
 
   // These stats are per-analysis, not per-branch, hence they shouldn't
   // stay inside the program state.
@@ -176,7 +176,11 @@ ExprInspectionChecker::reportBug(llvm::StringRef Msg, BugReporter &BR,
                                  std::optional<SVal> ExprVal) const {
   if (!N)
     return nullptr;
-  auto R = std::make_unique<PathSensitiveBugReport>(BT, Msg, N);
+
+  if (!BT)
+    BT.reset(new BugType(this, "Checking analyzer assumptions", "debug"));
+
+  auto R = std::make_unique<PathSensitiveBugReport>(*BT, Msg, N);
   if (ExprVal) {
     R->markInteresting(*ExprVal);
   }
@@ -321,12 +325,12 @@ void ExprInspectionChecker::analyzerDump(const CallExpr *CE,
 
 void ExprInspectionChecker::analyzerGetExtent(const CallExpr *CE,
                                               CheckerContext &C) const {
-  const Expr *Arg = getArgExpr(CE, C);
-  if (!Arg)
+  const MemRegion *MR = getArgRegion(CE, C);
+  if (!MR)
     return;
 
   ProgramStateRef State = C.getState();
-  SVal Size = getDynamicExtentWithOffset(State, C.getSVal(Arg));
+  DefinedOrUnknownSVal Size = getDynamicExtent(State, MR, C.getSValBuilder());
 
   State = State->BindExpr(CE, C.getLocationContext(), Size);
   C.addTransition(State);
@@ -334,12 +338,12 @@ void ExprInspectionChecker::analyzerGetExtent(const CallExpr *CE,
 
 void ExprInspectionChecker::analyzerDumpExtent(const CallExpr *CE,
                                                CheckerContext &C) const {
-  const Expr *Arg = getArgExpr(CE, C);
-  if (!Arg)
+  const MemRegion *MR = getArgRegion(CE, C);
+  if (!MR)
     return;
 
-  ProgramStateRef State = C.getState();
-  SVal Size = getDynamicExtentWithOffset(State, C.getSVal(Arg));
+  DefinedOrUnknownSVal Size =
+      getDynamicExtent(C.getState(), MR, C.getSValBuilder());
   printAndReport(C, Size);
 }
 
@@ -358,8 +362,8 @@ void ExprInspectionChecker::analyzerDumpElementCount(const CallExpr *CE,
 
   assert(!ElementTy->isPointerType());
 
-  DefinedOrUnknownSVal ElementCount = getDynamicElementCountWithOffset(
-      C.getState(), C.getSVal(getArgExpr(CE, C)), ElementTy);
+  DefinedOrUnknownSVal ElementCount =
+      getDynamicElementCount(C.getState(), MR, C.getSValBuilder(), ElementTy);
   printAndReport(C, ElementCount);
 }
 
@@ -486,8 +490,8 @@ public:
       return Str;
     if (std::optional<std::string> Str = Visit(S->getLHS()))
       return (*Str + " " + BinaryOperator::getOpcodeStr(S->getOpcode()) + " " +
-              std::to_string(S->getRHS()->getLimitedValue()) +
-              (S->getRHS()->isUnsigned() ? "U" : ""))
+              std::to_string(S->getRHS().getLimitedValue()) +
+              (S->getRHS().isUnsigned() ? "U" : ""))
           .str();
     return std::nullopt;
   }

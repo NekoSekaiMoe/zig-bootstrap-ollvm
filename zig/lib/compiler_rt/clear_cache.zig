@@ -2,8 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
 const os = builtin.os.tag;
-const common = @import("common.zig");
-pub const panic = common.panic;
+pub const panic = @import("common.zig").panic;
 
 // Ported from llvm-project d32170dbd5b0d54436537b6b75beaf44324e0c28
 
@@ -16,7 +15,7 @@ comptime {
     _ = &clear_cache;
 }
 
-fn clear_cache(start: usize, end: usize) callconv(.c) void {
+fn clear_cache(start: usize, end: usize) callconv(.C) void {
     const x86 = switch (arch) {
         .x86, .x86_64 => true,
         else => false,
@@ -26,13 +25,7 @@ fn clear_cache(start: usize, end: usize) callconv(.c) void {
         else => false,
     };
     const arm64 = switch (arch) {
-        .aarch64, .aarch64_be => true,
-        else => false,
-    };
-    const loongarch = switch (arch) {
-        .loongarch32,
-        .loongarch64,
-        => true,
+        .aarch64, .aarch64_be, .aarch64_32 => true,
         else => false,
     };
     const mips = switch (arch) {
@@ -48,11 +41,11 @@ fn clear_cache(start: usize, end: usize) callconv(.c) void {
         else => false,
     };
     const sparc = switch (arch) {
-        .sparc, .sparc64 => true,
+        .sparc, .sparc64, .sparcel => true,
         else => false,
     };
     const apple = switch (os) {
-        .ios, .macos, .watchos, .tvos, .visionos => true,
+        .ios, .macos, .watchos, .tvos => true,
         else => false,
     };
     if (x86) {
@@ -166,19 +159,13 @@ fn clear_cache(start: usize, end: usize) callconv(.c) void {
         // On Darwin, sys_icache_invalidate() provides this functionality
         sys_icache_invalidate(start, end - start);
         exportIt();
-    } else if (os == .linux and loongarch) {
-        // See: https://github.com/llvm/llvm-project/blob/cf54cae26b65fc3201eff7200ffb9b0c9e8f9a13/compiler-rt/lib/builtins/clear_cache.c#L94-L95
-        asm volatile (
-            \\ ibar 0
-        );
-        exportIt();
     }
-
-    std.valgrind.discardTranslations(@as([*]u8, @ptrFromInt(start))[0 .. end - start]);
 }
 
+const linkage = if (builtin.is_test) std.builtin.GlobalLinkage.internal else std.builtin.GlobalLinkage.weak;
+
 fn exportIt() void {
-    @export(&clear_cache, .{ .name = "__clear_cache", .linkage = common.linkage, .visibility = common.visibility });
+    @export(clear_cache, .{ .name = "__clear_cache", .linkage = linkage });
 }
 
 // Darwin-only

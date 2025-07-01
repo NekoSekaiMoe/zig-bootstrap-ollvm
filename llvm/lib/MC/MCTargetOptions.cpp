@@ -15,11 +15,11 @@ MCTargetOptions::MCTargetOptions()
     : MCRelaxAll(false), MCNoExecStack(false), MCFatalWarnings(false),
       MCNoWarn(false), MCNoDeprecatedWarn(false), MCNoTypeCheck(false),
       MCSaveTempLabels(false), MCIncrementalLinkerCompatible(false),
-      FDPIC(false), ShowMCEncoding(false), ShowMCInst(false), AsmVerbose(false),
+      ShowMCEncoding(false), ShowMCInst(false), AsmVerbose(false),
       PreserveAsmComments(true), Dwarf64(false),
       EmitDwarfUnwind(EmitDwarfUnwindType::Default),
       MCUseDwarfDirectory(DefaultDwarfDirectory),
-      EmitCompactUnwindNonCanonical(false), PPCUseFullRegisterNames(false) {}
+      EmitCompactUnwindNonCanonical(false) {}
 
 StringRef MCTargetOptions::getABIName() const {
   return ABIName;

@@ -59,19 +59,6 @@ llvm::object::computeSymbolSizes(const ObjectFile &O) {
     return Ret;
   }
 
-  if (const auto *E = dyn_cast<XCOFFObjectFile>(&O)) {
-    for (XCOFFSymbolRef Sym : E->symbols())
-      Ret.push_back({Sym, Sym.getSize()});
-    return Ret;
-  }
-
-  if (const auto *E = dyn_cast<WasmObjectFile>(&O)) {
-    for (SymbolRef Sym : E->symbols()) {
-      Ret.push_back({Sym, E->getSymbolSize(Sym)});
-    }
-    return Ret;
-  }
-
   // Collect sorted symbol addresses. Include dummy addresses for the end
   // of each section.
   std::vector<SymEntry> Addresses;
@@ -99,7 +86,7 @@ llvm::object::computeSymbolSizes(const ObjectFile &O) {
 
   // Compute the size as the gap to the next symbol. If multiple symbols have
   // the same address, give both the same size. Because Addresses is sorted,
-  // use two pointers to keep track of the current symbol vs. the next symbol
+  // using two pointers to keep track of the current symbol vs. the next symbol
   // that doesn't have the same address for size computation.
   for (unsigned I = 0, NextI = 0, N = Addresses.size() - 1; I < N; ++I) {
     auto &P = Addresses[I];

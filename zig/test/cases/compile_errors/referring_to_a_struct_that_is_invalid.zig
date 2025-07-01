@@ -11,6 +11,8 @@ fn assert(ok: bool) void {
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :10:14: error: reached unreachable code
-// :6:20: note: called at comptime here
+// :6:20: note: called from here

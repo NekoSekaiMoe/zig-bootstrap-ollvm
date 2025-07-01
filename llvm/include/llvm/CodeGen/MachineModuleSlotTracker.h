@@ -33,8 +33,7 @@ class MachineModuleSlotTracker : public ModuleSlotTracker {
                               bool ShouldInitializeAllMetadata);
 
 public:
-  MachineModuleSlotTracker(const MachineModuleInfo &MMI,
-                           const MachineFunction *MF,
+  MachineModuleSlotTracker(const MachineFunction *MF,
                            bool ShouldInitializeAllMetadata = true);
   ~MachineModuleSlotTracker();
 

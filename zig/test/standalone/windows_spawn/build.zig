@@ -6,26 +6,22 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target = b.graph.host;
+    const target = b.host;
 
     if (builtin.os.tag != .windows) return;
 
     const hello = b.addExecutable(.{
         .name = "hello",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("hello.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("hello.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const main = b.addExecutable(.{
         .name = "main",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("main.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("main.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const run = b.addRunArtifact(main);

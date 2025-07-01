@@ -10,7 +10,8 @@ pub export fn entry() void {
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :5:18: error: unable to resolve comptime value
-// :5:18: note: argument to comptime parameter must be comptime-known
-// :1:24: note: parameter declared comptime here
+// :5:18: note: parameter is comptime

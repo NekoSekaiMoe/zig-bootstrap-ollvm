@@ -2,9 +2,9 @@ const std = @import("../../std.zig");
 const builtin = @import("builtin");
 const math = std.math;
 const Limb = std.math.big.Limb;
-const limb_bits = @typeInfo(Limb).int.bits;
+const limb_bits = @typeInfo(Limb).Int.bits;
 const HalfLimb = std.math.big.HalfLimb;
-const half_limb_bits = @typeInfo(HalfLimb).int.bits;
+const half_limb_bits = @typeInfo(HalfLimb).Int.bits;
 const DoubleLimb = std.math.big.DoubleLimb;
 const SignedDoubleLimb = std.math.big.SignedDoubleLimb;
 const Log2Limb = std.math.big.Log2Limb;
@@ -17,11 +17,13 @@ const Endian = std.builtin.Endian;
 const Signedness = std.builtin.Signedness;
 const native_endian = builtin.cpu.arch.endian();
 
+const debug_safety = false;
+
 /// Returns the number of limbs needed to store `scalar`, which must be a
 /// primitive integer value.
 /// Note: A comptime-known upper bound of this value that may be used
 /// instead if `scalar` is not already comptime-known is
-/// `calcTwosCompLimbCount(@typeInfo(@TypeOf(scalar)).int.bits)`
+/// `calcTwosCompLimbCount(@typeInfo(@TypeOf(scalar)).Int.bits)`
 pub fn calcLimbLen(scalar: anytype) usize {
     if (scalar == 0) {
         return 1;
@@ -55,11 +57,8 @@ pub fn calcSetStringLimbsBufferLen(base: u8, string_len: usize) usize {
     return calcMulLimbsBufferLen(limb_count, limb_count, 2);
 }
 
-/// Assumes `string_len` doesn't account for minus signs if the number is negative.
 pub fn calcSetStringLimbCount(base: u8, string_len: usize) usize {
-    const base_f: f32 = @floatFromInt(base);
-    const string_len_f: f32 = @floatFromInt(string_len);
-    return 1 + @as(usize, @intFromFloat(@ceil(string_len_f * std.math.log2(base_f) / limb_bits)));
+    return (string_len + (limb_bits / base - 1)) / (limb_bits / base);
 }
 
 pub fn calcPowLimbsBufferLen(a_bit_count: usize, y: usize) usize {
@@ -74,22 +73,15 @@ pub fn calcSqrtLimbsBufferLen(a_bit_count: usize) usize {
     return a_limb_count + 3 * u_s_rem_limb_count + calcDivLimbsBufferLen(a_limb_count, u_s_rem_limb_count);
 }
 
-/// Compute the number of limbs required to store a 2s-complement number of `bit_count` bits.
-pub fn calcNonZeroTwosCompLimbCount(bit_count: usize) usize {
-    assert(bit_count != 0);
-    return calcTwosCompLimbCount(bit_count);
-}
-
-/// Compute the number of limbs required to store a 2s-complement number of `bit_count` bits.
-///
-/// Special cases `bit_count == 0` to return 1. Zero-bit integers can only store the value zero
-/// and this big integer implementation stores zero using one limb.
+// Compute the number of limbs required to store a 2s-complement number of `bit_count` bits.
 pub fn calcTwosCompLimbCount(bit_count: usize) usize {
-    return @max(std.math.divCeil(usize, bit_count, @bitSizeOf(Limb)) catch unreachable, 1);
+    return std.math.divCeil(usize, bit_count, @bitSizeOf(Limb)) catch unreachable;
 }
 
 /// a + b * c + *carry, sets carry to the overflow bits
 pub fn addMulLimbWithCarry(a: Limb, b: Limb, c: Limb, carry: *Limb) Limb {
+    @setRuntimeSafety(debug_safety);
+
     // ov1[0] = a + *carry
     const ov1 = @addWithOverflow(a, carry.*);
 
@@ -193,10 +185,8 @@ pub const Mutable = struct {
         if (self.limbs.ptr != other.limbs.ptr) {
             @memcpy(self.limbs[0..other.limbs.len], other.limbs[0..other.limbs.len]);
         }
-        // Normalize before setting `positive` so the `eqlZero` doesn't need to iterate
-        // over the extra zero limbs.
-        self.normalize(other.limbs.len);
-        self.positive = other.positive or other.eqlZero();
+        self.positive = other.positive;
+        self.len = other.limbs.len;
     }
 
     /// Efficiently swap an Mutable with another. This swaps the limb pointers and a full copy is not
@@ -209,7 +199,7 @@ pub const Mutable = struct {
         for (self.limbs[0..self.len]) |limb| {
             std.debug.print("{x} ", .{limb});
         }
-        std.debug.print("len={} capacity={} positive={}\n", .{ self.len, self.limbs.len, self.positive });
+        std.debug.print("capacity={} positive={}\n", .{ self.limbs.len, self.positive });
     }
 
     /// Clones an Mutable and returns a new Mutable with the same value. The new Mutable is a deep copy and
@@ -246,7 +236,7 @@ pub const Mutable = struct {
         self.positive = value >= 0;
 
         switch (@typeInfo(T)) {
-            .int => |info| {
+            .Int => |info| {
                 var w_value = @abs(value);
 
                 if (info.bits <= limb_bits) {
@@ -261,7 +251,7 @@ pub const Mutable = struct {
                     }
                 }
             },
-            .comptime_int => {
+            .ComptimeInt => {
                 comptime var w_value = @abs(value);
 
                 if (w_value <= maxInt(Limb)) {
@@ -290,7 +280,7 @@ pub const Mutable = struct {
     ///
     /// Asserts there is enough memory for the value in `self.limbs`. An upper bound on number of limbs can
     /// be determined with `calcSetStringLimbCount`.
-    /// Asserts the base is in the range [2, 36].
+    /// Asserts the base is in the range [2, 16].
     ///
     /// Returns an error if the value has invalid digits for the requested base.
     ///
@@ -306,8 +296,7 @@ pub const Mutable = struct {
         limbs_buffer: []Limb,
         allocator: ?Allocator,
     ) error{InvalidCharacter}!void {
-        assert(base >= 2);
-        assert(base <= 36);
+        assert(base >= 2 and base <= 16);
 
         var i: usize = 0;
         var positive = true;
@@ -351,7 +340,7 @@ pub const Mutable = struct {
         }
 
         const req_limbs = calcTwosCompLimbCount(bit_count);
-        const bit: Log2Limb = @truncate(bit_count - 1);
+        const bit = @as(Log2Limb, @truncate(bit_count - 1));
         const signmask = @as(Limb, 1) << bit; // 0b0..010..0 where 1 is the sign bit.
         const mask = (signmask << 1) -% 1; // 0b0..011..1 where the leftmost 1 is the sign bit.
 
@@ -415,12 +404,12 @@ pub const Mutable = struct {
         // in the case that scalar happens to be small in magnitude within its type, but it
         // is well worth being able to use the stack and not needing an allocator passed in.
         // Note that Mutable.init still sets len to calcLimbLen(scalar) in any case.
-        const limbs_len = comptime switch (@typeInfo(@TypeOf(scalar))) {
-            .comptime_int => calcLimbLen(scalar),
-            .int => |info| calcTwosCompLimbCount(info.bits),
+        const limb_len = comptime switch (@typeInfo(@TypeOf(scalar))) {
+            .ComptimeInt => calcLimbLen(scalar),
+            .Int => |info| calcTwosCompLimbCount(info.bits),
             else => @compileError("expected scalar to be an int"),
         };
-        var limbs: [limbs_len]Limb = undefined;
+        var limbs: [limb_len]Limb = undefined;
         const operand = init(&limbs, scalar).toConst();
         return add(r, a, operand);
     }
@@ -806,6 +795,7 @@ pub const Mutable = struct {
         const endian_mask: usize = (@sizeOf(Limb) - 1) << 3;
 
         const bytes = std.mem.sliceAsBytes(r.limbs);
+        var bits = std.packed_int_array.PackedIntSliceEndian(u1, .little).init(bytes, limbs_required * @bitSizeOf(Limb));
 
         var k: usize = 0;
         while (k < ((bit_count + 1) / 2)) : (k += 1) {
@@ -819,17 +809,17 @@ pub const Mutable = struct {
                 rev_i ^= endian_mask;
             }
 
-            const bit_i = std.mem.readPackedInt(u1, bytes, i, .little);
-            const bit_rev_i = std.mem.readPackedInt(u1, bytes, rev_i, .little);
-            std.mem.writePackedInt(u1, bytes, i, bit_rev_i, .little);
-            std.mem.writePackedInt(u1, bytes, rev_i, bit_i, .little);
+            const bit_i = bits.get(i);
+            const bit_rev_i = bits.get(rev_i);
+            bits.set(i, bit_rev_i);
+            bits.set(rev_i, bit_i);
         }
 
         // Calculate signed-magnitude representation for output
         if (signedness == .signed) {
             const last_bit = switch (native_endian) {
-                .little => std.mem.readPackedInt(u1, bytes, bit_count - 1, .little),
-                .big => std.mem.readPackedInt(u1, bytes, (bit_count - 1) ^ endian_mask, .little),
+                .little => bits.get(bit_count - 1),
+                .big => bits.get((bit_count - 1) ^ endian_mask),
             };
             if (last_bit == 1) {
                 r.bitNotWrap(r.toConst(), .unsigned, bit_count); // Bitwise NOT.
@@ -1103,8 +1093,8 @@ pub const Mutable = struct {
     /// Asserts there is enough memory to fit the result. The upper bound Limb count is
     /// `a.limbs.len + (shift / (@sizeOf(Limb) * 8))`.
     pub fn shiftLeft(r: *Mutable, a: Const, shift: usize) void {
-        const new_len = llshl(r.limbs, a.limbs, shift);
-        r.normalize(new_len);
+        llshl(r.limbs[0..], a.limbs[0..a.limbs.len], shift);
+        r.normalize(a.limbs.len + (shift / limb_bits) + 1);
         r.positive = a.positive;
     }
 
@@ -1172,8 +1162,8 @@ pub const Mutable = struct {
 
         // This shift should not be able to overflow, so invoke llshl and normalize manually
         // to avoid the extra required limb.
-        const new_len = llshl(r.limbs, a.limbs, shift);
-        r.normalize(new_len);
+        llshl(r.limbs[0..], a.limbs[0..a.limbs.len], shift);
+        r.normalize(a.limbs.len + (shift / limb_bits));
         r.positive = a.positive;
     }
 
@@ -1181,11 +1171,9 @@ pub const Mutable = struct {
     /// r and a may alias.
     ///
     /// Asserts there is enough memory to fit the result. The upper bound Limb count is
-    /// `a.limbs.len - (shift / (@bitSizeOf(Limb)))`.
+    /// `a.limbs.len - (shift / (@sizeOf(Limb) * 8))`.
     pub fn shiftRight(r: *Mutable, a: Const, shift: usize) void {
-        const full_limbs_shifted_out = shift / limb_bits;
-        const remaining_bits_shifted_out = shift % limb_bits;
-        if (a.limbs.len <= full_limbs_shifted_out) {
+        if (a.limbs.len <= shift / limb_bits) {
             // Shifting negative numbers converges to -1 instead of 0
             if (a.positive) {
                 r.len = 1;
@@ -1198,23 +1186,14 @@ pub const Mutable = struct {
             }
             return;
         }
-        const nonzero_negative_shiftout = if (a.positive) false else nonzero: {
-            for (a.limbs[0..full_limbs_shifted_out]) |x| {
-                if (x != 0)
-                    break :nonzero true;
-            }
-            if (remaining_bits_shifted_out == 0)
-                break :nonzero false;
-            const not_covered: Log2Limb = @intCast(limb_bits - remaining_bits_shifted_out);
-            break :nonzero a.limbs[full_limbs_shifted_out] << not_covered != 0;
-        };
 
-        const new_len = llshr(r.limbs, a.limbs, shift);
-
-        r.len = new_len;
+        llshr(r.limbs[0..], a.limbs[0..a.limbs.len], shift);
+        r.normalize(a.limbs.len - (shift / limb_bits));
         r.positive = a.positive;
-        if (nonzero_negative_shiftout) r.addScalar(r.toConst(), -1);
-        r.normalize(r.len);
+        // Shifting negative numbers converges to -1 instead of 0
+        if (!r.positive and r.len == 1 and r.limbs[0] == 0) {
+            r.limbs[0] = 1;
+        }
     }
 
     /// r = ~a under 2s complement wrapping semantics.
@@ -1756,60 +1735,126 @@ pub const Mutable = struct {
         y.shiftRight(y.toConst(), norm_shift);
     }
 
-    /// Truncate an integer to a number of bits, following 2s-complement semantics.
-    /// `r` may alias `a`.
+    /// If a is positive, this passes through to truncate.
+    /// If a is negative, then r is set to positive with the bit pattern ~(a - 1).
+    /// r may alias a.
     ///
-    /// Asserts `r` has enough storage to compute the result.
+    /// Asserts `r` has enough storage to store the result.
     /// The upper bound is `calcTwosCompLimbCount(a.len)`.
-    pub fn truncate(r: *Mutable, a: Const, signedness: Signedness, bit_count: usize) void {
-        // Handle 0-bit integers.
-        if (bit_count == 0) {
-            @branchHint(.unlikely);
+    pub fn convertToTwosComplement(r: *Mutable, a: Const, signedness: Signedness, bit_count: usize) void {
+        if (a.positive) {
+            r.truncate(a, signedness, bit_count);
+            return;
+        }
+
+        const req_limbs = calcTwosCompLimbCount(bit_count);
+        if (req_limbs == 0 or a.eqlZero()) {
             r.set(0);
             return;
         }
 
-        const max_limbs = calcTwosCompLimbCount(bit_count);
-        const sign_bit = @as(Limb, 1) << @truncate(bit_count - 1);
-        const mask = @as(Limb, maxInt(Limb)) >> @truncate(-%bit_count);
+        const bit = @as(Log2Limb, @truncate(bit_count - 1));
+        const signmask = @as(Limb, 1) << bit;
+        const mask = (signmask << 1) -% 1;
 
-        // Guess whether the result will have the same sign as `a`.
-        //  * If the result will be signed zero, the guess is `true`.
-        //  * If the result will be the minimum signed integer, the guess is `false`.
-        //  * If the result will be unsigned zero, the guess is `a.positive`.
-        //  * Otherwise the guess is correct.
-        const same_sign_guess = switch (signedness) {
-            .signed => max_limbs > a.limbs.len or a.limbs[max_limbs - 1] & sign_bit == 0,
-            .unsigned => a.positive,
-        };
+        r.addScalar(a.abs(), -1);
+        if (req_limbs > r.len) {
+            @memset(r.limbs[r.len..req_limbs], 0);
+        }
 
-        const abs_trunc_a: Const = .{
-            .positive = true,
-            .limbs = a.limbs[0..llnormalize(a.limbs[0..@min(a.limbs.len, max_limbs)])],
-        };
-        if (same_sign_guess or abs_trunc_a.eqlZero()) {
-            // One of the following is true:
-            //  * The result is zero.
-            //  * The result is non-zero and has the same sign as `a`.
-            r.copy(abs_trunc_a);
-            if (max_limbs <= r.len) r.limbs[max_limbs - 1] &= mask;
-            r.normalize(r.len);
-            r.positive = a.positive or r.eqlZero();
+        assert(r.limbs.len >= req_limbs);
+        r.len = req_limbs;
+
+        llnot(r.limbs[0..r.len]);
+        r.limbs[r.len - 1] &= mask;
+        r.normalize(r.len);
+    }
+
+    /// Truncate an integer to a number of bits, following 2s-complement semantics.
+    /// r may alias a.
+    ///
+    /// Asserts `r` has enough storage to store the result.
+    /// The upper bound is `calcTwosCompLimbCount(a.len)`.
+    pub fn truncate(r: *Mutable, a: Const, signedness: Signedness, bit_count: usize) void {
+        const req_limbs = calcTwosCompLimbCount(bit_count);
+
+        // Handle 0-bit integers.
+        if (req_limbs == 0 or a.eqlZero()) {
+            r.set(0);
+            return;
+        }
+
+        const bit = @as(Log2Limb, @truncate(bit_count - 1));
+        const signmask = @as(Limb, 1) << bit; // 0b0..010...0 where 1 is the sign bit.
+        const mask = (signmask << 1) -% 1; // 0b0..01..1 where the leftmost 1 is the sign bit.
+
+        if (!a.positive) {
+            // Convert the integer from sign-magnitude into twos-complement.
+            // -x = ~(x - 1)
+            // Note, we simply take req_limbs * @bitSizeOf(Limb) as the
+            // target bit count.
+
+            r.addScalar(a.abs(), -1);
+
+            // Zero-extend the result
+            if (req_limbs > r.len) {
+                @memset(r.limbs[r.len..req_limbs], 0);
+            }
+
+            // Truncate to required number of limbs.
+            assert(r.limbs.len >= req_limbs);
+            r.len = req_limbs;
+
+            // Without truncating, we can already peek at the sign bit of the result here.
+            // Note that it will be 0 if the result is negative, as we did not apply the flip here.
+            // If the result is negative, we have
+            // -(-x & mask)
+            // = ~(~(x - 1) & mask) + 1
+            // = ~(~((x - 1) | ~mask)) + 1
+            // = ((x - 1) | ~mask)) + 1
+            // Note, this is only valid for the target bits and not the upper bits
+            // of the most significant limb. Those still need to be cleared.
+            // Also note that `mask` is zero for all other bits, reducing to the identity.
+            // This means that we still need to use & mask to clear off the upper bits.
+
+            if (signedness == .signed and r.limbs[r.len - 1] & signmask == 0) {
+                // Re-add the one and negate to get the result.
+                r.limbs[r.len - 1] &= mask;
+                // Note, addition cannot require extra limbs here as we did a subtraction before.
+                r.addScalar(r.toConst(), 1);
+                r.normalize(r.len);
+                r.positive = false;
+            } else {
+                llnot(r.limbs[0..r.len]);
+                r.limbs[r.len - 1] &= mask;
+                r.normalize(r.len);
+            }
         } else {
-            // One of the following is true:
-            //  * The result is the minimum signed integer.
-            //  * The result is unsigned zero.
-            //  * The result is non-zero and has the opposite sign as `a`.
-            r.addScalar(abs_trunc_a, -1);
-            llnot(r.limbs[0..r.len]);
-            @memset(r.limbs[r.len..max_limbs], maxInt(Limb));
-            r.limbs[max_limbs - 1] &= mask;
-            r.normalize(max_limbs);
-            r.positive = switch (signedness) {
-                // The only value with the sign bit still set is the minimum signed integer.
-                .signed => !a.positive and r.limbs[max_limbs - 1] & sign_bit == 0,
-                .unsigned => !a.positive or r.eqlZero(),
-            };
+            if (a.limbs.len < req_limbs) {
+                // Integer fits within target bits, no wrapping required.
+                r.copy(a);
+                return;
+            }
+
+            r.copy(.{
+                .positive = a.positive,
+                .limbs = a.limbs[0..req_limbs],
+            });
+            r.limbs[r.len - 1] &= mask;
+            r.normalize(r.len);
+
+            if (signedness == .signed and r.limbs[r.len - 1] & signmask != 0) {
+                // Convert 2s-complement back to sign-magnitude.
+                // Sign-extend the upper bits so that they are inverted correctly.
+                r.limbs[r.len - 1] |= ~mask;
+                llnot(r.limbs[0..r.len]);
+
+                // Note, can only overflow if r holds 0xFFF...F which can only happen if
+                // a holds 0.
+                r.addScalar(r.toConst(), 1);
+
+                r.positive = false;
+            }
         }
     }
 
@@ -1970,7 +2015,7 @@ pub const Const = struct {
         for (self.limbs[0..self.limbs.len]) |limb| {
             std.debug.print("{x} ", .{limb});
         }
-        std.debug.print("len={} positive={}\n", .{ self.len, self.positive });
+        std.debug.print("positive={}\n", .{self.positive});
     }
 
     pub fn abs(self: Const) Const {
@@ -2030,12 +2075,6 @@ pub const Const = struct {
         return bits;
     }
 
-    /// Returns the number of bits required to represent the integer in twos-complement form
-    /// with the given signedness.
-    pub fn bitCountTwosCompForSignedness(self: Const, signedness: std.builtin.Signedness) usize {
-        return self.bitCountTwosComp() + @intFromBool(self.positive and signedness == .signed);
-    }
-
     /// @popCount with two's complement semantics.
     ///
     /// This returns the number of 1 bits set when the value would be represented in
@@ -2091,12 +2130,14 @@ pub const Const = struct {
         if (signedness == .unsigned and !self.positive) {
             return false;
         }
-        return bit_count >= self.bitCountTwosCompForSignedness(signedness);
+
+        const req_bits = self.bitCountTwosComp() + @intFromBool(self.positive and signedness == .signed);
+        return bit_count >= req_bits;
     }
 
     /// Returns whether self can fit into an integer of the requested type.
     pub fn fits(self: Const, comptime T: type) bool {
-        const info = @typeInfo(T).int;
+        const info = @typeInfo(T).Int;
         return self.fitsInTwosComp(info.signedness, info.bits);
     }
 
@@ -2114,15 +2155,12 @@ pub const Const = struct {
         TargetTooSmall,
     };
 
-    /// Deprecated; use `toInt`.
-    pub const to = toInt;
-
-    /// Convert self to integer type T.
+    /// Convert self to type T.
     ///
     /// Returns an error if self cannot be narrowed into the requested type without truncation.
-    pub fn toInt(self: Const, comptime T: type) ConvertError!T {
+    pub fn to(self: Const, comptime T: type) ConvertError!T {
         switch (@typeInfo(T)) {
-            .int => |info| {
+            .Int => |info| {
                 // Make sure -0 is handled correctly.
                 if (self.eqlZero()) return 0;
 
@@ -2148,7 +2186,7 @@ pub const Const = struct {
                     return if (self.positive) @as(T, @intCast(r)) else error.NegativeIntoUnsigned;
                 } else {
                     if (self.positive) {
-                        return @intCast(r);
+                        return @as(T, @intCast(r));
                     } else {
                         if (math.cast(T, r)) |ok| {
                             return -ok;
@@ -2158,32 +2196,13 @@ pub const Const = struct {
                     }
                 }
             },
-            else => @compileError("expected int type, found '" ++ @typeName(T) ++ "'"),
-        }
-    }
-
-    /// Convert self to float type T.
-    pub fn toFloat(self: Const, comptime T: type) T {
-        if (self.limbs.len == 0) return 0;
-
-        const base = std.math.maxInt(std.math.big.Limb) + 1;
-        var result: f128 = 0;
-        var i: usize = self.limbs.len;
-        while (i != 0) {
-            i -= 1;
-            const limb: f128 = @floatFromInt(self.limbs[i]);
-            result = @mulAdd(f128, base, result, limb);
-        }
-        if (self.positive) {
-            return @floatCast(result);
-        } else {
-            return @floatCast(-result);
+            else => @compileError("cannot convert Const to type " ++ @typeName(T)),
         }
     }
 
     /// To allow `std.fmt.format` to work with this type.
-    /// If the absolute value of integer is greater than or equal to `pow(2, 64 * @sizeOf(usize) * 8)`,
-    /// this function will fail to print the string, printing "(BigInt)" instead of a number.
+    /// If the integer is larger than `pow(2, 64 * @sizeOf(usize) * 8), this function will fail
+    /// to print the string, printing "(BigInt)" instead of a number.
     /// This is because the rendering algorithm requires reversing a string, which requires O(N) memory.
     /// See `toString` and `toStringAlloc` for a way to print big integers without failure.
     pub fn format(
@@ -2212,11 +2231,13 @@ pub const Const = struct {
             std.fmt.invalidFmtError(fmt, self);
         }
 
-        const available_len = 64;
-        if (self.limbs.len > available_len)
+        var limbs: [128]Limb = undefined;
+        const needed_limbs = calcDivLimbsBufferLen(self.limbs.len, 1);
+        if (needed_limbs > limbs.len)
             return out_stream.writeAll("(BigInt)");
 
-        var limbs: [calcToStringLimbsBufferLen(available_len, base)]Limb = undefined;
+        // This is the inverse of calcDivLimbsBufferLen
+        const available_len = (limbs.len / 3) - 2;
 
         const biggest: Const = .{
             .limbs = &([1]Limb{comptime math.maxInt(Limb)} ** available_len),
@@ -2229,11 +2250,11 @@ pub const Const = struct {
 
     /// Converts self to a string in the requested base.
     /// Caller owns returned memory.
-    /// Asserts that `base` is in the range [2, 36].
+    /// Asserts that `base` is in the range [2, 16].
     /// See also `toString`, a lower level function than this.
     pub fn toStringAlloc(self: Const, allocator: Allocator, base: u8, case: std.fmt.Case) Allocator.Error![]u8 {
         assert(base >= 2);
-        assert(base <= 36);
+        assert(base <= 16);
 
         if (self.eqlZero()) {
             return allocator.dupe(u8, "0");
@@ -2248,7 +2269,7 @@ pub const Const = struct {
     }
 
     /// Converts self to a string in the requested base.
-    /// Asserts that `base` is in the range [2, 36].
+    /// Asserts that `base` is in the range [2, 16].
     /// `string` is a caller-provided slice of at least `sizeInBaseUpperBound` bytes,
     /// where the result is written to.
     /// Returns the length of the string.
@@ -2258,7 +2279,7 @@ pub const Const = struct {
     /// See also `toStringAlloc`, a higher level function than this.
     pub fn toString(self: Const, string: []u8, base: u8, case: std.fmt.Case, limbs_buffer: []Limb) usize {
         assert(base >= 2);
-        assert(base <= 36);
+        assert(base <= 16);
 
         if (self.eqlZero()) {
             string[0] = '0';
@@ -2454,12 +2475,12 @@ pub const Const = struct {
         // in the case that scalar happens to be small in magnitude within its type, but it
         // is well worth being able to use the stack and not needing an allocator passed in.
         // Note that Mutable.init still sets len to calcLimbLen(scalar) in any case.
-        const limbs_len = comptime switch (@typeInfo(@TypeOf(scalar))) {
-            .comptime_int => calcLimbLen(scalar),
-            .int => |info| calcTwosCompLimbCount(info.bits),
+        const limb_len = comptime switch (@typeInfo(@TypeOf(scalar))) {
+            .ComptimeInt => calcLimbLen(scalar),
+            .Int => |info| calcTwosCompLimbCount(info.bits),
             else => @compileError("expected scalar to be an int"),
         };
-        var limbs: [limbs_len]Limb = undefined;
+        var limbs: [limb_len]Limb = undefined;
         const rhs = Mutable.init(&limbs, scalar);
         return order(lhs, rhs.toConst());
     }
@@ -2481,16 +2502,16 @@ pub const Const = struct {
         return order(a, b) == .eq;
     }
 
-    /// Returns the number of leading zeros in twos-complement form.
     pub fn clz(a: Const, bits: Limb) Limb {
-        // Limbs are stored in little-endian order but we need to iterate big-endian.
-        if (!a.positive and !a.eqlZero()) return 0;
+        // Limbs are stored in little-endian order but we need
+        // to iterate big-endian.
         var total_limb_lz: Limb = 0;
         var i: usize = a.limbs.len;
-        const bits_per_limb = @bitSizeOf(Limb);
+        const bits_per_limb = @sizeOf(Limb) * 8;
         while (i != 0) {
             i -= 1;
-            const this_limb_lz = @clz(a.limbs[i]);
+            const limb = a.limbs[i];
+            const this_limb_lz = @clz(limb);
             total_limb_lz += this_limb_lz;
             if (this_limb_lz != bits_per_limb) break;
         }
@@ -2498,16 +2519,13 @@ pub const Const = struct {
         return total_limb_lz + bits - total_limb_bits;
     }
 
-    /// Returns the number of trailing zeros in twos-complement form.
     pub fn ctz(a: Const, bits: Limb) Limb {
-        // Limbs are stored in little-endian order. Converting a negative number to twos-complement
-        // flips all bits above the lowest set bit, which does not affect the trailing zero count.
-        if (a.eqlZero()) return bits;
+        // Limbs are stored in little-endian order.
         var result: Limb = 0;
         for (a.limbs) |limb| {
             const limb_tz = @ctz(limb);
             result += limb_tz;
-            if (limb_tz != @bitSizeOf(Limb)) break;
+            if (limb_tz != @sizeOf(Limb) * 8) break;
         }
         return @min(result, bits);
     }
@@ -2518,7 +2536,7 @@ pub const Const = struct {
 /// Memory is allocated as needed to ensure operations never overflow. The range
 /// is bounded only by available memory.
 pub const Managed = struct {
-    pub const sign_bit: usize = 1 << (@typeInfo(usize).int.bits - 1);
+    pub const sign_bit: usize = 1 << (@typeInfo(usize).Int.bits - 1);
 
     /// Default number of limbs to allocate on creation of a `Managed`.
     pub const default_capacity = 4;
@@ -2672,7 +2690,7 @@ pub const Managed = struct {
         for (self.limbs[0..self.len()]) |limb| {
             std.debug.print("{x} ", .{limb});
         }
-        std.debug.print("len={} capacity={} positive={}\n", .{ self.len(), self.limbs.len, self.isPositive() });
+        std.debug.print("capacity={} positive={}\n", .{ self.limbs.len, self.isPositive() });
     }
 
     /// Negate the sign.
@@ -2736,19 +2754,11 @@ pub const Managed = struct {
 
     pub const ConvertError = Const.ConvertError;
 
-    /// Deprecated; use `toInt`.
-    pub const to = toInt;
-
-    /// Convert self to integer type T.
+    /// Convert self to type T.
     ///
     /// Returns an error if self cannot be narrowed into the requested type without truncation.
-    pub fn toInt(self: Managed, comptime T: type) ConvertError!T {
-        return self.toConst().toInt(T);
-    }
-
-    /// Convert self to float type T.
-    pub fn toFloat(self: Managed, comptime T: type) T {
-        return self.toConst().toFloat(T);
+    pub fn to(self: Managed, comptime T: type) ConvertError!T {
+        return self.toConst().to(T);
     }
 
     /// Set self from the string representation `value`.
@@ -2762,7 +2772,7 @@ pub const Managed = struct {
     ///
     /// self's allocator is used for temporary storage to boost multiplication performance.
     pub fn setString(self: *Managed, base: u8, value: []const u8) !void {
-        if (base < 2 or base > 36) return error.InvalidBase;
+        if (base < 2 or base > 16) return error.InvalidBase;
         try self.ensureCapacity(calcSetStringLimbCount(base, value.len));
         const limbs_buffer = try self.allocator.alloc(Limb, calcSetStringLimbsBufferLen(base, value.len));
         defer self.allocator.free(limbs_buffer);
@@ -2789,13 +2799,13 @@ pub const Managed = struct {
     /// Converts self to a string in the requested base. Memory is allocated from the provided
     /// allocator and not the one present in self.
     pub fn toString(self: Managed, allocator: Allocator, base: u8, case: std.fmt.Case) ![]u8 {
-        if (base < 2 or base > 36) return error.InvalidBase;
+        if (base < 2 or base > 16) return error.InvalidBase;
         return self.toConst().toStringAlloc(allocator, base, case);
     }
 
     /// To allow `std.fmt.format` to work with `Managed`.
-    /// If the absolute value of integer is greater than or equal to `pow(2, 64 * @sizeOf(usize) * 8)`,
-    /// this function will fail to print the string, printing "(BigInt)" instead of a number.
+    /// If the integer is larger than `pow(2, 64 * @sizeOf(usize) * 8), this function will fail
+    /// to print the string, printing "(BigInt)" instead of a number.
     /// This is because the rendering algorithm requires reversing a string, which requires O(N) memory.
     /// See `toString` and `toStringAlloc` for a way to print big integers without failure.
     pub fn format(
@@ -2813,8 +2823,8 @@ pub const Managed = struct {
         return a.toConst().orderAbs(b.toConst());
     }
 
-    /// Returns math.Order.lt, math.Order.eq, math.Order.gt if a < b, a == b or a > b
-    /// respectively.
+    /// Returns math.Order.lt, math.Order.eq, math.Order.gt if a < b, a == b or a
+    /// > b respectively.
     pub fn order(a: Managed, b: Managed) math.Order {
         return a.toConst().order(b.toConst());
     }
@@ -3273,10 +3283,9 @@ const AccOp = enum {
 ///
 /// The result is computed modulo `r.len`. When `r.len >= a.len + b.len`, no overflow occurs.
 fn llmulacc(comptime op: AccOp, opt_allocator: ?Allocator, r: []Limb, a: []const Limb, b: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
     assert(r.len >= a.len);
     assert(r.len >= b.len);
-    assert(!slicesOverlap(r, a));
-    assert(!slicesOverlap(r, b));
 
     // Order greatest first.
     var x = a;
@@ -3313,10 +3322,9 @@ fn llmulaccKaratsuba(
     a: []const Limb,
     b: []const Limb,
 ) error{OutOfMemory}!void {
+    @setRuntimeSafety(debug_safety);
     assert(r.len >= a.len);
     assert(a.len >= b.len);
-    assert(!slicesOverlap(r, a));
-    assert(!slicesOverlap(r, b));
 
     // Classical karatsuba algorithm:
     // a = a1 * B + a0
@@ -3477,6 +3485,7 @@ fn llmulaccKaratsuba(
 /// r = r (op) a.
 /// The result is computed modulo `r.len`.
 fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
     if (op == .sub) {
         _ = llsubcarry(r, r, a);
         return;
@@ -3505,6 +3514,7 @@ fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
 
 /// Returns -1, 0, 1 if |a| < |b|, |a| == |b| or |a| > |b| respectively for limbs.
 pub fn llcmp(a: []const Limb, b: []const Limb) i8 {
+    @setRuntimeSafety(debug_safety);
     const a_len = llnormalize(a);
     const b_len = llnormalize(b);
     if (a_len < b_len) {
@@ -3533,6 +3543,7 @@ pub fn llcmp(a: []const Limb, b: []const Limb) i8 {
 /// r = r (op) y * xi
 /// The result is computed modulo `r.len`. When `r.len >= a.len + b.len`, no overflow occurs.
 fn llmulaccLong(comptime op: AccOp, r: []Limb, a: []const Limb, b: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
     assert(r.len >= a.len);
     assert(a.len >= b.len);
 
@@ -3546,6 +3557,7 @@ fn llmulaccLong(comptime op: AccOp, r: []Limb, a: []const Limb, b: []const Limb)
 /// The result is computed modulo `r.len`.
 /// Returns whether the operation overflowed.
 fn llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) bool {
+    @setRuntimeSafety(debug_safety);
     if (xi == 0) {
         return false;
     }
@@ -3592,6 +3604,7 @@ fn llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) bool {
 
 /// returns the min length the limb could be.
 fn llnormalize(a: []const Limb) usize {
+    @setRuntimeSafety(debug_safety);
     var j = a.len;
     while (j > 0) : (j -= 1) {
         if (a[j - 1] != 0) {
@@ -3605,6 +3618,7 @@ fn llnormalize(a: []const Limb) usize {
 
 /// Knuth 4.3.1, Algorithm S.
 fn llsubcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
+    @setRuntimeSafety(debug_safety);
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= a.len);
@@ -3630,12 +3644,14 @@ fn llsubcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
 }
 
 fn llsub(r: []Limb, a: []const Limb, b: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
     assert(a.len > b.len or (a.len == b.len and a[a.len - 1] >= b[b.len - 1]));
     assert(llsubcarry(r, a, b) == 0);
 }
 
 /// Knuth 4.3.1, Algorithm A.
 fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
+    @setRuntimeSafety(debug_safety);
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= a.len);
@@ -3661,12 +3677,14 @@ fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
 }
 
 fn lladd(r: []Limb, a: []const Limb, b: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
     assert(r.len >= a.len + 1);
     r[a.len] = lladdcarry(r, a, b);
 }
 
 /// Knuth 4.3.1, Exercise 16.
 fn lldiv1(quo: []Limb, rem: *Limb, a: []const Limb, b: Limb) void {
+    @setRuntimeSafety(debug_safety);
     assert(a.len > 1 or a[0] >= b);
     assert(quo.len >= a.len);
 
@@ -3692,6 +3710,7 @@ fn lldiv1(quo: []Limb, rem: *Limb, a: []const Limb, b: Limb) void {
 }
 
 fn lldiv0p5(quo: []Limb, rem: *Limb, a: []const Limb, b: HalfLimb) void {
+    @setRuntimeSafety(debug_safety);
     assert(a.len > 1 or a[0] >= b);
     assert(quo.len >= a.len);
 
@@ -3714,114 +3733,69 @@ fn lldiv0p5(quo: []Limb, rem: *Limb, a: []const Limb, b: HalfLimb) void {
     }
 }
 
-/// Performs r = a << shift and returns the amount of limbs affected
-///
-/// if a and r overlaps, then r.ptr >= a.ptr is asserted
-/// r must have the capacity to store a << shift
-fn llshl(r: []Limb, a: []const Limb, shift: usize) usize {
-    std.debug.assert(a.len >= 1);
-    if (slicesOverlap(a, r))
-        std.debug.assert(@intFromPtr(r.ptr) >= @intFromPtr(a.ptr));
+fn llshl(r: []Limb, a: []const Limb, shift: usize) void {
+    @setRuntimeSafety(debug_safety);
+    assert(a.len >= 1);
 
-    if (shift == 0) {
-        if (a.ptr != r.ptr)
-            std.mem.copyBackwards(Limb, r[0..a.len], a);
-        return a.len;
-    }
-    if (shift >= limb_bits) {
-        const limb_shift = shift / limb_bits;
-
-        const affected = llshl(r[limb_shift..], a, shift % limb_bits);
-        @memset(r[0..limb_shift], 0);
-
-        return limb_shift + affected;
-    }
-
-    // shift is guaranteed to be < limb_bits
-    const bit_shift: Log2Limb = @truncate(shift);
-    const opposite_bit_shift: Log2Limb = @truncate(limb_bits - bit_shift);
+    const interior_limb_shift = @as(Log2Limb, @truncate(shift));
 
     // We only need the extra limb if the shift of the last element overflows.
     // This is useful for the implementation of `shiftLeftSat`.
-    const overflows = a[a.len - 1] >> opposite_bit_shift != 0;
-    if (overflows) {
-        std.debug.assert(r.len >= a.len + 1);
+    if (a[a.len - 1] << interior_limb_shift >> interior_limb_shift != a[a.len - 1]) {
+        assert(r.len >= a.len + (shift / limb_bits) + 1);
     } else {
-        std.debug.assert(r.len >= a.len);
+        assert(r.len >= a.len + (shift / limb_bits));
     }
 
-    var i: usize = a.len;
-    if (overflows) {
-        // r is asserted to be large enough above
-        r[a.len] = a[a.len - 1] >> opposite_bit_shift;
-    }
-    while (i > 1) {
-        i -= 1;
-        r[i] = (a[i - 1] >> opposite_bit_shift) | (a[i] << bit_shift);
-    }
-    r[0] = a[0] << bit_shift;
+    const limb_shift = shift / limb_bits + 1;
 
-    return a.len + @intFromBool(overflows);
+    var carry: Limb = 0;
+    var i: usize = 0;
+    while (i < a.len) : (i += 1) {
+        const src_i = a.len - i - 1;
+        const dst_i = src_i + limb_shift;
+
+        const src_digit = a[src_i];
+        r[dst_i] = carry | @call(.always_inline, math.shr, .{
+            Limb,
+            src_digit,
+            limb_bits - @as(Limb, @intCast(interior_limb_shift)),
+        });
+        carry = (src_digit << interior_limb_shift);
+    }
+
+    r[limb_shift - 1] = carry;
+    @memset(r[0 .. limb_shift - 1], 0);
 }
 
-/// Performs r = a >> shift and returns the amount of limbs affected
-///
-/// if a and r overlaps, then r.ptr <= a.ptr is asserted
-/// r must have the capacity to store a >> shift
-///
-/// See tests below for examples of behaviour
-fn llshr(r: []Limb, a: []const Limb, shift: usize) usize {
-    if (slicesOverlap(a, r))
-        std.debug.assert(@intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
+fn llshr(r: []Limb, a: []const Limb, shift: usize) void {
+    @setRuntimeSafety(debug_safety);
+    assert(a.len >= 1);
+    assert(r.len >= a.len - (shift / limb_bits));
 
-    if (a.len == 0) return 0;
-
-    if (shift == 0) {
-        std.debug.assert(r.len >= a.len);
-
-        if (a.ptr != r.ptr)
-            std.mem.copyForwards(Limb, r[0..a.len], a);
-        return a.len;
-    }
-    if (shift >= limb_bits) {
-        if (shift / limb_bits >= a.len) {
-            r[0] = 0;
-            return 1;
-        }
-        return llshr(r, a[shift / limb_bits ..], shift % limb_bits);
-    }
-
-    // shift is guaranteed to be < limb_bits
-    const bit_shift: Log2Limb = @truncate(shift);
-    const opposite_bit_shift: Log2Limb = @truncate(limb_bits - bit_shift);
-
-    // special case, where there is a risk to set r to 0
-    if (a.len == 1) {
-        r[0] = a[0] >> bit_shift;
-        return 1;
-    }
-    if (a.len == 0) {
-        r[0] = 0;
-        return 1;
-    }
-
-    // if the most significant limb becomes 0 after the shift
-    const shrink = a[a.len - 1] >> bit_shift == 0;
-    std.debug.assert(r.len >= a.len - @intFromBool(!shrink));
+    const limb_shift = shift / limb_bits;
+    const interior_limb_shift = @as(Log2Limb, @truncate(shift));
 
     var i: usize = 0;
-    while (i < a.len - 1) : (i += 1) {
-        r[i] = (a[i] >> bit_shift) | (a[i + 1] << opposite_bit_shift);
+    while (i < a.len - limb_shift) : (i += 1) {
+        const dst_i = i;
+        const src_i = dst_i + limb_shift;
+
+        const src_digit = a[src_i];
+        const src_digit_next = if (src_i + 1 < a.len) a[src_i + 1] else 0;
+        const carry = @call(.always_inline, math.shl, .{
+            Limb,
+            src_digit_next,
+            limb_bits - @as(Limb, @intCast(interior_limb_shift)),
+        });
+        r[dst_i] = carry | (src_digit >> interior_limb_shift);
     }
-
-    if (!shrink)
-        r[i] = a[i] >> bit_shift;
-
-    return a.len - @intFromBool(shrink);
 }
 
 // r = ~r
 fn llnot(r: []Limb) void {
+    @setRuntimeSafety(debug_safety);
+
     for (r) |*elem| {
         elem.* = ~elem.*;
     }
@@ -3834,6 +3808,7 @@ fn llnot(r: []Limb) void {
 // When b is positive, r requires at least `a.len` limbs of storage.
 // When b is negative, r requires at least `b.len` limbs of storage.
 fn llsignedor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool {
+    @setRuntimeSafety(debug_safety);
     assert(r.len >= a.len);
     assert(a.len >= b.len);
 
@@ -3964,6 +3939,7 @@ fn llsignedor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_p
 // 2. when b is negative but a is positive, r requires at least `a.len` limbs of storage,
 // 3. when both a and b are negative, r requires at least `a.len + 1` limbs of storage.
 fn llsignedand(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool {
+    @setRuntimeSafety(debug_safety);
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= if (b_positive) b.len else if (a_positive) a.len else a.len + 1);
@@ -4073,6 +4049,7 @@ fn llsignedand(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_
 // If the sign of a and b is equal, then r requires at least `@max(a.len, b.len)` limbs are required.
 // Otherwise, r requires at least `@max(a.len, b.len) + 1` limbs.
 fn llsignedxor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool {
+    @setRuntimeSafety(debug_safety);
     assert(a.len != 0 and b.len != 0);
     assert(r.len >= a.len);
     assert(a.len >= b.len);
@@ -4131,9 +4108,10 @@ fn llsignedxor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_
 
 /// r MUST NOT alias x.
 fn llsquareBasecase(r: []Limb, x: []const Limb) void {
+    @setRuntimeSafety(debug_safety);
+
     const x_norm = x;
     assert(r.len >= 2 * x_norm.len + 1);
-    assert(!slicesOverlap(r, x));
 
     // Compute the square of a N-limb bigint with only (N^2 + N)/2
     // multiplications by exploiting the symmetry of the coefficients around the
@@ -4157,7 +4135,7 @@ fn llsquareBasecase(r: []Limb, x: []const Limb) void {
     }
 
     // Each product appears twice, multiply by 2
-    _ = llshl(r, r[0 .. 2 * x_norm.len], 1);
+    llshl(r, r[0 .. 2 * x_norm.len], 1);
 
     for (x_norm, 0..) |v, i| {
         // Compute and add the squares
@@ -4229,290 +4207,6 @@ fn fixedIntFromSignedDoubleLimb(A: SignedDoubleLimb, storage: []Limb) Mutable {
     };
 }
 
-fn slicesOverlap(a: []const Limb, b: []const Limb) bool {
-    // there is no overlap if a.ptr + a.len <= b.ptr or b.ptr + b.len <= a.ptr
-    return @intFromPtr(a.ptr + a.len) > @intFromPtr(b.ptr) and @intFromPtr(b.ptr + b.len) > @intFromPtr(a.ptr);
-}
-
 test {
     _ = @import("int_test.zig");
-}
-
-const testing_allocator = std.testing.allocator;
-test "llshl shift by whole number of limb" {
-    const padding = std.math.maxInt(Limb);
-
-    var r: [10]Limb = @splat(padding);
-
-    const A: Limb = @truncate(0xCCCCCCCCCCCCCCCCCCCCCCC);
-    const B: Limb = @truncate(0x22222222222222222222222);
-
-    const data = [2]Limb{ A, B };
-    for (0..9) |i| {
-        @memset(&r, padding);
-        const len = llshl(&r, &data, i * @bitSizeOf(Limb));
-
-        try std.testing.expectEqual(i + 2, len);
-        try std.testing.expectEqualSlices(Limb, &data, r[i .. i + 2]);
-        for (r[0..i]) |x|
-            try std.testing.expectEqual(0, x);
-        for (r[i + 2 ..]) |x|
-            try std.testing.expectEqual(padding, x);
-    }
-}
-
-test llshl {
-    if (limb_bits != 64) return error.SkipZigTest;
-
-    // 1 << 63
-    const left_one = 0x8000000000000000;
-    const maxint: Limb = 0xFFFFFFFFFFFFFFFF;
-
-    // zig fmt: off
-    try testOneShiftCase(.llshl, .{0,  &.{0},                               &.{0}});
-    try testOneShiftCase(.llshl, .{0,  &.{1},                               &.{1}});
-    try testOneShiftCase(.llshl, .{0,  &.{125484842448},                    &.{125484842448}});
-    try testOneShiftCase(.llshl, .{0,  &.{0xdeadbeef},                      &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{0,  &.{maxint},                          &.{maxint}});
-    try testOneShiftCase(.llshl, .{0,  &.{left_one},                        &.{left_one}});
-    try testOneShiftCase(.llshl, .{0,  &.{0, 1},                            &.{0, 1}});
-    try testOneShiftCase(.llshl, .{0,  &.{1, 2},                            &.{1, 2}});
-    try testOneShiftCase(.llshl, .{0,  &.{left_one, 1},                     &.{left_one, 1}});
-    try testOneShiftCase(.llshl, .{1,  &.{0},                               &.{0}});
-    try testOneShiftCase(.llshl, .{1,  &.{2},                               &.{1}});
-    try testOneShiftCase(.llshl, .{1,  &.{250969684896},                    &.{125484842448}});
-    try testOneShiftCase(.llshl, .{1,  &.{0x1bd5b7dde},                     &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{1,  &.{0xfffffffffffffffe, 1},           &.{maxint}});
-    try testOneShiftCase(.llshl, .{1,  &.{0, 1},                            &.{left_one}});
-    try testOneShiftCase(.llshl, .{1,  &.{0, 2},                            &.{0, 1}});
-    try testOneShiftCase(.llshl, .{1,  &.{2, 4},                            &.{1, 2}});
-    try testOneShiftCase(.llshl, .{1,  &.{0, 3},                            &.{left_one, 1}});
-    try testOneShiftCase(.llshl, .{5,  &.{32},                              &.{1}});
-    try testOneShiftCase(.llshl, .{5,  &.{4015514958336},                   &.{125484842448}});
-    try testOneShiftCase(.llshl, .{5,  &.{0x1bd5b7dde0},                    &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{5,  &.{0xffffffffffffffe0, 0x1f},        &.{maxint}});
-    try testOneShiftCase(.llshl, .{5,  &.{0, 16},                           &.{left_one}});
-    try testOneShiftCase(.llshl, .{5,  &.{0, 32},                           &.{0, 1}});
-    try testOneShiftCase(.llshl, .{5,  &.{32, 64},                          &.{1, 2}});
-    try testOneShiftCase(.llshl, .{5,  &.{0, 48},                           &.{left_one, 1}});
-    try testOneShiftCase(.llshl, .{64, &.{0, 1},                            &.{1}});
-    try testOneShiftCase(.llshl, .{64, &.{0, 125484842448},                 &.{125484842448}});
-    try testOneShiftCase(.llshl, .{64, &.{0, 0xdeadbeef},                   &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{64, &.{0, maxint},                       &.{maxint}});
-    try testOneShiftCase(.llshl, .{64, &.{0, left_one},                     &.{left_one}});
-    try testOneShiftCase(.llshl, .{64, &.{0, 0, 1},                         &.{0, 1}});
-    try testOneShiftCase(.llshl, .{64, &.{0, 1, 2},                         &.{1, 2}});
-    try testOneShiftCase(.llshl, .{64, &.{0, left_one, 1},                  &.{left_one, 1}});
-    try testOneShiftCase(.llshl, .{35, &.{0x800000000},                     &.{1}});
-    try testOneShiftCase(.llshl, .{35, &.{13534986488655118336, 233},       &.{125484842448}});
-    try testOneShiftCase(.llshl, .{35, &.{0xf56df77800000000, 6},           &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{35, &.{0xfffffff800000000, 0x7ffffffff}, &.{maxint}});
-    try testOneShiftCase(.llshl, .{35, &.{0, 17179869184},                  &.{left_one}});
-    try testOneShiftCase(.llshl, .{35, &.{0, 0x800000000},                  &.{0, 1}});
-    try testOneShiftCase(.llshl, .{35, &.{0x800000000, 0x1000000000},       &.{1, 2}});
-    try testOneShiftCase(.llshl, .{35, &.{0, 0xc00000000},                  &.{left_one, 1}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 64},                           &.{1}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 8031029916672},                &.{125484842448}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 0x37ab6fbbc0},                 &.{0xdeadbeef}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 0xffffffffffffffc0, 63},       &.{maxint}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 0, 32},                        &.{left_one}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 0, 64},                        &.{0, 1}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 64, 128},                      &.{1, 2}});
-    try testOneShiftCase(.llshl, .{70, &.{0, 0, 0x60},                      &.{left_one, 1}});
-    // zig fmt: on
-}
-
-test "llshl shift 0" {
-    const n = @bitSizeOf(Limb);
-    if (n <= 20) return error.SkipZigTest;
-
-    // zig fmt: off
-    try testOneShiftCase(.llshl, .{0,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshl, .{1,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshl, .{5,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshl, .{13,  &.{0},    &.{0}});
-    try testOneShiftCase(.llshl, .{20,  &.{0},    &.{0}});
-    try testOneShiftCase(.llshl, .{0,   &.{0, 0}, &.{0, 0}});
-    try testOneShiftCase(.llshl, .{2,   &.{0, 0}, &.{0, 0}});
-    try testOneShiftCase(.llshl, .{7,   &.{0, 0}, &.{0, 0}});
-    try testOneShiftCase(.llshl, .{11,  &.{0, 0}, &.{0, 0}});
-    try testOneShiftCase(.llshl, .{19,  &.{0, 0}, &.{0, 0}});
-
-    try testOneShiftCase(.llshl, .{0,   &.{0},                &.{0}});
-    try testOneShiftCase(.llshl, .{n,   &.{0, 0},             &.{0}});
-    try testOneShiftCase(.llshl, .{2*n, &.{0, 0, 0},          &.{0}});
-    try testOneShiftCase(.llshl, .{3*n, &.{0, 0, 0, 0},       &.{0}});
-    try testOneShiftCase(.llshl, .{4*n, &.{0, 0, 0, 0, 0},    &.{0}});
-    try testOneShiftCase(.llshl, .{0,   &.{0, 0},             &.{0, 0}});
-    try testOneShiftCase(.llshl, .{n,   &.{0, 0, 0},          &.{0, 0}});
-    try testOneShiftCase(.llshl, .{2*n, &.{0, 0, 0, 0},       &.{0, 0}});
-    try testOneShiftCase(.llshl, .{3*n, &.{0, 0, 0, 0, 0},    &.{0, 0}});
-    try testOneShiftCase(.llshl, .{4*n, &.{0, 0, 0, 0, 0, 0}, &.{0, 0}});
-    // zig fmt: on
-}
-
-test "llshr shift 0" {
-    const n = @bitSizeOf(Limb);
-
-    // zig fmt: off
-    try testOneShiftCase(.llshr, .{0,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshr, .{1,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshr, .{5,   &.{0},    &.{0}});
-    try testOneShiftCase(.llshr, .{13,  &.{0},    &.{0}});
-    try testOneShiftCase(.llshr, .{20,  &.{0},    &.{0}});
-    try testOneShiftCase(.llshr, .{0,   &.{0, 0}, &.{0, 0}});
-    try testOneShiftCase(.llshr, .{2,   &.{0},    &.{0, 0}});
-    try testOneShiftCase(.llshr, .{7,   &.{0},    &.{0, 0}});
-    try testOneShiftCase(.llshr, .{11,  &.{0},    &.{0, 0}});
-    try testOneShiftCase(.llshr, .{19,  &.{0},    &.{0, 0}});
-
-    try testOneShiftCase(.llshr, .{n,   &.{0}, &.{0}});
-    try testOneShiftCase(.llshr, .{2*n, &.{0}, &.{0}});
-    try testOneShiftCase(.llshr, .{3*n, &.{0}, &.{0}});
-    try testOneShiftCase(.llshr, .{4*n, &.{0}, &.{0}});
-    try testOneShiftCase(.llshr, .{n,   &.{0}, &.{0, 0}});
-    try testOneShiftCase(.llshr, .{2*n, &.{0}, &.{0, 0}});
-    try testOneShiftCase(.llshr, .{3*n, &.{0}, &.{0, 0}});
-    try testOneShiftCase(.llshr, .{4*n, &.{0}, &.{0, 0}});
-
-    try testOneShiftCase(.llshr, .{1,  &.{}, &.{}});
-    try testOneShiftCase(.llshr, .{2,  &.{}, &.{}});
-    try testOneShiftCase(.llshr, .{64, &.{}, &.{}});
-    // zig fmt: on
-}
-
-test "llshr to 0" {
-    const n = @bitSizeOf(Limb);
-    if (n != 64 and n != 32) return error.SkipZigTest;
-
-    // zig fmt: off
-    try testOneShiftCase(.llshr, .{1,   &.{0}, &.{0}});
-    try testOneShiftCase(.llshr, .{1,   &.{0}, &.{1}});
-    try testOneShiftCase(.llshr, .{5,   &.{0}, &.{1}});
-    try testOneShiftCase(.llshr, .{65,  &.{0}, &.{0, 1}});
-    try testOneShiftCase(.llshr, .{193, &.{0}, &.{0, 0, std.math.maxInt(Limb)}});
-    try testOneShiftCase(.llshr, .{193, &.{0}, &.{std.math.maxInt(Limb), 1, std.math.maxInt(Limb)}});
-    try testOneShiftCase(.llshr, .{193, &.{0}, &.{0xdeadbeef, 0xabcdefab, 0x1234}});
-    // zig fmt: on
-}
-
-test "llshr single" {
-    if (limb_bits != 64) return error.SkipZigTest;
-
-    // 1 << 63
-    const left_one = 0x8000000000000000;
-    const maxint: Limb = 0xFFFFFFFFFFFFFFFF;
-
-    // zig fmt: off
-    try testOneShiftCase(.llshr, .{0,  &.{0},                  &.{0}});
-    try testOneShiftCase(.llshr, .{0,  &.{1},                  &.{1}});
-    try testOneShiftCase(.llshr, .{0,  &.{125484842448},       &.{125484842448}});
-    try testOneShiftCase(.llshr, .{0,  &.{0xdeadbeef},         &.{0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{0,  &.{maxint},             &.{maxint}});
-    try testOneShiftCase(.llshr, .{0,  &.{left_one},           &.{left_one}});
-    try testOneShiftCase(.llshr, .{1,  &.{0},                  &.{0}});
-    try testOneShiftCase(.llshr, .{1,  &.{1},                  &.{2}});
-    try testOneShiftCase(.llshr, .{1,  &.{62742421224},        &.{125484842448}});
-    try testOneShiftCase(.llshr, .{1,  &.{62742421223},        &.{125484842447}});
-    try testOneShiftCase(.llshr, .{1,  &.{0x6f56df77},         &.{0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{1,  &.{0x7fffffffffffffff}, &.{maxint}});
-    try testOneShiftCase(.llshr, .{1,  &.{0x4000000000000000}, &.{left_one}});
-    try testOneShiftCase(.llshr, .{8,  &.{1},                  &.{256}});
-    try testOneShiftCase(.llshr, .{8,  &.{490175165},          &.{125484842448}});
-    try testOneShiftCase(.llshr, .{8,  &.{0xdeadbe},           &.{0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{8,  &.{0xffffffffffffff},   &.{maxint}});
-    try testOneShiftCase(.llshr, .{8,  &.{0x80000000000000},   &.{left_one}});
-    // zig fmt: on
-}
-
-test llshr {
-    if (limb_bits != 64) return error.SkipZigTest;
-
-    // 1 << 63
-    const left_one = 0x8000000000000000;
-    const maxint: Limb = 0xFFFFFFFFFFFFFFFF;
-
-    // zig fmt: off
-    try testOneShiftCase(.llshr, .{0,  &.{0, 0},                           &.{0, 0}});
-    try testOneShiftCase(.llshr, .{0,  &.{0, 1},                           &.{0, 1}});
-    try testOneShiftCase(.llshr, .{0,  &.{15, 1},                          &.{15, 1}});
-    try testOneShiftCase(.llshr, .{0,  &.{987656565, 123456789456},        &.{987656565, 123456789456}});
-    try testOneShiftCase(.llshr, .{0,  &.{0xfeebdaed, 0xdeadbeef},         &.{0xfeebdaed, 0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{0,  &.{1, maxint},                      &.{1, maxint}});
-    try testOneShiftCase(.llshr, .{0,  &.{0, left_one},                    &.{0, left_one}});
-    try testOneShiftCase(.llshr, .{1,  &.{0},                              &.{0, 0}});
-    try testOneShiftCase(.llshr, .{1,  &.{left_one},                       &.{0, 1}});
-    try testOneShiftCase(.llshr, .{1,  &.{0x8000000000000007},             &.{15, 1}});
-    try testOneShiftCase(.llshr, .{1,  &.{493828282, 61728394728},         &.{987656565, 123456789456}});
-    try testOneShiftCase(.llshr, .{1,  &.{0x800000007f75ed76, 0x6f56df77}, &.{0xfeebdaed, 0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{1,  &.{left_one, 0x7fffffffffffffff},   &.{1, maxint}});
-    try testOneShiftCase(.llshr, .{1,  &.{0, 0x4000000000000000},          &.{0, left_one}});
-    try testOneShiftCase(.llshr, .{64, &.{0},                              &.{0, 0}});
-    try testOneShiftCase(.llshr, .{64, &.{1},                              &.{0, 1}});
-    try testOneShiftCase(.llshr, .{64, &.{1},                              &.{15, 1}});
-    try testOneShiftCase(.llshr, .{64, &.{123456789456},                   &.{987656565, 123456789456}});
-    try testOneShiftCase(.llshr, .{64, &.{0xdeadbeef},                     &.{0xfeebdaed, 0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{64, &.{maxint},                         &.{1, maxint}});
-    try testOneShiftCase(.llshr, .{64, &.{left_one},                       &.{0, left_one}});
-    try testOneShiftCase(.llshr, .{72, &.{0},                              &.{0, 0}});
-    try testOneShiftCase(.llshr, .{72, &.{0},                              &.{0, 1}});
-    try testOneShiftCase(.llshr, .{72, &.{0},                              &.{15, 1}});
-    try testOneShiftCase(.llshr, .{72, &.{482253083},                      &.{987656565, 123456789456}});
-    try testOneShiftCase(.llshr, .{72, &.{0xdeadbe},                       &.{0xfeebdaed, 0xdeadbeef}});
-    try testOneShiftCase(.llshr, .{72, &.{0xffffffffffffff},               &.{1, maxint}});
-    try testOneShiftCase(.llshr, .{72, &.{0x80000000000000},               &.{0, left_one}});
-    // zig fmt: on
-}
-
-const Case = struct { usize, []const Limb, []const Limb };
-
-fn testOneShiftCase(comptime function: enum { llshr, llshl }, case: Case) !void {
-    const func = if (function == .llshl) llshl else llshr;
-    const shift_direction = if (function == .llshl) -1 else 1;
-
-    try testOneShiftCaseNoAliasing(func, case);
-    try testOneShiftCaseAliasing(func, case, shift_direction);
-}
-
-fn testOneShiftCaseNoAliasing(func: fn ([]Limb, []const Limb, usize) usize, case: Case) !void {
-    const padding = std.math.maxInt(Limb);
-    var r: [20]Limb = @splat(padding);
-
-    const shift = case[0];
-    const expected = case[1];
-    const data = case[2];
-
-    std.debug.assert(expected.len <= 20);
-
-    const len = func(&r, data, shift);
-
-    try std.testing.expectEqual(expected.len, len);
-    try std.testing.expectEqualSlices(Limb, expected, r[0..len]);
-    try std.testing.expect(mem.allEqual(Limb, r[len..], padding));
-}
-
-fn testOneShiftCaseAliasing(func: fn ([]Limb, []const Limb, usize) usize, case: Case, shift_direction: isize) !void {
-    const padding = std.math.maxInt(Limb);
-    var r: [60]Limb = @splat(padding);
-    const base = 20;
-
-    assert(shift_direction == 1 or shift_direction == -1);
-
-    for (0..10) |limb_shift| {
-        const shift = case[0];
-        const expected = case[1];
-        const data = case[2];
-
-        std.debug.assert(expected.len <= 20);
-
-        @memset(&r, padding);
-        const final_limb_base: usize = @intCast(base + shift_direction * @as(isize, @intCast(limb_shift)));
-        const written_data = r[final_limb_base..][0..data.len];
-        @memcpy(written_data, data);
-
-        const len = func(r[base..], written_data, shift);
-
-        try std.testing.expectEqual(expected.len, len);
-        try std.testing.expectEqualSlices(Limb, expected, r[base .. base + len]);
-    }
 }

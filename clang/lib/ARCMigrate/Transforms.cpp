@@ -17,7 +17,6 @@
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Sema.h"
-#include "clang/Sema/SemaObjC.h"
 
 using namespace clang;
 using namespace arcmt;
@@ -27,8 +26,8 @@ ASTTraverser::~ASTTraverser() { }
 
 bool MigrationPass::CFBridgingFunctionsDefined() {
   if (!EnableCFBridgeFns)
-    EnableCFBridgeFns = SemaRef.ObjC().isKnownName("CFBridgingRetain") &&
-                        SemaRef.ObjC().isKnownName("CFBridgingRelease");
+    EnableCFBridgeFns = SemaRef.isKnownName("CFBridgingRetain") &&
+                        SemaRef.isKnownName("CFBridgingRelease");
   return *EnableCFBridgeFns;
 }
 
@@ -96,7 +95,7 @@ bool trans::isPlusOne(const Expr *E) {
           ento::cocoa::isRefType(callE->getType(), "CF",
                                  FD->getIdentifier()->getName())) {
         StringRef fname = FD->getIdentifier()->getName();
-        if (fname.ends_with("Retain") || fname.contains("Create") ||
+        if (fname.endswith("Retain") || fname.contains("Create") ||
             fname.contains("Copy"))
           return true;
       }

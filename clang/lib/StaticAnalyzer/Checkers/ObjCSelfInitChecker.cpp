@@ -61,13 +61,13 @@ class ObjCSelfInitChecker : public Checker<  check::PostObjCMessage,
                                              check::PostCall,
                                              check::Location,
                                              check::Bind > {
-  const BugType BT{this, "Missing \"self = [(super or self) init...]\"",
-                   categories::CoreFoundationObjectiveC};
+  mutable std::unique_ptr<BugType> BT;
 
   void checkForInvalidSelf(const Expr *E, CheckerContext &C,
                            const char *errorStr) const;
 
 public:
+  ObjCSelfInitChecker() {}
   void checkPostObjCMessage(const ObjCMethodCall &Msg, CheckerContext &C) const;
   void checkPostStmt(const ObjCIvarRefExpr *E, CheckerContext &C) const;
   void checkPreStmt(const ReturnStmt *S, CheckerContext &C) const;
@@ -157,7 +157,10 @@ void ObjCSelfInitChecker::checkForInvalidSelf(const Expr *E, CheckerContext &C,
   if (!N)
     return;
 
-  C.emitReport(std::make_unique<PathSensitiveBugReport>(BT, errorStr, N));
+  if (!BT)
+    BT.reset(new BugType(this, "Missing \"self = [(super or self) init...]\"",
+                         categories::CoreFoundationObjectiveC));
+  C.emitReport(std::make_unique<PathSensitiveBugReport>(*BT, errorStr, N));
 }
 
 void ObjCSelfInitChecker::checkPostObjCMessage(const ObjCMethodCall &Msg,

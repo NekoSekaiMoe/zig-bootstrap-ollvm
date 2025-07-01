@@ -112,7 +112,7 @@ static Register performCopyPropagation(Register Reg,
                                        bool &IsKill, const TargetInstrInfo &TII,
                                        const TargetRegisterInfo &TRI) {
   // First check if statepoint itself uses Reg in non-meta operands.
-  int Idx = RI->findRegisterUseOperandIdx(Reg, &TRI, false);
+  int Idx = RI->findRegisterUseOperandIdx(Reg, false, &TRI);
   if (Idx >= 0 && (unsigned)Idx < StatepointOpers(&*RI).getNumDeoptArgsIdx()) {
     IsKill = false;
     return Reg;
@@ -190,8 +190,7 @@ public:
   // Does basic block MBB contains reload of Reg from FI?
   bool hasReload(Register Reg, int FI, const MachineBasicBlock *MBB) {
     RegSlotPair RSP(Reg, FI);
-    auto It = Reloads.find(MBB);
-    return It != Reloads.end() && It->second.count(RSP);
+    return Reloads.count(MBB) && Reloads[MBB].count(RSP);
   }
 };
 
@@ -243,10 +242,9 @@ public:
       It.second.Index = 0;
 
     ReservedSlots.clear();
-    if (EHPad)
-      if (auto It = GlobalIndices.find(EHPad); It != GlobalIndices.end())
-        for (auto &RSP : It->second)
-          ReservedSlots.insert(RSP.second);
+    if (EHPad && GlobalIndices.count(EHPad))
+      for (auto &RSP : GlobalIndices[EHPad])
+        ReservedSlots.insert(RSP.second);
   }
 
   // Get frame index to spill the register.
@@ -383,6 +381,8 @@ public:
                   EndIdx = MI.getNumOperands();
          Idx < EndIdx; ++Idx) {
       MachineOperand &MO = MI.getOperand(Idx);
+      // Leave `undef` operands as is, StackMaps will rewrite them
+      // into a constant.
       if (!MO.isReg() || MO.isImplicit() || MO.isUndef())
         continue;
       Register Reg = MO.getReg();
@@ -461,8 +461,7 @@ public:
 
       if (EHPad && !RC.hasReload(Reg, RegToSlotIdx[Reg], EHPad)) {
         RC.recordReload(Reg, RegToSlotIdx[Reg], EHPad);
-        auto EHPadInsertPoint =
-            EHPad->SkipPHIsLabelsAndDebug(EHPad->begin(), Reg);
+        auto EHPadInsertPoint = EHPad->SkipPHIsLabelsAndDebug(EHPad->begin());
         insertReloadBefore(Reg, EHPadInsertPoint, EHPad);
         LLVM_DEBUG(dbgs() << "...also reload at EHPad "
                           << printMBBReference(*EHPad) << "\n");

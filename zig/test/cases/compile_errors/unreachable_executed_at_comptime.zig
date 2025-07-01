@@ -9,6 +9,8 @@ export fn entry() void {
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :4:9: error: reached unreachable code
-// :8:21: note: called at comptime here
+// :8:21: note: called from here

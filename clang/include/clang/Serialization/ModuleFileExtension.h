@@ -9,6 +9,7 @@
 #ifndef LLVM_CLANG_SERIALIZATION_MODULEFILEEXTENSION_H
 #define LLVM_CLANG_SERIALIZATION_MODULEFILEEXTENSION_H
 
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "llvm/Support/HashBuilder.h"
 #include "llvm/Support/MD5.h"
@@ -85,7 +86,8 @@ public:
   /// The default implementation of this function simply does nothing, so the
   /// presence/absence of this extension does not distinguish module files.
   using ExtensionHashBuilder =
-      llvm::HashBuilder<llvm::MD5, llvm::endianness::native>;
+      llvm::HashBuilderImpl<llvm::MD5,
+                            llvm::support::endian::system_endianness()>;
   virtual void hashExtension(ExtensionHashBuilder &HBuilder) const;
 
   /// Create a new module file extension writer, which will be

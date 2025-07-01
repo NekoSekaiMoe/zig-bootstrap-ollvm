@@ -92,12 +92,7 @@ namespace MipsII {
     MO_CALL_LO16,
 
     /// Helper operand used to generate R_MIPS_JALR
-    MO_JALR,
-
-    /// MO_DLLIMPORT - On a symbol operand "FOO", this indicates that the
-    /// reference is actually to the "__imp_FOO" symbol.  This is used for
-    /// dllimport linkage on windows.
-    MO_DLLIMPORT = 0x20,
+    MO_JALR
   };
 
   enum {
@@ -139,15 +134,6 @@ namespace MipsII {
     OPERAND_MEM_SIMM9 = OPERAND_FIRST_MIPS_MEM_IMM,
     OPERAND_LAST_MIPS_MEM_IMM = OPERAND_MEM_SIMM9
   };
-}
-
-inline static MCRegister getMSARegFromFReg(MCRegister Reg) {
-  if (Reg >= Mips::F0 && Reg <= Mips::F31)
-    return Reg - Mips::F0 + Mips::W0;
-  else if (Reg >= Mips::D0_64 && Reg <= Mips::D31_64)
-    return Reg - Mips::D0_64 + Mips::W0;
-  else
-    return Mips::NoRegister;
 }
 }
 

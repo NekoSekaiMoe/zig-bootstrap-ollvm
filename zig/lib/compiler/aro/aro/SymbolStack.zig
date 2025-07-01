@@ -33,14 +33,14 @@ pub const Kind = enum {
     constexpr,
 };
 
-scopes: std.ArrayListUnmanaged(Scope) = .empty,
+scopes: std.ArrayListUnmanaged(Scope) = .{},
 /// allocations from nested scopes are retained after popping; `active_len` is the number
 /// of currently-active items in `scopes`.
 active_len: usize = 0,
 
 const Scope = struct {
-    vars: std.AutoHashMapUnmanaged(StringId, Symbol) = .empty,
-    tags: std.AutoHashMapUnmanaged(StringId, Symbol) = .empty,
+    vars: std.AutoHashMapUnmanaged(StringId, Symbol) = .{},
+    tags: std.AutoHashMapUnmanaged(StringId, Symbol) = .{},
 
     fn deinit(self: *Scope, allocator: Allocator) void {
         self.vars.deinit(allocator);
@@ -178,11 +178,9 @@ pub fn defineTypedef(
     if (s.get(name, .vars)) |prev| {
         switch (prev.kind) {
             .typedef => {
-                if (!prev.ty.is(.invalid)) {
-                    if (!ty.eql(prev.ty, p.comp, true)) {
-                        try p.errStr(.redefinition_of_typedef, tok, try p.typePairStrExtra(ty, " vs ", prev.ty));
-                        if (prev.tok != 0) try p.errTok(.previous_definition, prev.tok);
-                    }
+                if (!ty.eql(prev.ty, p.comp, true)) {
+                    try p.errStr(.redefinition_of_typedef, tok, try p.typePairStrExtra(ty, " vs ", prev.ty));
+                    if (prev.tok != 0) try p.errTok(.previous_definition, prev.tok);
                 }
             },
             .enumeration, .decl, .def, .constexpr => {
@@ -196,12 +194,7 @@ pub fn defineTypedef(
         .kind = .typedef,
         .name = name,
         .tok = tok,
-        .ty = .{
-            .name = name,
-            .specifier = ty.specifier,
-            .qual = ty.qual,
-            .data = ty.data,
-        },
+        .ty = ty,
         .node = node,
         .val = .{},
     });

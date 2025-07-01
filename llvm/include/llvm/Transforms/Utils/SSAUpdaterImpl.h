@@ -15,7 +15,6 @@
 #define LLVM_TRANSFORMS_UTILS_SSAUPDATERIMPL_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Debug.h"
@@ -97,7 +96,7 @@ public:
 
     // Special case: bail out if BB is unreachable.
     if (BlockList.size() == 0) {
-      ValT V = Traits::GetPoisonVal(BB, Updater);
+      ValT V = Traits::GetUndefVal(BB, Updater);
       (*AvailableVals)[BB] = V;
       return V;
     }
@@ -139,16 +138,17 @@ public:
       for (unsigned p = 0; p != Info->NumPreds; ++p) {
         BlkT *Pred = Preds[p];
         // Check if BBMap already has a BBInfo for the predecessor block.
-        BBInfo *&BBMapBucket = BBMap[Pred];
-        if (BBMapBucket) {
-          Info->Preds[p] = BBMapBucket;
+        typename BBMapTy::value_type &BBMapBucket =
+          BBMap.FindAndConstruct(Pred);
+        if (BBMapBucket.second) {
+          Info->Preds[p] = BBMapBucket.second;
           continue;
         }
 
         // Create a new BBInfo for the predecessor.
         ValT PredVal = AvailableVals->lookup(Pred);
         BBInfo *PredInfo = new (Allocator) BBInfo(Pred, PredVal);
-        BBMapBucket = PredInfo;
+        BBMapBucket.second = PredInfo;
         Info->Preds[p] = PredInfo;
 
         if (PredInfo->AvailableVal) {
@@ -251,9 +251,9 @@ public:
         for (unsigned p = 0; p != Info->NumPreds; ++p) {
           BBInfo *Pred = Info->Preds[p];
 
-          // Treat an unreachable predecessor as a definition with 'poison'.
+          // Treat an unreachable predecessor as a definition with 'undef'.
           if (Pred->BlkNum == 0) {
-            Pred->AvailableVal = Traits::GetPoisonVal(Pred->BB, Updater);
+            Pred->AvailableVal = Traits::GetUndefVal(Pred->BB, Updater);
             (*AvailableVals)[Pred->BB] = Pred->AvailableVal;
             Pred->DefBB = Pred;
             Pred->BlkNum = PseudoEntry->BlkNum;
@@ -413,33 +413,26 @@ public:
   /// FindExistingPHI - Look through the PHI nodes in a block to see if any of
   /// them match what is needed.
   void FindExistingPHI(BlkT *BB, BlockListTy *BlockList) {
-    SmallVector<BBInfo *, 20> TaggedBlocks;
     for (auto &SomePHI : BB->phis()) {
-      if (CheckIfPHIMatches(&SomePHI, TaggedBlocks)) {
+      if (CheckIfPHIMatches(&SomePHI)) {
         RecordMatchingPHIs(BlockList);
         break;
       }
+      // Match failed: clear all the PHITag values.
+      for (typename BlockListTy::iterator I = BlockList->begin(),
+             E = BlockList->end(); I != E; ++I)
+        (*I)->PHITag = nullptr;
     }
   }
 
   /// CheckIfPHIMatches - Check if a PHI node matches the placement and values
   /// in the BBMap.
-  bool CheckIfPHIMatches(PhiT *PHI, SmallVectorImpl<BBInfo *> &TaggedBlocks) {
-    // Match failed: clear all the PHITag values. Only need to clear visited
-    // blocks.
-    auto Cleanup = make_scope_exit([&]() {
-      for (BBInfo *TaggedBlock : TaggedBlocks)
-        TaggedBlock->PHITag = nullptr;
-      TaggedBlocks.clear();
-    });
-
+  bool CheckIfPHIMatches(PhiT *PHI) {
     SmallVector<PhiT *, 20> WorkList;
     WorkList.push_back(PHI);
 
     // Mark that the block containing this PHI has been visited.
-    BBInfo *PHIBlock = BBMap[PHI->getParent()];
-    PHIBlock->PHITag = PHI;
-    TaggedBlocks.push_back(PHIBlock);
+    BBMap[PHI->getParent()]->PHITag = PHI;
 
     while (!WorkList.empty()) {
       PHI = WorkList.pop_back_val();
@@ -472,13 +465,10 @@ public:
           return false;
         }
         PredInfo->PHITag = IncomingPHIVal;
-        TaggedBlocks.push_back(PredInfo);
 
         WorkList.push_back(IncomingPHIVal);
       }
     }
-    // Match found, keep PHITags.
-    Cleanup.release();
     return true;
   }
 

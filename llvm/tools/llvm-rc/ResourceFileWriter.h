@@ -16,7 +16,6 @@
 #include "ResourceScriptStmt.h"
 #include "ResourceVisitor.h"
 
-#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
 namespace llvm {
@@ -56,7 +55,6 @@ public:
   Error visitHTMLResource(const RCResource *) override;
   Error visitIconResource(const RCResource *) override;
   Error visitMenuResource(const RCResource *) override;
-  Error visitMenuExResource(const RCResource *) override;
   Error visitVersionInfoResource(const RCResource *) override;
   Error visitStringTableResource(const RCResource *) override;
   Error visitUserDefinedResource(const RCResource *) override;
@@ -69,7 +67,6 @@ public:
   Error visitLanguageStmt(const LanguageResource *) override;
   Error visitStyleStmt(const StyleStmt *) override;
   Error visitVersionStmt(const VersionStmt *) override;
-  Error visitMenuStmt(const MenuStmt *) override;
 
   // Stringtables are output at the end of .res file. We need a separate
   // function to do it.
@@ -94,11 +91,10 @@ public:
     };
     std::optional<FontInfo> Font;
     IntOrString Class;
-    IntOrString Menu;
 
     ObjectInfo()
         : LanguageInfo(0), Characteristics(0), VersionInfo(0),
-          Class(StringRef()), Menu(StringRef()) {}
+          Class(StringRef()) {}
   } ObjectData;
 
   struct StringTableInfo {
@@ -154,12 +150,8 @@ private:
   // MenuResource
   Error writeMenuDefinition(const std::unique_ptr<MenuDefinition> &,
                             uint16_t Flags);
-  Error writeMenuExDefinition(const std::unique_ptr<MenuDefinition> &,
-                              uint16_t Flags);
   Error writeMenuDefinitionList(const MenuDefinitionList &List);
-  Error writeMenuExDefinitionList(const MenuDefinitionList &List);
   Error writeMenuBody(const RCResource *);
-  Error writeMenuExBody(const RCResource *);
 
   // StringTableResource
   Error visitStringTableBundle(const RCResource *);
@@ -186,8 +178,8 @@ private:
   uint64_t writeObject(const ArrayRef<uint8_t> Data);
 
   template <typename T> uint64_t writeInt(const T &Value) {
-    support::detail::packed_endian_specific_integral<
-        T, llvm::endianness::little, support::unaligned>
+    support::detail::packed_endian_specific_integral<T, support::little,
+                                                     support::unaligned>
         Object(Value);
     return writeObject(Object);
   }

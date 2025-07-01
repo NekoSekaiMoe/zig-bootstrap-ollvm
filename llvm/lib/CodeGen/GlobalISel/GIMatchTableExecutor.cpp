@@ -26,19 +26,12 @@ GIMatchTableExecutor::MatcherState::MatcherState(unsigned MaxRenderers)
 
 GIMatchTableExecutor::GIMatchTableExecutor() = default;
 
-bool GIMatchTableExecutor::isOperandImmEqual(const MachineOperand &MO,
-                                             int64_t Value,
-                                             const MachineRegisterInfo &MRI,
-                                             bool Splat) const {
-  if (MO.isReg() && MO.getReg()) {
+bool GIMatchTableExecutor::isOperandImmEqual(
+    const MachineOperand &MO, int64_t Value,
+    const MachineRegisterInfo &MRI) const {
+  if (MO.isReg() && MO.getReg())
     if (auto VRegVal = getIConstantVRegValWithLookThrough(MO.getReg(), MRI))
       return VRegVal->Value.getSExtValue() == Value;
-
-    if (Splat) {
-      if (auto VRegVal = getIConstantSplatVal(MO.getReg(), MRI))
-        return VRegVal->getSExtValue() == Value;
-    }
-  }
   return false;
 }
 
@@ -61,42 +54,15 @@ bool GIMatchTableExecutor::isBaseWithConstantOffset(
 
 bool GIMatchTableExecutor::isObviouslySafeToFold(MachineInstr &MI,
                                                  MachineInstr &IntoMI) const {
-  auto IntoMIIter = IntoMI.getIterator();
-
   // Immediate neighbours are already folded.
   if (MI.getParent() == IntoMI.getParent() &&
-      std::next(MI.getIterator()) == IntoMIIter)
+      std::next(MI.getIterator()) == IntoMI.getIterator())
     return true;
 
   // Convergent instructions cannot be moved in the CFG.
   if (MI.isConvergent() && MI.getParent() != IntoMI.getParent())
     return false;
 
-  if (MI.isLoadFoldBarrier())
-    return false;
-
-  // If the load is simple, check instructions between MI and IntoMI
-  if (MI.mayLoad() && MI.getParent() == IntoMI.getParent()) {
-    if (MI.memoperands_empty())
-      return false;
-    auto &MMO = **(MI.memoperands_begin());
-    if (MMO.isAtomic() || MMO.isVolatile())
-      return false;
-
-    // Ensure instructions between MI and IntoMI are not affected when combined
-    unsigned Iter = 0;
-    const unsigned MaxIter = 20;
-    for (auto &CurrMI :
-         instructionsWithoutDebug(MI.getIterator(), IntoMI.getIterator())) {
-      if (CurrMI.isLoadFoldBarrier())
-        return false;
-
-      if (Iter++ == MaxIter)
-        return false;
-    }
-
-    return true;
-  }
-
-  return !MI.mayLoad();
+  return !MI.mayLoadOrStore() && !MI.mayRaiseFPException() &&
+         !MI.hasUnmodeledSideEffects() && MI.implicit_operands().empty();
 }

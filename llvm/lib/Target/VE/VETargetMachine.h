@@ -15,12 +15,12 @@
 
 #include "VEInstrInfo.h"
 #include "VESubtarget.h"
-#include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
+#include "llvm/Target/TargetMachine.h"
 #include <optional>
 
 namespace llvm {
 
-class VETargetMachine : public CodeGenTargetMachineImpl {
+class VETargetMachine : public LLVMTargetMachine {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
   VESubtarget Subtarget;
   // Hold Strings that can be free'd all together with VETargetMachine
@@ -31,7 +31,7 @@ public:
   VETargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                   StringRef FS, const TargetOptions &Options,
                   std::optional<Reloc::Model> RM,
-                  std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                  std::optional<CodeModel::Model> CM, CodeGenOpt::Level OL,
                   bool JIT);
   ~VETargetMachine() override;
 

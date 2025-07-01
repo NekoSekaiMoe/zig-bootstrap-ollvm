@@ -78,11 +78,12 @@ Error DWARFRecordSectionSplitter::processBlock(
       StringRef(B.getContent().data(), B.getContent().size()),
       G.getEndianness());
 
-  std::vector<Edge::OffsetT> SplitOffsets;
   while (true) {
+    uint64_t RecordStartOffset = BlockReader.getOffset();
+
     LLVM_DEBUG({
       dbgs() << "    Processing CFI record at "
-             << (B.getAddress() + BlockReader.getOffset()) << "\n";
+             << formatv("{0:x16}", B.getAddress()) << "\n";
     });
 
     uint32_t Length;
@@ -99,16 +100,17 @@ Error DWARFRecordSectionSplitter::processBlock(
         return Err;
     }
 
-    // If this was the last block then there's nothing more to split
-    if (BlockReader.empty())
-      break;
+    // If this was the last block then there's nothing to split
+    if (BlockReader.empty()) {
+      LLVM_DEBUG(dbgs() << "      Extracted " << B << "\n");
+      return Error::success();
+    }
 
-    SplitOffsets.push_back(BlockReader.getOffset());
+    uint64_t BlockSize = BlockReader.getOffset() - RecordStartOffset;
+    auto &NewBlock = G.splitBlock(B, BlockSize, &Cache);
+    (void)NewBlock;
+    LLVM_DEBUG(dbgs() << "      Extracted " << NewBlock << "\n");
   }
-
-  G.splitBlock(B, SplitOffsets);
-
-  return Error::success();
 }
 
 } // namespace jitlink

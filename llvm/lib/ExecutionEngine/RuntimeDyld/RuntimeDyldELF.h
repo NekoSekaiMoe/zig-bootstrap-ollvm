@@ -16,6 +16,8 @@
 #include "RuntimeDyldImpl.h"
 #include "llvm/ADT/DenseMap.h"
 
+using namespace llvm;
+
 namespace llvm {
 namespace object {
 class ELFObjectFileBase;
@@ -46,18 +48,6 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
   void resolveARMRelocation(const SectionEntry &Section, uint64_t Offset,
                             uint32_t Value, uint32_t Type, int32_t Addend);
 
-  void resolveLoongArch64Relocation(const SectionEntry &Section,
-                                    uint64_t Offset, uint64_t Value,
-                                    uint32_t Type, int64_t Addend);
-
-  bool resolveLoongArch64ShortBranch(unsigned SectionID,
-                                     relocation_iterator RelI,
-                                     const RelocationValueRef &Value);
-
-  void resolveLoongArch64Branch(unsigned SectionID,
-                                const RelocationValueRef &Value,
-                                relocation_iterator RelI, StubMap &Stubs);
-
   void resolvePPC32Relocation(const SectionEntry &Section, uint64_t Offset,
                               uint64_t Value, uint32_t Type, int64_t Addend);
 
@@ -70,10 +60,6 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
   void resolveBPFRelocation(const SectionEntry &Section, uint64_t Offset,
                             uint64_t Value, uint32_t Type, int64_t Addend);
 
-  void resolveRISCVRelocation(const SectionEntry &Section, uint64_t Offset,
-                              uint64_t Value, uint32_t Type, int64_t Addend,
-                              SID SectionID);
-
   unsigned getMaxStubSize() const override {
     if (Arch == Triple::aarch64 || Arch == Triple::aarch64_be)
       return 20; // movz; movk; movk; movk; br
@@ -83,8 +69,6 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
       return 16;
     else if (IsMipsN64ABI)
       return 32;
-    if (Arch == Triple::loongarch64)
-      return 20; // lu12i.w; ori; lu32i.d; lu52i.d; jr
     else if (Arch == Triple::ppc64 || Arch == Triple::ppc64le)
       return 44;
     else if (Arch == Triple::x86_64)
@@ -124,7 +108,7 @@ private:
   uint64_t findOrAllocGOTEntry(const RelocationValueRef &Value,
                                unsigned GOTRelType);
 
-  // Resolve the relative address of GOTOffset in Section ID and place
+  // Resolve the relvative address of GOTOffset in Section ID and place
   // it at the given Offset
   void resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset,
                                   uint64_t GOTOffset, uint32_t Type);
@@ -137,8 +121,8 @@ private:
   // Compute the address in memory where we can find the placeholder
   void *computePlaceholderAddress(unsigned SectionID, uint64_t Offset) const;
 
-  // Split out common case for creating the RelocationEntry for when the
-  // relocation requires no particular advanced processing.
+  // Split out common case for createing the RelocationEntry for when the relocation requires
+  // no particular advanced processing.
   void processSimpleRelocation(unsigned SectionID, uint64_t Offset, unsigned RelType, RelocationValueRef Value);
 
   // Return matching *LO16 relocation (Mips specific)
@@ -164,9 +148,6 @@ private:
 
   // *HI16 relocations will be added for resolving when we find matching
   // *LO16 part. (Mips specific)
-  //
-  // *HI20 relocations will be added for resolving when we find matching
-  // *LO12 part. (RISC-V specific)
   SmallVector<std::pair<RelocationValueRef, RelocationEntry>, 8> PendingRelocs;
 
   // When a module is loaded we save the SectionID of the EH frame section
@@ -252,4 +233,4 @@ public:
 
 } // end namespace llvm
 
-#endif // LLVM_LIB_EXECUTIONENGINE_RUNTIMEDYLD_RUNTIMEDYLDELF_H
+#endif

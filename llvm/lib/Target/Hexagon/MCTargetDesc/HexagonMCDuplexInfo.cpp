@@ -187,7 +187,7 @@ unsigned HexagonMCInstrInfo::iClassOfDuplexPair(unsigned Ga, unsigned Gb) {
 }
 
 unsigned HexagonMCInstrInfo::getDuplexCandidateGroup(MCInst const &MCI) {
-  MCRegister DstReg, PredReg, SrcReg, Src1Reg, Src2Reg;
+  unsigned DstReg, PredReg, SrcReg, Src1Reg, Src2Reg;
 
   switch (MCI.getOpcode()) {
   default:
@@ -533,7 +533,7 @@ unsigned HexagonMCInstrInfo::getDuplexCandidateGroup(MCInst const &MCI) {
 }
 
 bool HexagonMCInstrInfo::subInstWouldBeExtended(MCInst const &potentialDuplex) {
-  MCRegister DstReg, SrcReg;
+  unsigned DstReg, SrcReg;
   switch (potentialDuplex.getOpcode()) {
   case Hexagon::A2_addi:
     // testing for case of: Rx = add(Rx,#s7)
@@ -657,7 +657,7 @@ bool HexagonMCInstrInfo::isDuplexPair(MCInst const &MIa, MCInst const &MIb) {
 inline static void addOps(MCInst &subInstPtr, MCInst const &Inst,
                           unsigned opNum) {
   if (Inst.getOperand(opNum).isReg()) {
-    switch (Inst.getOperand(opNum).getReg().id()) {
+    switch (Inst.getOperand(opNum).getReg()) {
     default:
       llvm_unreachable("Not Duplexable Register");
       break;

@@ -51,7 +51,6 @@ struct LoongArchRegisterInfo : public LoongArchGenRegisterInfo {
   bool requiresFrameIndexScavenging(const MachineFunction &MF) const override {
     return true;
   }
-  bool canRealignStack(const MachineFunction &MF) const override;
 };
 } // end namespace llvm
 

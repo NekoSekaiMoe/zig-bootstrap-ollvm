@@ -115,7 +115,7 @@ pub const Node = struct {
             .start = undefined,
             .end = undefined,
         },
-        values: std.ArrayListUnmanaged(Entry) = .empty,
+        values: std.ArrayListUnmanaged(Entry) = .{},
 
         pub const base_tag: Node.Tag = .map;
 
@@ -161,7 +161,7 @@ pub const Node = struct {
             .start = undefined,
             .end = undefined,
         },
-        values: std.ArrayListUnmanaged(*Node) = .empty,
+        values: std.ArrayListUnmanaged(*Node) = .{},
 
         pub const base_tag: Node.Tag = .list;
 
@@ -195,7 +195,7 @@ pub const Node = struct {
             .start = undefined,
             .end = undefined,
         },
-        string_value: std.ArrayListUnmanaged(u8) = .empty,
+        string_value: std.ArrayListUnmanaged(u8) = .{},
 
         pub const base_tag: Node.Tag = .value;
 
@@ -227,7 +227,7 @@ pub const Tree = struct {
     source: []const u8,
     tokens: []Token,
     line_cols: std.AutoHashMap(TokenIndex, LineCol),
-    docs: std.ArrayListUnmanaged(*Node) = .empty,
+    docs: std.ArrayListUnmanaged(*Node) = .{},
 
     pub fn init(allocator: Allocator) Tree {
         return .{

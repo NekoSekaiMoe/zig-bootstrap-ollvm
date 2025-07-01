@@ -44,10 +44,6 @@
 #ifndef _AR_H_
 #define	_AR_H_
 
-#include <_bounds.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
-
 /* Pre-4BSD archives had these magic numbers in them. */
 #define	OARMAG1	0177555
 #define	OARMAG2	0177545

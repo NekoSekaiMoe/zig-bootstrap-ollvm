@@ -22,12 +22,14 @@
 #include "llvm/ProfileData/ProfileCommon.h"
 #include "llvm/ProfileData/SampleProf.h"
 #include "llvm/Support/Compression.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -81,9 +83,11 @@ void DefaultFunctionPruningStrategy::Erase(size_t CurrentOutputSize) {
     NumToRemove = 1;
 
   assert(NumToRemove <= SortedFunctions.size());
-  for (const NameFunctionSamples &E :
-       llvm::drop_begin(SortedFunctions, SortedFunctions.size() - NumToRemove))
-    ProfileMap.erase(E.first);
+  llvm::for_each(
+      llvm::make_range(SortedFunctions.begin() + SortedFunctions.size() -
+                           NumToRemove,
+                       SortedFunctions.end()),
+      [&](const NameFunctionSamples &E) { ProfileMap.erase(E.first); });
   SortedFunctions.resize(SortedFunctions.size() - NumToRemove);
 }
 
@@ -238,7 +242,7 @@ std::error_code SampleProfileWriterExtBinaryBase::writeContextIdx(
   if (Context.hasContext())
     return writeCSNameIdx(Context);
   else
-    return SampleProfileWriterBinary::writeNameIdx(Context.getFunction());
+    return SampleProfileWriterBinary::writeNameIdx(Context.getName());
 }
 
 std::error_code
@@ -344,22 +348,23 @@ std::error_code SampleProfileWriterExtBinaryBase::writeNameTable() {
     return SampleProfileWriterBinary::writeNameTable();
 
   auto &OS = *OutputStream;
-  std::set<FunctionId> V;
+  std::set<StringRef> V;
   stablizeNameTable(NameTable, V);
 
   // Write out the MD5 name table. We wrote unencoded MD5 so reader can
   // retrieve the name using the name index without having to read the
   // whole name table.
   encodeULEB128(NameTable.size(), OS);
-  support::endian::Writer Writer(OS, llvm::endianness::little);
+  support::endian::Writer Writer(OS, support::little);
   for (auto N : V)
-    Writer.write(N.getHashCode());
+    Writer.write(MD5Hash(N));
   return sampleprof_error::success;
 }
 
 std::error_code SampleProfileWriterExtBinaryBase::writeNameTableSection(
     const SampleProfileMap &ProfileMap) {
   for (const auto &I : ProfileMap) {
+    assert(I.first == I.second.getContext() && "Inconsistent profile map");
     addContext(I.second.getContext());
     addNames(I.second);
   }
@@ -367,13 +372,10 @@ std::error_code SampleProfileWriterExtBinaryBase::writeNameTableSection(
   // If NameTable contains ".__uniq." suffix, set SecFlagUniqSuffix flag
   // so compiler won't strip the suffix during profile matching after
   // seeing the flag in the profile.
-  // Original names are unavailable if using MD5, so this option has no use.
-  if (!UseMD5) {
-    for (const auto &I : NameTable) {
-      if (I.first.stringRef().contains(FunctionSamples::UniqSuffix)) {
-        addSectionFlag(SecNameTable, SecNameTableFlags::SecFlagUniqSuffix);
-        break;
-      }
+  for (const auto &I : NameTable) {
+    if (I.first.contains(FunctionSamples::UniqSuffix)) {
+      addSectionFlag(SecNameTable, SecNameTableFlags::SecFlagUniqSuffix);
+      break;
     }
   }
 
@@ -395,12 +397,12 @@ std::error_code SampleProfileWriterExtBinaryBase::writeCSNameTableSection() {
 
   auto &OS = *OutputStream;
   encodeULEB128(OrderedContexts.size(), OS);
-  support::endian::Writer Writer(OS, llvm::endianness::little);
+  support::endian::Writer Writer(OS, support::little);
   for (auto Context : OrderedContexts) {
     auto Frames = Context.getContextFrames();
     encodeULEB128(Frames.size(), OS);
     for (auto &Callsite : Frames) {
-      if (std::error_code EC = writeNameIdx(Callsite.Func))
+      if (std::error_code EC = writeNameIdx(Callsite.FuncName))
         return EC;
       encodeULEB128(Callsite.Location.LineOffset, OS);
       encodeULEB128(Callsite.Location.Discriminator, OS);
@@ -568,7 +570,7 @@ std::error_code SampleProfileWriterText::writeSample(const FunctionSamples &S) {
   if (FunctionSamples::ProfileIsCS)
     OS << "[" << S.getContext().toString() << "]:" << S.getTotalSamples();
   else
-    OS << S.getFunction() << ":" << S.getTotalSamples();
+    OS << S.getName() << ":" << S.getTotalSamples();
 
   if (Indent == 0)
     OS << ":" << S.getHeadSamples();
@@ -622,19 +624,16 @@ std::error_code SampleProfileWriterText::writeSample(const FunctionSamples &S) {
     LineCount++;
   }
 
-  if (Indent == 0 && MarkFlatProfiles && S.getCallsiteSamples().size() == 0)
-    OS << " !Flat\n";
-
   return sampleprof_error::success;
 }
 
 std::error_code
 SampleProfileWriterBinary::writeContextIdx(const SampleContext &Context) {
   assert(!Context.hasContext() && "cs profile is not supported");
-  return writeNameIdx(Context.getFunction());
+  return writeNameIdx(Context.getName());
 }
 
-std::error_code SampleProfileWriterBinary::writeNameIdx(FunctionId FName) {
+std::error_code SampleProfileWriterBinary::writeNameIdx(StringRef FName) {
   auto &NTable = getNameTable();
   const auto &Ret = NTable.find(FName);
   if (Ret == NTable.end())
@@ -643,13 +642,13 @@ std::error_code SampleProfileWriterBinary::writeNameIdx(FunctionId FName) {
   return sampleprof_error::success;
 }
 
-void SampleProfileWriterBinary::addName(FunctionId FName) {
+void SampleProfileWriterBinary::addName(StringRef FName) {
   auto &NTable = getNameTable();
   NTable.insert(std::make_pair(FName, 0));
 }
 
 void SampleProfileWriterBinary::addContext(const SampleContext &Context) {
-  addName(Context.getFunction());
+  addName(Context.getName());
 }
 
 void SampleProfileWriterBinary::addNames(const FunctionSamples &S) {
@@ -657,14 +656,14 @@ void SampleProfileWriterBinary::addNames(const FunctionSamples &S) {
   for (const auto &I : S.getBodySamples()) {
     const SampleRecord &Sample = I.second;
     for (const auto &J : Sample.getCallTargets())
-      addName(J.first);
+      addName(J.first());
   }
 
   // Recursively add all the names for inlined callsites.
   for (const auto &J : S.getCallsiteSamples())
     for (const auto &FS : J.second) {
       const FunctionSamples &CalleeSamples = FS.second;
-      addName(CalleeSamples.getFunction());
+      addName(CalleeSamples.getName());
       addNames(CalleeSamples);
     }
 }
@@ -673,26 +672,26 @@ void SampleProfileWriterExtBinaryBase::addContext(
     const SampleContext &Context) {
   if (Context.hasContext()) {
     for (auto &Callsite : Context.getContextFrames())
-      SampleProfileWriterBinary::addName(Callsite.Func);
+      SampleProfileWriterBinary::addName(Callsite.FuncName);
     CSNameTable.insert(std::make_pair(Context, 0));
   } else {
-    SampleProfileWriterBinary::addName(Context.getFunction());
+    SampleProfileWriterBinary::addName(Context.getName());
   }
 }
 
 void SampleProfileWriterBinary::stablizeNameTable(
-    MapVector<FunctionId, uint32_t> &NameTable, std::set<FunctionId> &V) {
+    MapVector<StringRef, uint32_t> &NameTable, std::set<StringRef> &V) {
   // Sort the names to make NameTable deterministic.
   for (const auto &I : NameTable)
     V.insert(I.first);
   int i = 0;
-  for (const FunctionId &N : V)
+  for (const StringRef &N : V)
     NameTable[N] = i++;
 }
 
 std::error_code SampleProfileWriterBinary::writeNameTable() {
   auto &OS = *OutputStream;
-  std::set<FunctionId> V;
+  std::set<StringRef> V;
   stablizeNameTable(NameTable, V);
 
   // Write out the name table.
@@ -727,7 +726,8 @@ SampleProfileWriterBinary::writeHeader(const SampleProfileMap &ProfileMap) {
 
   // Generate the name table for all the functions referenced in the profile.
   for (const auto &I : ProfileMap) {
-    addContext(I.second.getContext());
+    assert(I.first == I.second.getContext() && "Inconsistent profile map");
+    addContext(I.first);
     addNames(I.second);
   }
 
@@ -745,7 +745,7 @@ void SampleProfileWriterExtBinaryBase::setToCompressSection(SecType Type) {
 }
 
 void SampleProfileWriterExtBinaryBase::allocSecHdrTable() {
-  support::endian::Writer Writer(*OutputStream, llvm::endianness::little);
+  support::endian::Writer Writer(*OutputStream, support::little);
 
   Writer.write(static_cast<uint64_t>(SectionHdrLayout.size()));
   SecHdrTableOffset = OutputStream->tell();
@@ -775,8 +775,7 @@ std::error_code SampleProfileWriterExtBinaryBase::writeSecHdrTable() {
   // but it needs to be read before SecLBRProfile (the order in
   // SectionHdrLayout). So we use IndexMap above to switch the order.
   support::endian::SeekableWriter Writer(
-      static_cast<raw_pwrite_stream &>(*OutputStream),
-      llvm::endianness::little);
+      static_cast<raw_pwrite_stream &>(*OutputStream), support::little);
   for (uint32_t LayoutIdx = 0; LayoutIdx < SectionHdrLayout.size();
        LayoutIdx++) {
     assert(IndexMap[LayoutIdx] < SecHdrTable.size() &&
@@ -812,7 +811,8 @@ std::error_code SampleProfileWriterBinary::writeSummary() {
   encodeULEB128(Summary->getMaxFunctionCount(), OS);
   encodeULEB128(Summary->getNumCounts(), OS);
   encodeULEB128(Summary->getNumFunctions(), OS);
-  ArrayRef<ProfileSummaryEntry> Entries = Summary->getDetailedSummary();
+  const std::vector<ProfileSummaryEntry> &Entries =
+      Summary->getDetailedSummary();
   encodeULEB128(Entries.size(), OS);
   for (auto Entry : Entries) {
     encodeULEB128(Entry.Cutoff, OS);
@@ -838,7 +838,7 @@ std::error_code SampleProfileWriterBinary::writeBody(const FunctionSamples &S) {
     encodeULEB128(Sample.getSamples(), OS);
     encodeULEB128(Sample.getCallTargets().size(), OS);
     for (const auto &J : Sample.getSortedCallTargets()) {
-      FunctionId Callee = J.first;
+      StringRef Callee = J.first;
       uint64_t CalleeSamples = J.second;
       if (std::error_code EC = writeNameIdx(Callee))
         return EC;

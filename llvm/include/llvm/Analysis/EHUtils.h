@@ -24,8 +24,10 @@ static void computeEHOnlyBlocks(FunctionT &F, DenseSet<BlockT *> &EHBlocks) {
   DenseMap<BlockT *, Status> Statuses;
 
   auto GetStatus = [&](BlockT *BB) {
-    auto It = Statuses.find(BB);
-    return It != Statuses.end() ? It->second : Unknown;
+    if (Statuses.find(BB) != Statuses.end())
+      return Statuses[BB];
+    else
+      return Unknown;
   };
 
   auto CheckPredecessors = [&](BlockT *BB, Status Stat) {
@@ -77,6 +79,7 @@ static void computeEHOnlyBlocks(FunctionT &F, DenseSet<BlockT *> &EHBlocks) {
     }
   }
 
+  EHBlocks.clear();
   for (auto Entry : Statuses) {
     if (Entry.second == EH)
       EHBlocks.insert(Entry.first);

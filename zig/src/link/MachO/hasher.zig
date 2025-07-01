@@ -55,8 +55,6 @@ pub fn ParallelHasher(comptime Hasher: type) type {
             out: *[hash_size]u8,
             err: *fs.File.PReadError!usize,
         ) void {
-            const tracy = trace(@src());
-            defer tracy.end();
             err.* = file.preadAll(buffer, fstart);
             Hasher.hash(buffer, out, .{});
         }

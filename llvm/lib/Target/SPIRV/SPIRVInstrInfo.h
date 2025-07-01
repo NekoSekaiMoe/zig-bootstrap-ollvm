@@ -30,8 +30,6 @@ public:
   const SPIRVRegisterInfo &getRegisterInfo() const { return RI; }
   bool isHeaderInstr(const MachineInstr &MI) const;
   bool isConstantInstr(const MachineInstr &MI) const;
-  bool isSpecConstantInstr(const MachineInstr &MI) const;
-  bool isInlineAsmDefInstr(const MachineInstr &MI) const;
   bool isTypeDeclInstr(const MachineInstr &MI) const;
   bool isDecorationInstr(const MachineInstr &MI) const;
   bool canUseFastMathFlags(const MachineInstr &MI) const;
@@ -52,18 +50,9 @@ public:
                         int *BytesAdded = nullptr) const override;
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                    const DebugLoc &DL, MCRegister DestReg, MCRegister SrcReg,
-                   bool KillSrc, bool RenamableDest = false,
-                   bool RenamableSrc = false) const override;
+                   bool KillSrc) const override;
   bool expandPostRAPseudo(MachineInstr &MI) const override;
 };
-
-namespace SPIRV {
-enum AsmComments {
-  // It is a half type
-  ASM_PRINTER_WIDTH16 = MachineInstr::TAsmComments
-};
-} // namespace SPIRV
-
 } // namespace llvm
 
 #endif // LLVM_LIB_TARGET_SPIRV_SPIRVINSTRINFO_H

@@ -15,6 +15,8 @@ pub export fn entry() void {
 }
 
 // error
+// backend=llvm
+// target=native
 //
 // :9:48: error: caught unexpected error 'InvalidVersion'
 // :?:?: note: error returned here
@@ -22,4 +24,4 @@ pub export fn entry() void {
 // :?:?: note: error returned here
 // :?:?: note: error returned here
 // :?:?: note: error returned here
-// :12:37: note: called at comptime here
+// :12:37: note: called from here

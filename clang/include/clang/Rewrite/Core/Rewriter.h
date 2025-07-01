@@ -16,7 +16,7 @@
 
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
-#include "llvm/ADT/RewriteBuffer.h"
+#include "clang/Rewrite/Core/RewriteBuffer.h"
 #include "llvm/ADT/StringRef.h"
 #include <map>
 #include <string>
@@ -32,7 +32,7 @@ class SourceManager;
 class Rewriter {
   SourceManager *SourceMgr = nullptr;
   const LangOptions *LangOpts = nullptr;
-  std::map<FileID, llvm::RewriteBuffer> RewriteBuffers;
+  std::map<FileID, RewriteBuffer> RewriteBuffers;
 
 public:
   struct RewriteOptions {
@@ -49,7 +49,7 @@ public:
     ///
     /// FIXME: This sometimes corrupts the file's rewrite buffer due to
     /// incorrect indexing in the implementation (see the FIXME in
-    /// llvm::RewriteBuffer::RemoveText).  Moreover, it's inefficient because
+    /// clang::RewriteBuffer::RemoveText).  Moreover, it's inefficient because
     /// it must scan the buffer from the beginning to find the start of the
     /// line.  When feasible, it's better for the caller to check for a blank
     /// line and then, if found, expand the removal range to include it.
@@ -62,9 +62,8 @@ public:
     RewriteOptions() {}
   };
 
-  using buffer_iterator = std::map<FileID, llvm::RewriteBuffer>::iterator;
-  using const_buffer_iterator =
-      std::map<FileID, llvm::RewriteBuffer>::const_iterator;
+  using buffer_iterator = std::map<FileID, RewriteBuffer>::iterator;
+  using const_buffer_iterator = std::map<FileID, RewriteBuffer>::const_iterator;
 
   explicit Rewriter() = default;
   explicit Rewriter(SourceManager &SM, const LangOptions &LO)
@@ -192,13 +191,13 @@ public:
   /// buffer, and allows you to write on it directly.  This is useful if you
   /// want efficient low-level access to apis for scribbling on one specific
   /// FileID's buffer.
-  llvm::RewriteBuffer &getEditBuffer(FileID FID);
+  RewriteBuffer &getEditBuffer(FileID FID);
 
   /// getRewriteBufferFor - Return the rewrite buffer for the specified FileID.
   /// If no modification has been made to it, return null.
-  const llvm::RewriteBuffer *getRewriteBufferFor(FileID FID) const {
-    std::map<FileID, llvm::RewriteBuffer>::const_iterator I =
-        RewriteBuffers.find(FID);
+  const RewriteBuffer *getRewriteBufferFor(FileID FID) const {
+    std::map<FileID, RewriteBuffer>::const_iterator I =
+      RewriteBuffers.find(FID);
     return I == RewriteBuffers.end() ? nullptr : &I->second;
   }
 

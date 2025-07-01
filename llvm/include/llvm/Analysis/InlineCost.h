@@ -47,6 +47,7 @@ const int OptAggressiveThreshold = 250;
 int getInstrCost();
 const int IndirectCallThreshold = 100;
 const int LoopPenalty = 25;
+const int LastCallToStaticBonus = 15000;
 const int ColdccPenalty = 2000;
 /// Do not inline functions which allocate this many bytes on the stack
 /// when the caller is recursive.
@@ -64,8 +65,7 @@ const char MaxInlineStackSizeAttributeName[] = "inline-max-stacksize";
 // The cost-benefit pair computed by cost-benefit analysis.
 class CostBenefitPair {
 public:
-  CostBenefitPair(APInt Cost, APInt Benefit)
-      : Cost(std::move(Cost)), Benefit(std::move(Benefit)) {}
+  CostBenefitPair(APInt Cost, APInt Benefit) : Cost(Cost), Benefit(Benefit) {}
 
   const APInt &getCost() const { return Cost; }
 
@@ -259,8 +259,7 @@ InlineParams getInlineParams(unsigned OptLevel, unsigned SizeOptLevel);
 
 /// Return the cost associated with a callsite, including parameter passing
 /// and the call/return instruction.
-int getCallsiteCost(const TargetTransformInfo &TTI, const CallBase &Call,
-                    const DataLayout &DL);
+int getCallsiteCost(const CallBase &Call, const DataLayout &DL);
 
 /// Get an InlineCost object representing the cost of inlining this
 /// callsite.
@@ -318,7 +317,6 @@ std::optional<int> getInliningCostEstimate(
     CallBase &Call, TargetTransformInfo &CalleeTTI,
     function_ref<AssumptionCache &(Function &)> GetAssumptionCache,
     function_ref<BlockFrequencyInfo &(Function &)> GetBFI = nullptr,
-    function_ref<const TargetLibraryInfo &(Function &)> GetTLI = nullptr,
     ProfileSummaryInfo *PSI = nullptr,
     OptimizationRemarkEmitter *ORE = nullptr);
 
@@ -328,7 +326,6 @@ std::optional<InlineCostFeatures> getInliningCostFeatures(
     CallBase &Call, TargetTransformInfo &CalleeTTI,
     function_ref<AssumptionCache &(Function &)> GetAssumptionCache,
     function_ref<BlockFrequencyInfo &(Function &)> GetBFI = nullptr,
-    function_ref<const TargetLibraryInfo &(Function &)> GetTLI = nullptr,
     ProfileSummaryInfo *PSI = nullptr,
     OptimizationRemarkEmitter *ORE = nullptr);
 
@@ -345,7 +342,6 @@ struct InlineCostAnnotationPrinterPass
 public:
   explicit InlineCostAnnotationPrinterPass(raw_ostream &OS) : OS(OS) {}
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
-  static bool isRequired() { return true; }
 };
 } // namespace llvm
 

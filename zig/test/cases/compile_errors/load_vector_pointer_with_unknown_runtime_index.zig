@@ -11,7 +11,7 @@ fn loadv(ptr: anytype) i31 {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :10:15: error: unable to determine vector element index of type '*align(16:0:4:?) i31'

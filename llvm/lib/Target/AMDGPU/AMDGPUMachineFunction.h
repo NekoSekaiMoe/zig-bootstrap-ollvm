@@ -20,6 +20,7 @@
 namespace llvm {
 
 class AMDGPUSubtarget;
+class GCNSubtarget;
 
 class AMDGPUMachineFunction : public MachineFunctionInfo {
   /// A map to keep track of local memory objects and their offsets within the
@@ -46,18 +47,12 @@ protected:
   /// stages.
   Align DynLDSAlign;
 
-  // Flag to check dynamic LDS usage by kernel.
-  bool UsesDynamicLDS = false;
-
   // Kernels + shaders. i.e. functions called by the hardware and not called
   // by other functions.
   bool IsEntryFunction = false;
 
   // Entry points called by other functions instead of directly by the hardware.
   bool IsModuleEntryFunction = false;
-
-  // Functions with the amdgpu_cs_chain or amdgpu_cs_chain_preserve CC.
-  bool IsChainFunction = false;
 
   bool NoSignedZerosFPMath = false;
 
@@ -66,8 +61,6 @@ protected:
 
   // Kernel may need limited waves per EU for better performance.
   bool WaveLimiter = false;
-
-  bool HasInitWholeWave = false;
 
 public:
   AMDGPUMachineFunction(const Function &F, const AMDGPUSubtarget &ST);
@@ -92,13 +85,6 @@ public:
 
   bool isModuleEntryFunction() const { return IsModuleEntryFunction; }
 
-  bool isChainFunction() const { return IsChainFunction; }
-
-  // The stack is empty upon entry to this function.
-  bool isBottomOfStack() const {
-    return isEntryFunction() || isChainFunction();
-  }
-
   bool hasNoSignedZerosFPMath() const {
     return NoSignedZerosFPMath;
   }
@@ -110,9 +96,6 @@ public:
   bool needsWaveLimiter() const {
     return WaveLimiter;
   }
-
-  bool hasInitWholeWave() const { return HasInitWholeWave; }
-  void setInitWholeWave() { HasInitWholeWave = true; }
 
   unsigned allocateLDSGlobal(const DataLayout &DL, const GlobalVariable &GV) {
     return allocateLDSGlobal(DL, GV, DynLDSAlign);
@@ -127,10 +110,6 @@ public:
   Align getDynLDSAlign() const { return DynLDSAlign; }
 
   void setDynLDSAlign(const Function &F, const GlobalVariable &GV);
-
-  void setUsesDynamicLDS(bool DynLDS);
-
-  bool isDynamicLDSUsed() const;
 };
 
 }

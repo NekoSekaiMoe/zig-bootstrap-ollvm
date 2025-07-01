@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HexagonSubtarget.h"
+#include "Hexagon.h"
 #include "HexagonInstrInfo.h"
 #include "HexagonRegisterInfo.h"
 #include "MCTargetDesc/HexagonMCTargetDesc.h"
@@ -53,6 +54,10 @@ static cl::opt<bool>
 static cl::opt<bool>
     DisableHexagonMISched("disable-hexagon-misched", cl::Hidden,
                           cl::desc("Disable Hexagon MI Scheduling"));
+
+static cl::opt<bool> EnableSubregLiveness(
+    "hexagon-subreg-liveness", cl::Hidden, cl::init(true),
+    cl::desc("Enable subregister liveness tracking for Hexagon"));
 
 static cl::opt<bool> OverrideLongCalls(
     "hexagon-long-calls", cl::Hidden,
@@ -111,13 +116,13 @@ HexagonSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS) {
   if (!llvm::count_if(Features.getFeatures(), IsQFloatFS)) {
     auto getHvxVersion = [&Features](StringRef FS) -> StringRef {
       for (StringRef F : llvm::reverse(Features.getFeatures())) {
-        if (F.starts_with("+hvxv"))
+        if (F.startswith("+hvxv"))
           return F;
       }
       for (StringRef F : llvm::reverse(Features.getFeatures())) {
         if (F == "-hvx")
           return StringRef();
-        if (F.starts_with("+hvx") || F == "-hvx")
+        if (F.startswith("+hvx") || F == "-hvx")
           return F.take_front(4);  // Return "+hvx" or "-hvx".
       }
       return StringRef();
@@ -125,7 +130,7 @@ HexagonSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS) {
 
     bool AddQFloat = false;
     StringRef HvxVer = getHvxVersion(FS);
-    if (HvxVer.starts_with("+hvxv")) {
+    if (HvxVer.startswith("+hvxv")) {
       int Ver = 0;
       if (!HvxVer.drop_front(5).consumeInteger(10, Ver) && Ver >= 68)
         AddQFloat = true;
@@ -390,11 +395,10 @@ void HexagonSubtarget::BankConflictMutation::apply(ScheduleDAGInstrs *DAG) {
         HII.getAddrMode(L0) != HexagonII::BaseImmOffset)
       continue;
     int64_t Offset0;
-    LocationSize Size0 = 0;
+    unsigned Size0;
     MachineOperand *BaseOp0 = HII.getBaseAndOffset(L0, Offset0, Size0);
     // Is the access size is longer than the L1 cache line, skip the check.
-    if (BaseOp0 == nullptr || !BaseOp0->isReg() || !Size0.hasValue() ||
-        Size0.getValue() >= 32)
+    if (BaseOp0 == nullptr || !BaseOp0->isReg() || Size0 >= 32)
       continue;
     // Scan only up to 32 instructions ahead (to avoid n^2 complexity).
     for (unsigned j = i+1, m = std::min(i+32, e); j != m; ++j) {
@@ -404,10 +408,10 @@ void HexagonSubtarget::BankConflictMutation::apply(ScheduleDAGInstrs *DAG) {
           HII.getAddrMode(L1) != HexagonII::BaseImmOffset)
         continue;
       int64_t Offset1;
-      LocationSize Size1 = 0;
+      unsigned Size1;
       MachineOperand *BaseOp1 = HII.getBaseAndOffset(L1, Offset1, Size1);
-      if (BaseOp1 == nullptr || !BaseOp1->isReg() || !Size0.hasValue() ||
-          Size1.getValue() >= 32 || BaseOp0->getReg() != BaseOp1->getReg())
+      if (BaseOp1 == nullptr || !BaseOp1->isReg() || Size1 >= 32 ||
+          BaseOp0->getReg() != BaseOp1->getReg())
         continue;
       // Check bits 3 and 4 of the offset: if they differ, a bank conflict
       // is unlikely.
@@ -425,16 +429,16 @@ void HexagonSubtarget::BankConflictMutation::apply(ScheduleDAGInstrs *DAG) {
 /// Enable use of alias analysis during code generation (during MI
 /// scheduling, DAGCombine, etc.).
 bool HexagonSubtarget::useAA() const {
-  if (OptLevel != CodeGenOptLevel::None)
+  if (OptLevel != CodeGenOpt::None)
     return true;
   return false;
 }
 
 /// Perform target specific adjustments to the latency of a schedule
 /// dependency.
-void HexagonSubtarget::adjustSchedDependency(
-    SUnit *Src, int SrcOpIdx, SUnit *Dst, int DstOpIdx, SDep &Dep,
-    const TargetSchedModel *SchedModel) const {
+void HexagonSubtarget::adjustSchedDependency(SUnit *Src, int SrcOpIdx,
+                                             SUnit *Dst, int DstOpIdx,
+                                             SDep &Dep) const {
   if (!Src->isInstr() || !Dst->isInstr())
     return;
 
@@ -463,7 +467,7 @@ void HexagonSubtarget::adjustSchedDependency(
   // default.
   if ((DstInst->isRegSequence() || DstInst->isCopy())) {
     Register DReg = DstInst->getOperand(0).getReg();
-    std::optional<unsigned> DLatency;
+    int DLatency = -1;
     for (const auto &DDep : Dst->Succs) {
       MachineInstr *DDst = DDep.getSUnit()->getInstr();
       int UseIdx = -1;
@@ -478,21 +482,21 @@ void HexagonSubtarget::adjustSchedDependency(
       if (UseIdx == -1)
         continue;
 
-      std::optional<unsigned> Latency =
-          InstrInfo.getOperandLatency(&InstrItins, *SrcInst, 0, *DDst, UseIdx);
-
+      int Latency = (InstrInfo.getOperandLatency(&InstrItins, *SrcInst, 0,
+                                                 *DDst, UseIdx));
       // Set DLatency for the first time.
-      if (!DLatency)
-        DLatency = Latency;
+      DLatency = (DLatency == -1) ? Latency : DLatency;
 
       // For multiple uses, if the Latency is different across uses, reset
       // DLatency.
       if (DLatency != Latency) {
-        DLatency = std::nullopt;
+        DLatency = -1;
         break;
       }
     }
-    Dep.setLatency(DLatency.value_or(0));
+
+    DLatency = std::max(DLatency, 0);
+    Dep.setLatency((unsigned)DLatency);
   }
 
   // Try to schedule uses near definitions to generate .cur.
@@ -577,16 +581,15 @@ void HexagonSubtarget::restoreLatency(SUnit *Src, SUnit *Dst) const {
     for (unsigned OpNum = 0; OpNum < DstI->getNumOperands(); OpNum++) {
       const MachineOperand &MO = DstI->getOperand(OpNum);
       if (MO.isReg() && MO.isUse() && MO.getReg() == DepR) {
-        std::optional<unsigned> Latency = InstrInfo.getOperandLatency(
-            &InstrItins, *SrcI, DefIdx, *DstI, OpNum);
+        int Latency = (InstrInfo.getOperandLatency(&InstrItins, *SrcI,
+                                                   DefIdx, *DstI, OpNum));
 
         // For some instructions (ex: COPY), we might end up with < 0 latency
         // as they don't have any Itinerary class associated with them.
-        if (!Latency)
-          Latency = 0;
+        Latency = std::max(Latency, 0);
         bool IsArtificial = I.isArtificial();
-        Latency = updateLatency(*SrcI, *DstI, IsArtificial, *Latency);
-        I.setLatency(*Latency);
+        Latency = updateLatency(*SrcI, *DstI, IsArtificial, Latency);
+        I.setLatency(Latency);
       }
     }
 
@@ -721,7 +724,9 @@ unsigned HexagonSubtarget::getL1PrefetchDistance() const {
   return 32;
 }
 
-bool HexagonSubtarget::enableSubRegLiveness() const { return true; }
+bool HexagonSubtarget::enableSubRegLiveness() const {
+  return EnableSubregLiveness;
+}
 
 Intrinsic::ID HexagonSubtarget::getIntrinsicId(unsigned Opc) const {
   struct Scalar {

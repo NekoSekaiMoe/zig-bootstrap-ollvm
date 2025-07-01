@@ -26,6 +26,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/Pass.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -65,7 +66,7 @@ static bool runPass(Function &F) {
 
   CastInst *AllocaInsertionPoint = new BitCastInst(
       Constant::getNullValue(Type::getInt32Ty(F.getContext())),
-      Type::getInt32Ty(F.getContext()), "reg2mem alloca point", I);
+      Type::getInt32Ty(F.getContext()), "reg2mem alloca point", &*I);
 
   // Find the escaped instructions. But don't create stack slots for
   // allocas in entry block.
@@ -77,7 +78,7 @@ static bool runPass(Function &F) {
   // Demote escaped instructions
   NumRegsDemoted += WorkList.size();
   for (Instruction *I : WorkList)
-    DemoteRegToStack(*I, false, AllocaInsertionPoint->getIterator());
+    DemoteRegToStack(*I, false, AllocaInsertionPoint);
 
   WorkList.clear();
 
@@ -89,7 +90,7 @@ static bool runPass(Function &F) {
   // Demote phi nodes
   NumPhisDemoted += WorkList.size();
   for (Instruction *I : WorkList)
-    DemotePHIToStack(cast<PHINode>(I), AllocaInsertionPoint->getIterator());
+    DemotePHIToStack(cast<PHINode>(I), AllocaInsertionPoint);
 
   return true;
 }
@@ -107,44 +108,35 @@ PreservedAnalyses RegToMemPass::run(Function &F, FunctionAnalysisManager &AM) {
   return PA;
 }
 
-namespace llvm {
-
-void initializeRegToMemWrapperPassPass(PassRegistry &);
-
-class RegToMemWrapperPass : public FunctionPass {
-public:
-  static char ID;
-
-  RegToMemWrapperPass() : FunctionPass(ID) {}
+namespace {
+struct RegToMemLegacy : public FunctionPass {
+  static char ID; // Pass identification, replacement for typeid
+  RegToMemLegacy() : FunctionPass(ID) {
+    initializeRegToMemLegacyPass(*PassRegistry::getPassRegistry());
+  }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
-
-    AU.addPreserved<DominatorTreeWrapperPass>();
-    AU.addRequired<DominatorTreeWrapperPass>();
-
-    AU.addPreserved<LoopInfoWrapperPass>();
-    AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequiredID(BreakCriticalEdgesID);
+    AU.addPreservedID(BreakCriticalEdgesID);
   }
 
   bool runOnFunction(Function &F) override {
-    DominatorTree *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-
-    unsigned N = SplitAllCriticalEdges(F, CriticalEdgeSplittingOptions(DT, LI));
-    bool Changed = runPass(F);
-    return N != 0 || Changed;
+    if (F.isDeclaration() || skipFunction(F))
+      return false;
+    return runPass(F);
   }
 };
-} // namespace llvm
+} // namespace
 
-INITIALIZE_PASS_BEGIN(RegToMemWrapperPass, "reg2mem", "", true, true)
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
-INITIALIZE_PASS_END(RegToMemWrapperPass, "reg2mem", "", true, true)
+char RegToMemLegacy::ID = 0;
+INITIALIZE_PASS_BEGIN(RegToMemLegacy, "reg2mem",
+                      "Demote all values to stack slots", false, false)
+INITIALIZE_PASS_DEPENDENCY(BreakCriticalEdges)
+INITIALIZE_PASS_END(RegToMemLegacy, "reg2mem",
+                    "Demote all values to stack slots", false, false)
 
-char RegToMemWrapperPass::ID = 0;
-
-FunctionPass *llvm::createRegToMemWrapperPass() {
-  return new RegToMemWrapperPass();
+// createDemoteRegisterToMemory - Provide an entry point to create this pass.
+char &llvm::DemoteRegisterToMemoryID = RegToMemLegacy::ID;
+FunctionPass *llvm::createDemoteRegisterToMemoryPass() {
+  return new RegToMemLegacy();
 }

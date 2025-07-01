@@ -38,6 +38,7 @@
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/CommandLine.h"
@@ -208,8 +209,8 @@ namespace {
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
-      AU.addRequired<MachineBranchProbabilityInfoWrapperPass>();
+      AU.addRequired<MachineBlockFrequencyInfo>();
+      AU.addRequired<MachineBranchProbabilityInfo>();
       AU.addRequired<ProfileSummaryInfoWrapperPass>();
       MachineFunctionPass::getAnalysisUsage(AU);
     }
@@ -431,7 +432,7 @@ char IfConverter::ID = 0;
 char &llvm::IfConverterID = IfConverter::ID;
 
 INITIALIZE_PASS_BEGIN(IfConverter, DEBUG_TYPE, "If Converter", false, false)
-INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfo)
 INITIALIZE_PASS_DEPENDENCY(ProfileSummaryInfoWrapperPass)
 INITIALIZE_PASS_END(IfConverter, DEBUG_TYPE, "If Converter", false, false)
 
@@ -443,9 +444,8 @@ bool IfConverter::runOnMachineFunction(MachineFunction &MF) {
   TLI = ST.getTargetLowering();
   TII = ST.getInstrInfo();
   TRI = ST.getRegisterInfo();
-  MBFIWrapper MBFI(
-      getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI());
-  MBPI = &getAnalysis<MachineBranchProbabilityInfoWrapperPass>().getMBPI();
+  MBFIWrapper MBFI(getAnalysis<MachineBlockFrequencyInfo>());
+  MBPI = &getAnalysis<MachineBranchProbabilityInfo>();
   ProfileSummaryInfo *PSI =
       &getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
   MRI = &MF.getRegInfo();
@@ -541,12 +541,13 @@ bool IfConverter::runOnMachineFunction(MachineFunction &MF) {
         RetVal = IfConvertTriangle(BBI, Kind);
         LLVM_DEBUG(dbgs() << (RetVal ? "succeeded!" : "failed!") << "\n");
         if (RetVal) {
-          if (isFalse)
-            ++NumTriangleFalse;
-          else if (isRev)
-            ++NumTriangleRev;
-          else
-            ++NumTriangle;
+          if (isFalse) {
+            if (isRev) ++NumTriangleFRev;
+            else       ++NumTriangleFalse;
+          } else {
+            if (isRev) ++NumTriangleRev;
+            else       ++NumTriangle;
+          }
         }
         break;
       }
@@ -1834,9 +1835,9 @@ bool IfConverter::IfConvertDiamondCommon(
   }
   while (NumDups1 != 0) {
     // Since this instruction is going to be deleted, update call
-    // info state if the instruction is call instruction.
-    if (DI2->shouldUpdateAdditionalCallInfo())
-      MBB2.getParent()->eraseAdditionalCallInfo(&*DI2);
+    // site info state if the instruction is call instruction.
+    if (DI2->shouldUpdateCallSiteInfo())
+      MBB2.getParent()->eraseCallSiteInfo(&*DI2);
 
     ++DI2;
     if (DI2 == MBB2.end())
@@ -1883,9 +1884,9 @@ bool IfConverter::IfConvertDiamondCommon(
     --DI1;
 
     // Since this instruction is going to be deleted, update call
-    // info state if the instruction is call instruction.
-    if (DI1->shouldUpdateAdditionalCallInfo())
-      MBB1.getParent()->eraseAdditionalCallInfo(&*DI1);
+    // site info state if the instruction is call instruction.
+    if (DI1->shouldUpdateCallSiteInfo())
+      MBB1.getParent()->eraseCallSiteInfo(&*DI1);
 
     // skip dbg_value instructions
     if (!DI1->isDebugInstr())
@@ -2096,7 +2097,7 @@ bool IfConverter::IfConvertDiamond(BBInfo &BBI, IfcvtKind Kind,
 static bool MaySpeculate(const MachineInstr &MI,
                          SmallSet<MCPhysReg, 4> &LaterRedefs) {
   bool SawStore = true;
-  if (!MI.isSafeToMove(SawStore))
+  if (!MI.isSafeToMove(nullptr, SawStore))
     return false;
 
   for (const MachineOperand &MO : MI.operands()) {
@@ -2169,9 +2170,9 @@ void IfConverter::CopyAndPredicateBlock(BBInfo &ToBBI, BBInfo &FromBBI,
       break;
 
     MachineInstr *MI = MF.CloneMachineInstr(&I);
-    // Make a copy of the call info.
-    if (I.isCandidateForAdditionalCallInfo())
-      MF.copyAdditionalCallInfo(&I, MI);
+    // Make a copy of the call site info.
+    if (I.isCandidateForCallSiteEntry())
+      MF.copyCallSiteInfo(&I, MI);
 
     ToBBI.BB->insert(ToBBI.BB->end(), MI);
     ToBBI.NonPredSize++;

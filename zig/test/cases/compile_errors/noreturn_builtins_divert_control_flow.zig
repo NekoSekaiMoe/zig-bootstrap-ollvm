@@ -7,7 +7,7 @@ export fn entry2() void {
     @panic("");
 }
 export fn entry3() void {
-    @compileError("expect to hit this");
+    @compileError("");
     @compileError("");
 }
 
@@ -21,4 +21,3 @@ export fn entry3() void {
 // :6:5: note: control flow is diverted here
 // :11:5: error: unreachable code
 // :10:5: note: control flow is diverted here
-// :10:5: error: expect to hit this

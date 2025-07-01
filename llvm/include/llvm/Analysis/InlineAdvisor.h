@@ -12,6 +12,7 @@
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/LazyCallGraph.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/PassManager.h"
 #include <memory>
 
@@ -35,8 +36,9 @@ struct ReplayInlinerSettings;
 ///
 /// - Development mode, for training new models.
 /// In this mode, we trade off runtime performance for flexibility. This mode
-/// requires the TFLite library, and evaluates models dynamically. This mode
-/// also permits generating training logs, for offline training.
+/// requires the full C Tensorflow API library, and evaluates models
+/// dynamically. This mode also permits generating training logs, for offline
+/// training.
 ///
 /// - Dynamically load an advisor via a plugin (PluginInlineAdvisorAnalysis)
 enum class InliningAdvisorMode : int { Default, Release, Development };
@@ -247,30 +249,37 @@ private:
 ///
 /// namespace {
 ///
-/// InlineAdvisor *defaultAdvisorFactory(Module &M,
-///                                      FunctionAnalysisManager &FAM,
-///                                      InlineParams Params,
-///                                      InlineContext IC) {
+/// InlineAdvisor *defaultAdvisorFactory(Module &M, FunctionAnalysisManager
+/// &FAM,
+///                                      InlineParams Params, InlineContext IC)
+///                                      {
 ///   return new DefaultInlineAdvisor(M, FAM, Params, IC);
 /// }
+///
+/// struct DefaultDynamicAdvisor : PassInfoMixin<DefaultDynamicAdvisor> {
+///   PreservedAnalyses run(Module &, ModuleAnalysisManager &MAM) {
+///     PluginInlineAdvisorAnalysis PA(defaultAdvisorFactory);
+///     MAM.registerPass([&] { return PA; });
+///     return PreservedAnalyses::all();
+///   }
+/// };
 ///
 /// } // namespace
 ///
 /// extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 /// llvmGetPassPluginInfo() {
 ///   return {LLVM_PLUGIN_API_VERSION, "DynamicDefaultAdvisor",
-///           LLVM_VERSION_STRING,
+///   LLVM_VERSION_STRING,
 ///           [](PassBuilder &PB) {
-///             PB.registerAnalysisRegistrationCallback(
-///                 [](ModuleAnalysisManager &MAM) {
-///                   PluginInlineAdvisorAnalysis PA(defaultAdvisorFactory);
-///                   MAM.registerPass([&] { return PA; });
+///             PB.registerPipelineStartEPCallback(
+///                 [](ModulePassManager &MPM, OptimizationLevel Level) {
+///                   MPM.addPass(DefaultDynamicAdvisor());
 ///                 });
 ///           }};
 /// }
 ///
 /// A plugin must implement an AdvisorFactory and register it with a
-/// PluginInlineAdvisorAnlysis to the provided ModuleAnalysisManager.
+/// PluginInlineAdvisorAnlysis to the provided ModuleanAlysisManager.
 ///
 /// If such a plugin has been registered
 /// InlineAdvisorAnalysis::Result::tryCreate will return the dynamically loaded
@@ -280,6 +289,7 @@ class PluginInlineAdvisorAnalysis
     : public AnalysisInfoMixin<PluginInlineAdvisorAnalysis> {
 public:
   static AnalysisKey Key;
+  static bool HasBeenRegistered;
 
   typedef InlineAdvisor *(*AdvisorFactory)(Module &M,
                                            FunctionAnalysisManager &FAM,
@@ -287,6 +297,7 @@ public:
                                            InlineContext IC);
 
   PluginInlineAdvisorAnalysis(AdvisorFactory Factory) : Factory(Factory) {
+    HasBeenRegistered = true;
     assert(Factory != nullptr &&
            "The plugin advisor factory should not be a null pointer.");
   }
@@ -331,7 +342,7 @@ public:
   Result run(Module &M, ModuleAnalysisManager &MAM) { return Result(M, MAM); }
 };
 
-/// Printer pass for the InlineAdvisorAnalysis results.
+/// Printer pass for the FunctionPropertiesAnalysis results.
 class InlineAdvisorAnalysisPrinterPass
     : public PassInfoMixin<InlineAdvisorAnalysisPrinterPass> {
   raw_ostream &OS;
@@ -343,7 +354,6 @@ public:
 
   PreservedAnalyses run(LazyCallGraph::SCC &InitialC, CGSCCAnalysisManager &AM,
                         LazyCallGraph &CG, CGSCCUpdateResult &UR);
-  static bool isRequired() { return true; }
 };
 
 std::unique_ptr<InlineAdvisor>
@@ -362,8 +372,7 @@ getDevelopmentModeAdvisor(Module &M, ModuleAnalysisManager &MAM,
 /// using that cost, so we won't do so from this function. Return std::nullopt
 /// if inlining should not be attempted.
 std::optional<InlineCost>
-shouldInline(CallBase &CB, TargetTransformInfo &CalleeTTI,
-             function_ref<InlineCost(CallBase &CB)> GetInlineCost,
+shouldInline(CallBase &CB, function_ref<InlineCost(CallBase &CB)> GetInlineCost,
              OptimizationRemarkEmitter &ORE, bool EnableDeferral = true);
 
 /// Emit ORE message.

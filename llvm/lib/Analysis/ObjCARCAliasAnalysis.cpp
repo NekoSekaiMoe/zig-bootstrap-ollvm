@@ -20,16 +20,13 @@
 /// TODO: Theoretically we could check for dependencies between objc_* calls
 /// and FMRB_OnlyAccessesArgumentPointees calls or other well-behaved calls.
 ///
-/// TODO: The calls here to AAResultBase member functions are all effectively
-/// no-ops that just return a conservative result. The original intent was to
-/// chain to another analysis for a recursive query, but this was lost in a
-/// refactor. These should instead be rephrased in terms of queries to AAQI.AAR.
-///
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/ObjCARCAliasAnalysis.h"
 #include "llvm/Analysis/ObjCARCAnalysisUtils.h"
+#include "llvm/Analysis/Passes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 
 #define DEBUG_TYPE "objc-arc-aa"
@@ -140,5 +137,5 @@ ModRefInfo ObjCARCAAResult::getModRefInfo(const CallBase *Call,
 AnalysisKey ObjCARCAA::Key;
 
 ObjCARCAAResult ObjCARCAA::run(Function &F, FunctionAnalysisManager &AM) {
-  return ObjCARCAAResult(F.getDataLayout());
+  return ObjCARCAAResult(F.getParent()->getDataLayout());
 }

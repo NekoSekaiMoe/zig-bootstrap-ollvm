@@ -176,7 +176,7 @@ void InternalizePass::checkComdat(
   if (!C)
     return;
 
-  ComdatInfo &Info = ComdatMap[C];
+  ComdatInfo &Info = ComdatMap.try_emplace(C).first->second;
   ++Info.Size;
   if (shouldPreserveGV(GV))
     Info.External = true;
@@ -232,10 +232,6 @@ bool InternalizePass::internalizeModule(Module &M) {
     AlwaysPreserved.insert("__ssp_canary_word");
   else
     AlwaysPreserved.insert("__stack_chk_guard");
-
-  // Preserve the RPC interface for GPU host callbacks when internalizing.
-  if (Triple(M.getTargetTriple()).isNVPTX())
-    AlwaysPreserved.insert("__llvm_rpc_client");
 
   // Mark all functions not in the api as internal.
   IsWasm = Triple(M.getTargetTriple()).isOSBinFormatWasm();

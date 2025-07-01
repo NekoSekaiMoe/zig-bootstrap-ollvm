@@ -1,7 +1,7 @@
 const Foo = packed struct(u32) {
     x: u1,
 };
-fn bar(_: Foo) callconv(.c) void {}
+fn bar(_: Foo) callconv(.C) void {}
 pub export fn entry() void {
     bar(.{ .x = 0 });
 }

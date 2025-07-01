@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AVR.h"
 #include "AVRRegisterInfo.h"
 #include "MCTargetDesc/AVRMCELFStreamer.h"
 #include "MCTargetDesc/AVRMCExpr.h"
@@ -16,6 +17,7 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
@@ -49,35 +51,36 @@ class AVRAsmParser : public MCTargetAsmParser {
 #define GET_ASSEMBLER_HEADER
 #include "AVRGenAsmMatcher.inc"
 
-  bool matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+  bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands, MCStreamer &Out,
                                uint64_t &ErrorInfo,
                                bool MatchingInlineAsm) override;
 
-  bool parseRegister(MCRegister &Reg, SMLoc &StartLoc, SMLoc &EndLoc) override;
-  ParseStatus tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
-                               SMLoc &EndLoc) override;
+  bool parseRegister(MCRegister &RegNo, SMLoc &StartLoc,
+                     SMLoc &EndLoc) override;
+  OperandMatchResultTy tryParseRegister(MCRegister &RegNo, SMLoc &StartLoc,
+                                        SMLoc &EndLoc) override;
 
-  bool parseInstruction(ParseInstructionInfo &Info, StringRef Name,
+  bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
 
   ParseStatus parseDirective(AsmToken DirectiveID) override;
 
-  ParseStatus parseMemriOperand(OperandVector &Operands);
+  OperandMatchResultTy parseMemriOperand(OperandVector &Operands);
 
   bool parseOperand(OperandVector &Operands, bool maybeReg);
-  MCRegister parseRegisterName(MCRegister (*matchFn)(StringRef));
-  MCRegister parseRegisterName();
-  MCRegister parseRegister(bool RestoreOnFailure = false);
+  int parseRegisterName(unsigned (*matchFn)(StringRef));
+  int parseRegisterName();
+  int parseRegister(bool RestoreOnFailure = false);
   bool tryParseRegisterOperand(OperandVector &Operands);
-  bool tryParseExpression(OperandVector &Operands, int64_t offset);
+  bool tryParseExpression(OperandVector &Operands);
   bool tryParseRelocExpression(OperandVector &Operands);
   void eatComma();
 
   unsigned validateTargetOperandClass(MCParsedAsmOperand &Op,
                                       unsigned Kind) override;
 
-  MCRegister toDREG(MCRegister Reg, unsigned From = AVR::sub_lo) {
+  unsigned toDREG(unsigned Reg, unsigned From = AVR::sub_lo) {
     MCRegisterClass const *Class = &AVRMCRegisterClasses[AVR::DREGSRegClassID];
     return MRI->getMatchingSuperReg(Reg, From, Class);
   }
@@ -111,15 +114,15 @@ class AVROperand : public MCParsedAsmOperand {
 public:
   AVROperand(StringRef Tok, SMLoc const &S)
       : Kind(k_Token), Tok(Tok), Start(S), End(S) {}
-  AVROperand(MCRegister Reg, SMLoc const &S, SMLoc const &E)
+  AVROperand(unsigned Reg, SMLoc const &S, SMLoc const &E)
       : Kind(k_Register), RegImm({Reg, nullptr}), Start(S), End(E) {}
   AVROperand(MCExpr const *Imm, SMLoc const &S, SMLoc const &E)
       : Kind(k_Immediate), RegImm({0, Imm}), Start(S), End(E) {}
-  AVROperand(MCRegister Reg, MCExpr const *Imm, SMLoc const &S, SMLoc const &E)
+  AVROperand(unsigned Reg, MCExpr const *Imm, SMLoc const &S, SMLoc const &E)
       : Kind(k_Memri), RegImm({Reg, Imm}), Start(S), End(E) {}
 
   struct RegisterImmediate {
-    MCRegister Reg;
+    unsigned Reg;
     MCExpr const *Imm;
   };
   union {
@@ -193,7 +196,7 @@ public:
     return Tok;
   }
 
-  MCRegister getReg() const override {
+  unsigned getReg() const override {
     assert((Kind == k_Register || Kind == k_Memri) && "Invalid access!");
 
     return RegImm.Reg;
@@ -208,9 +211,9 @@ public:
     return std::make_unique<AVROperand>(Str, S);
   }
 
-  static std::unique_ptr<AVROperand> CreateReg(MCRegister Reg, SMLoc S,
+  static std::unique_ptr<AVROperand> CreateReg(unsigned RegNum, SMLoc S,
                                                SMLoc E) {
-    return std::make_unique<AVROperand>(Reg, S, E);
+    return std::make_unique<AVROperand>(RegNum, S, E);
   }
 
   static std::unique_ptr<AVROperand> CreateImm(const MCExpr *Val, SMLoc S,
@@ -219,8 +222,8 @@ public:
   }
 
   static std::unique_ptr<AVROperand>
-  CreateMemri(MCRegister Reg, const MCExpr *Val, SMLoc S, SMLoc E) {
-    return std::make_unique<AVROperand>(Reg, Val, S, E);
+  CreateMemri(unsigned RegNum, const MCExpr *Val, SMLoc S, SMLoc E) {
+    return std::make_unique<AVROperand>(RegNum, Val, S, E);
   }
 
   void makeToken(StringRef Token) {
@@ -228,9 +231,9 @@ public:
     Tok = Token;
   }
 
-  void makeReg(MCRegister Reg) {
+  void makeReg(unsigned RegNo) {
     Kind = k_Register;
-    RegImm = {Reg, nullptr};
+    RegImm = {RegNo, nullptr};
   }
 
   void makeImm(MCExpr const *Ex) {
@@ -238,9 +241,9 @@ public:
     RegImm = {0, Ex};
   }
 
-  void makeMemri(MCRegister Reg, MCExpr const *Imm) {
+  void makeMemri(unsigned RegNo, MCExpr const *Imm) {
     Kind = k_Memri;
-    RegImm = {Reg, Imm};
+    RegImm = {RegNo, Imm};
   }
 
   SMLoc getStartLoc() const override { return Start; }
@@ -274,11 +277,11 @@ public:
 
 /// Maps from the set of all register names to a register number.
 /// \note Generated by TableGen.
-static MCRegister MatchRegisterName(StringRef Name);
+static unsigned MatchRegisterName(StringRef Name);
 
 /// Maps from the set of all alternative registernames to a register number.
 /// \note Generated by TableGen.
-static MCRegister MatchRegisterAltName(StringRef Name);
+static unsigned MatchRegisterAltName(StringRef Name);
 
 bool AVRAsmParser::invalidOperand(SMLoc const &Loc,
                                   OperandVector const &Operands,
@@ -318,7 +321,7 @@ bool AVRAsmParser::emit(MCInst &Inst, SMLoc const &Loc, MCStreamer &Out) const {
   return false;
 }
 
-bool AVRAsmParser::matchAndEmitInstruction(SMLoc Loc, unsigned &Opcode,
+bool AVRAsmParser::MatchAndEmitInstruction(SMLoc Loc, unsigned &Opcode,
                                            OperandVector &Operands,
                                            MCStreamer &Out, uint64_t &ErrorInfo,
                                            bool MatchingInlineAsm) {
@@ -344,36 +347,36 @@ bool AVRAsmParser::matchAndEmitInstruction(SMLoc Loc, unsigned &Opcode,
 
 /// Parses a register name using a given matching function.
 /// Checks for lowercase or uppercase if necessary.
-MCRegister AVRAsmParser::parseRegisterName(MCRegister (*matchFn)(StringRef)) {
+int AVRAsmParser::parseRegisterName(unsigned (*matchFn)(StringRef)) {
   StringRef Name = Parser.getTok().getString();
 
-  MCRegister Reg = matchFn(Name);
+  int RegNum = matchFn(Name);
 
   // GCC supports case insensitive register names. Some of the AVR registers
   // are all lower case, some are all upper case but non are mixed. We prefer
   // to use the original names in the register definitions. That is why we
   // have to test both upper and lower case here.
-  if (!Reg) {
-    Reg = matchFn(Name.lower());
+  if (RegNum == AVR::NoRegister) {
+    RegNum = matchFn(Name.lower());
   }
-  if (!Reg) {
-    Reg = matchFn(Name.upper());
+  if (RegNum == AVR::NoRegister) {
+    RegNum = matchFn(Name.upper());
   }
 
-  return Reg;
+  return RegNum;
 }
 
-MCRegister AVRAsmParser::parseRegisterName() {
-  MCRegister Reg = parseRegisterName(&MatchRegisterName);
+int AVRAsmParser::parseRegisterName() {
+  int RegNum = parseRegisterName(&MatchRegisterName);
 
-  if (!Reg)
-    Reg = parseRegisterName(&MatchRegisterAltName);
+  if (RegNum == AVR::NoRegister)
+    RegNum = parseRegisterName(&MatchRegisterAltName);
 
-  return Reg;
+  return RegNum;
 }
 
-MCRegister AVRAsmParser::parseRegister(bool RestoreOnFailure) {
-  MCRegister Reg;
+int AVRAsmParser::parseRegister(bool RestoreOnFailure) {
+  int RegNum = AVR::NoRegister;
 
   if (Parser.getTok().is(AsmToken::Identifier)) {
     // Check for register pair syntax
@@ -385,38 +388,38 @@ MCRegister AVRAsmParser::parseRegister(bool RestoreOnFailure) {
 
       if (Parser.getTok().is(AsmToken::Identifier)) {
         // Convert lower (even) register to DREG
-        Reg = toDREG(parseRegisterName());
+        RegNum = toDREG(parseRegisterName());
       }
-      if (!Reg && RestoreOnFailure) {
+      if (RegNum == AVR::NoRegister && RestoreOnFailure) {
         getLexer().UnLex(std::move(ColonTok));
         getLexer().UnLex(std::move(HighTok));
       }
     } else {
-      Reg = parseRegisterName();
+      RegNum = parseRegisterName();
     }
   }
-  return Reg;
+  return RegNum;
 }
 
 bool AVRAsmParser::tryParseRegisterOperand(OperandVector &Operands) {
-  MCRegister Reg = parseRegister();
+  int RegNo = parseRegister();
 
-  if (!Reg)
+  if (RegNo == AVR::NoRegister)
     return true;
 
   // Reject R0~R15 on avrtiny.
-  if (AVR::R0 <= Reg && Reg <= AVR::R15 &&
+  if (AVR::R0 <= RegNo && RegNo <= AVR::R15 &&
       STI.hasFeature(AVR::FeatureTinyEncoding))
     return Error(Parser.getTok().getLoc(), "invalid register on avrtiny");
 
   AsmToken const &T = Parser.getTok();
-  Operands.push_back(AVROperand::CreateReg(Reg, T.getLoc(), T.getEndLoc()));
+  Operands.push_back(AVROperand::CreateReg(RegNo, T.getLoc(), T.getEndLoc()));
   Parser.Lex(); // Eat register token.
 
   return false;
 }
 
-bool AVRAsmParser::tryParseExpression(OperandVector &Operands, int64_t offset) {
+bool AVRAsmParser::tryParseExpression(OperandVector &Operands) {
   SMLoc S = Parser.getTok().getLoc();
 
   if (!tryParseRelocExpression(Operands))
@@ -434,11 +437,6 @@ bool AVRAsmParser::tryParseExpression(OperandVector &Operands, int64_t offset) {
   MCExpr const *Expression;
   if (getParser().parseExpression(Expression))
     return true;
-
-  if (offset) {
-    Expression = MCBinaryExpr::createAdd(
-        Expression, MCConstantExpr::create(offset, getContext()), getContext());
-  }
 
   SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   Operands.push_back(AVROperand::CreateImm(Expression, S, E));
@@ -532,9 +530,8 @@ bool AVRAsmParser::parseOperand(OperandVector &Operands, bool maybeReg) {
     [[fallthrough]];
   case AsmToken::LParen:
   case AsmToken::Integer:
-    return tryParseExpression(Operands, 0);
   case AsmToken::Dot:
-    return tryParseExpression(Operands, 2);
+    return tryParseExpression(Operands);
   case AsmToken::Plus:
   case AsmToken::Minus: {
     // If the sign preceeds a number, parse the number,
@@ -544,7 +541,7 @@ bool AVRAsmParser::parseOperand(OperandVector &Operands, bool maybeReg) {
     case AsmToken::BigNum:
     case AsmToken::Identifier:
     case AsmToken::Real:
-      if (!tryParseExpression(Operands, 0))
+      if (!tryParseExpression(Operands))
         return false;
       break;
     default:
@@ -562,19 +559,19 @@ bool AVRAsmParser::parseOperand(OperandVector &Operands, bool maybeReg) {
   return true;
 }
 
-ParseStatus AVRAsmParser::parseMemriOperand(OperandVector &Operands) {
+OperandMatchResultTy AVRAsmParser::parseMemriOperand(OperandVector &Operands) {
   LLVM_DEBUG(dbgs() << "parseMemriOperand()\n");
 
   SMLoc E, S;
   MCExpr const *Expression;
-  MCRegister Reg;
+  int RegNo;
 
   // Parse register.
   {
-    Reg = parseRegister();
+    RegNo = parseRegister();
 
-    if (!Reg)
-      return ParseStatus::Failure;
+    if (RegNo == AVR::NoRegister)
+      return MatchOperand_ParseFail;
 
     S = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
     Parser.Lex(); // Eat register token.
@@ -583,34 +580,35 @@ ParseStatus AVRAsmParser::parseMemriOperand(OperandVector &Operands) {
   // Parse immediate;
   {
     if (getParser().parseExpression(Expression))
-      return ParseStatus::Failure;
+      return MatchOperand_ParseFail;
 
     E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   }
 
-  Operands.push_back(AVROperand::CreateMemri(Reg, Expression, S, E));
+  Operands.push_back(AVROperand::CreateMemri(RegNo, Expression, S, E));
 
-  return ParseStatus::Success;
+  return MatchOperand_Success;
 }
 
-bool AVRAsmParser::parseRegister(MCRegister &Reg, SMLoc &StartLoc,
+bool AVRAsmParser::parseRegister(MCRegister &RegNo, SMLoc &StartLoc,
                                  SMLoc &EndLoc) {
   StartLoc = Parser.getTok().getLoc();
-  Reg = parseRegister(/*RestoreOnFailure=*/false);
+  RegNo = parseRegister(/*RestoreOnFailure=*/false);
   EndLoc = Parser.getTok().getLoc();
 
-  return Reg == AVR::NoRegister;
+  return (RegNo == AVR::NoRegister);
 }
 
-ParseStatus AVRAsmParser::tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
-                                           SMLoc &EndLoc) {
+OperandMatchResultTy AVRAsmParser::tryParseRegister(MCRegister &RegNo,
+                                                    SMLoc &StartLoc,
+                                                    SMLoc &EndLoc) {
   StartLoc = Parser.getTok().getLoc();
-  Reg = parseRegister(/*RestoreOnFailure=*/true);
+  RegNo = parseRegister(/*RestoreOnFailure=*/true);
   EndLoc = Parser.getTok().getLoc();
 
-  if (Reg == AVR::NoRegister)
-    return ParseStatus::NoMatch;
-  return ParseStatus::Success;
+  if (RegNo == AVR::NoRegister)
+    return MatchOperand_NoMatch;
+  return MatchOperand_Success;
 }
 
 void AVRAsmParser::eatComma() {
@@ -621,7 +619,7 @@ void AVRAsmParser::eatComma() {
   }
 }
 
-bool AVRAsmParser::parseInstruction(ParseInstructionInfo &Info,
+bool AVRAsmParser::ParseInstruction(ParseInstructionInfo &Info,
                                     StringRef Mnemonic, SMLoc NameLoc,
                                     OperandVector &Operands) {
   Operands.push_back(AVROperand::CreateToken(Mnemonic, NameLoc));
@@ -632,12 +630,13 @@ bool AVRAsmParser::parseInstruction(ParseInstructionInfo &Info,
     if (OperandNum > 0)
       eatComma();
 
-    ParseStatus ParseRes = MatchOperandParserImpl(Operands, Mnemonic);
+    auto MatchResult = MatchOperandParserImpl(Operands, Mnemonic);
 
-    if (ParseRes.isSuccess())
+    if (MatchResult == MatchOperand_Success) {
       continue;
+    }
 
-    if (ParseRes.isFailure()) {
+    if (MatchResult == MatchOperand_ParseFail) {
       SMLoc Loc = getLexer().getLoc();
       Parser.eatToEndOfStatement();
 
@@ -647,7 +646,6 @@ bool AVRAsmParser::parseInstruction(ParseInstructionInfo &Info,
     // These specific operands should be treated as addresses/symbols/labels,
     // other than registers.
     bool maybeReg = true;
-
     if (OperandNum == 1) {
       std::array<StringRef, 8> Insts = {"lds", "adiw", "sbiw", "ldi"};
       for (auto Inst : Insts) {
@@ -759,8 +757,9 @@ unsigned AVRAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
 
       std::ostringstream RegName;
       RegName << "r" << RegNum;
-      if (MCRegister Reg = MatchRegisterName(RegName.str())) {
-        Op.makeReg(Reg);
+      RegNum = MatchRegisterName(RegName.str());
+      if (RegNum != AVR::NoRegister) {
+        Op.makeReg(RegNum);
         if (validateOperandClass(Op, Expected) == Match_Success) {
           return Match_Success;
         }
@@ -773,9 +772,9 @@ unsigned AVRAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
     // If the instruction uses a register pair but we got a single, lower
     // register we perform a "class cast".
     if (isSubclass(Expected, MCK_DREGS)) {
-      MCRegister correspondingDREG = toDREG(Op.getReg());
+      unsigned correspondingDREG = toDREG(Op.getReg());
 
-      if (correspondingDREG) {
+      if (correspondingDREG != AVR::NoRegister) {
         Op.makeReg(correspondingDREG);
         return validateOperandClass(Op, Expected);
       }

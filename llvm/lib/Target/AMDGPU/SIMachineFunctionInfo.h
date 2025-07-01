@@ -16,12 +16,10 @@
 #include "AMDGPUArgumentUsageInfo.h"
 #include "AMDGPUMachineFunction.h"
 #include "AMDGPUTargetMachine.h"
-#include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIInstrInfo.h"
 #include "SIModeRegisterDefaults.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MIRYamlMapping.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/Support/raw_ostream.h"
@@ -100,25 +98,19 @@ struct SIArgument {
   SIArgument() : IsRegister(false), StackOffset(0) {}
   SIArgument(const SIArgument &Other) {
     IsRegister = Other.IsRegister;
-    if (IsRegister)
-      new (&RegisterName) StringValue(Other.RegisterName);
-    else
+    if (IsRegister) {
+      ::new ((void *)std::addressof(RegisterName))
+          StringValue(Other.RegisterName);
+    } else
       StackOffset = Other.StackOffset;
     Mask = Other.Mask;
   }
   SIArgument &operator=(const SIArgument &Other) {
-    // Default-construct or destruct the old RegisterName in case of switching
-    // union members
-    if (IsRegister != Other.IsRegister) {
-      if (Other.IsRegister)
-        new (&RegisterName) StringValue();
-      else
-        RegisterName.~StringValue();
-    }
     IsRegister = Other.IsRegister;
-    if (IsRegister)
-      RegisterName = Other.RegisterName;
-    else
+    if (IsRegister) {
+      ::new ((void *)std::addressof(RegisterName))
+          StringValue(Other.RegisterName);
+    } else
       StackOffset = Other.StackOffset;
     Mask = Other.Mask;
     return *this;
@@ -264,7 +256,6 @@ struct SIMachineFunctionInfo final : public yaml::MachineFunctionInfo {
   uint32_t GDSSize = 0;
   Align DynLDSAlign;
   bool IsEntryFunction = false;
-  bool IsChainFunction = false;
   bool NoSignedZerosFPMath = false;
   bool MemoryBound = false;
   bool WaveLimiter = false;
@@ -275,7 +266,6 @@ struct SIMachineFunctionInfo final : public yaml::MachineFunctionInfo {
   // TODO: 10 may be a better default since it's the maximum.
   unsigned Occupancy = 0;
 
-  SmallVector<StringValue, 2> SpillPhysVGPRS;
   SmallVector<StringValue> WWMReservedRegs;
 
   StringValue ScratchRSrcReg = "$private_rsrc_reg";
@@ -289,15 +279,12 @@ struct SIMachineFunctionInfo final : public yaml::MachineFunctionInfo {
 
   unsigned PSInputAddr = 0;
   unsigned PSInputEnable = 0;
-  unsigned MaxMemoryClusterDWords = DefaultMemoryClusterDWordsLimit;
 
   SIMode Mode;
   std::optional<FrameIndex> ScavengeFI;
   StringValue VGPRForAGPRCopy;
   StringValue SGPRForEXECCopy;
   StringValue LongBranchReservedReg;
-
-  bool HasInitWholeWave = false;
 
   SIMachineFunctionInfo() = default;
   SIMachineFunctionInfo(const llvm::SIMachineFunctionInfo &,
@@ -317,7 +304,6 @@ template <> struct MappingTraits<SIMachineFunctionInfo> {
     YamlIO.mapOptional("gdsSize", MFI.GDSSize, 0u);
     YamlIO.mapOptional("dynLDSAlign", MFI.DynLDSAlign, Align());
     YamlIO.mapOptional("isEntryFunction", MFI.IsEntryFunction, false);
-    YamlIO.mapOptional("isChainFunction", MFI.IsChainFunction, false);
     YamlIO.mapOptional("noSignedZerosFPMath", MFI.NoSignedZerosFPMath, false);
     YamlIO.mapOptional("memoryBound", MFI.MemoryBound, false);
     YamlIO.mapOptional("waveLimiter", MFI.WaveLimiter, false);
@@ -334,13 +320,10 @@ template <> struct MappingTraits<SIMachineFunctionInfo> {
     YamlIO.mapOptional("argumentInfo", MFI.ArgInfo);
     YamlIO.mapOptional("psInputAddr", MFI.PSInputAddr, 0u);
     YamlIO.mapOptional("psInputEnable", MFI.PSInputEnable, 0u);
-    YamlIO.mapOptional("maxMemoryClusterDWords", MFI.MaxMemoryClusterDWords,
-                       DefaultMemoryClusterDWordsLimit);
     YamlIO.mapOptional("mode", MFI.Mode, SIMode());
     YamlIO.mapOptional("highBitsOf32BitAddress",
                        MFI.HighBitsOf32BitAddress, 0u);
     YamlIO.mapOptional("occupancy", MFI.Occupancy, 0);
-    YamlIO.mapOptional("spillPhysVGPRs", MFI.SpillPhysVGPRS);
     YamlIO.mapOptional("wwmReservedRegs", MFI.WWMReservedRegs);
     YamlIO.mapOptional("scavengeFI", MFI.ScavengeFI);
     YamlIO.mapOptional("vgprForAGPRCopy", MFI.VGPRForAGPRCopy,
@@ -349,7 +332,6 @@ template <> struct MappingTraits<SIMachineFunctionInfo> {
                        StringValue()); // Don't print out when it's empty.
     YamlIO.mapOptional("longBranchReservedReg", MFI.LongBranchReservedReg,
                        StringValue());
-    YamlIO.mapOptional("hasInitWholeWave", MFI.HasInitWholeWave, false);
   }
 };
 
@@ -440,9 +422,6 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction,
 
   const AMDGPUGWSResourcePseudoSourceValue GWSResourcePSV;
 
-  // Default/requested number of work groups for the function.
-  SmallVector<unsigned> MaxNumWorkGroups = {0, 0, 0};
-
 private:
   unsigned NumUserSGPRs = 0;
   unsigned NumSystemSGPRs = 0;
@@ -455,9 +434,13 @@ private:
   unsigned NumSpilledSGPRs = 0;
   unsigned NumSpilledVGPRs = 0;
 
-  // Tracks information about user SGPRs that will be setup by hardware which
-  // will apply to all wavefronts of the grid.
-  GCNUserSGPRUsageInfo UserSGPRInfo;
+  // Feature bits required for inputs passed in user SGPRs.
+  bool PrivateSegmentBuffer : 1;
+  bool DispatchPtr : 1;
+  bool QueuePtr : 1;
+  bool KernargSegmentPtr : 1;
+  bool DispatchID : 1;
+  bool FlatScratchInit : 1;
 
   // Feature bits required for inputs passed in system SGPRs.
   bool WorkGroupIDX : 1; // Always initialized.
@@ -470,6 +453,11 @@ private:
   bool WorkItemIDX : 1; // Always initialized.
   bool WorkItemIDY : 1;
   bool WorkItemIDZ : 1;
+
+  // Private memory buffer
+  // Compute directly in sgpr[0:1]
+  // Other shaders indirect 64-bits at sgpr[0:1]
+  bool ImplicitBufferPtr : 1;
 
   // Pointer to where the ABI inserts special kernel arguments separate from the
   // user arguments. This is an offset from the KernargSegmentPtr.
@@ -490,10 +478,6 @@ private:
   // Current recorded maximum possible occupancy.
   unsigned Occupancy;
 
-  // Maximum number of dwords that can be clusterred during instruction
-  // scheduler stage.
-  unsigned MaxMemoryClusterDWords = DefaultMemoryClusterDWordsLimit;
-
   mutable std::optional<bool> UsesAGPRs;
 
   MCPhysReg getNextUserSGPR() const;
@@ -512,18 +496,16 @@ public:
   };
 
 private:
-  // To track virtual VGPR + lane index for each subregister of the SGPR spilled
-  // to frameindex key during SILowerSGPRSpills pass.
+  // To track VGPR + lane index for each subregister of the SGPR spilled to
+  // frameindex key during SILowerSGPRSpills pass.
+  DenseMap<int, std::vector<SIRegisterInfo::SpilledReg>> SGPRSpillToVGPRLanes;
+  // To track VGPR + lane index for spilling special SGPRs like Frame Pointer
+  // identified during PrologEpilogInserter.
   DenseMap<int, std::vector<SIRegisterInfo::SpilledReg>>
-      SGPRSpillsToVirtualVGPRLanes;
-  // To track physical VGPR + lane index for CSR SGPR spills and special SGPRs
-  // like Frame Pointer identified during PrologEpilogInserter.
-  DenseMap<int, std::vector<SIRegisterInfo::SpilledReg>>
-      SGPRSpillsToPhysicalVGPRLanes;
-  unsigned NumVirtualVGPRSpillLanes = 0;
-  unsigned NumPhysicalVGPRSpillLanes = 0;
+      PrologEpilogSGPRSpillToVGPRLanes;
+  unsigned NumVGPRSpillLanes = 0;
+  unsigned NumVGPRPrologEpilogSpillLanes = 0;
   SmallVector<Register, 2> SpillVGPRs;
-  SmallVector<Register, 2> SpillPhysVGPRs;
   using WWMSpillsMap = MapVector<Register, int>;
   // To track the registers used in instructions that can potentially modify the
   // inactive lanes. The WWM instructions and the writelane instructions for
@@ -533,11 +515,6 @@ private:
   // the VGPR and its stack slot index.
   WWMSpillsMap WWMSpills;
 
-  // Before allocation, the VGPR registers are partitioned into two distinct
-  // sets, the first one for WWM-values and the second set for non-WWM values.
-  // The latter set should be reserved during WWM-regalloc.
-  BitVector NonWWMRegMask;
-
   using ReservedRegSet = SmallSetVector<Register, 8>;
   // To track the VGPRs reserved for WWM instructions. They get stack slots
   // later during PrologEpilogInserter and get added into the superset WWMSpills
@@ -545,13 +522,13 @@ private:
   // the serialization easier.
   ReservedRegSet WWMReservedRegs;
 
-  using PrologEpilogSGPRSpill =
-      std::pair<Register, PrologEpilogSGPRSaveRestoreInfo>;
+  using PrologEpilogSGPRSpillsMap =
+      DenseMap<Register, PrologEpilogSGPRSaveRestoreInfo>;
   // To track the SGPR spill method used for a CSR SGPR register during
   // frame lowering. Even though the SGPR spills are handled during
   // SILowerSGPRSpills pass, some special handling needed later during the
   // PrologEpilogInserter.
-  SmallVector<PrologEpilogSGPRSpill, 3> PrologEpilogSGPRSpills;
+  PrologEpilogSGPRSpillsMap PrologEpilogSGPRSpills;
 
   // To save/restore EXEC MASK around WWM spills and copies.
   Register SGPRForEXECCopy;
@@ -571,11 +548,10 @@ private:
 private:
   Register VGPRForAGPRCopy;
 
-  bool allocateVirtualVGPRForSGPRSpills(MachineFunction &MF, int FI,
-                                        unsigned LaneIndex);
-  bool allocatePhysicalVGPRForSGPRSpills(MachineFunction &MF, int FI,
-                                         unsigned LaneIndex,
-                                         bool IsPrologEpilog);
+  bool allocateVGPRForSGPRSpills(MachineFunction &MF, int FI,
+                                 unsigned LaneIndex);
+  bool allocateVGPRForPrologEpilogSGPRSpills(MachineFunction &MF, int FI,
+                                             unsigned LaneIndex);
 
 public:
   Register getVGPRForAGPRCopy() const {
@@ -603,67 +579,39 @@ public:
                                 SMDiagnostic &Error, SMRange &SourceRange);
 
   void reserveWWMRegister(Register Reg) { WWMReservedRegs.insert(Reg); }
-  bool isWWMReg(Register Reg) const {
-    return Reg.isVirtual() ? checkFlag(Reg, AMDGPU::VirtRegFlag::WWM_REG)
-                           : WWMReservedRegs.contains(Reg);
-  }
-
-  void updateNonWWMRegMask(BitVector &RegMask) { NonWWMRegMask = RegMask; }
-  BitVector getNonWWMRegMask() const { return NonWWMRegMask; }
-  void clearNonWWMRegAllocMask() { NonWWMRegMask.clear(); }
 
   SIModeRegisterDefaults getMode() const { return Mode; }
 
   ArrayRef<SIRegisterInfo::SpilledReg>
-  getSGPRSpillToVirtualVGPRLanes(int FrameIndex) const {
-    auto I = SGPRSpillsToVirtualVGPRLanes.find(FrameIndex);
-    return (I == SGPRSpillsToVirtualVGPRLanes.end())
+  getSGPRSpillToVGPRLanes(int FrameIndex) const {
+    auto I = SGPRSpillToVGPRLanes.find(FrameIndex);
+    return (I == SGPRSpillToVGPRLanes.end())
                ? ArrayRef<SIRegisterInfo::SpilledReg>()
                : ArrayRef(I->second);
   }
 
   ArrayRef<Register> getSGPRSpillVGPRs() const { return SpillVGPRs; }
-  ArrayRef<Register> getSGPRSpillPhysVGPRs() const { return SpillPhysVGPRs; }
-
   const WWMSpillsMap &getWWMSpills() const { return WWMSpills; }
   const ReservedRegSet &getWWMReservedRegs() const { return WWMReservedRegs; }
 
-  ArrayRef<PrologEpilogSGPRSpill> getPrologEpilogSGPRSpills() const {
-    assert(is_sorted(PrologEpilogSGPRSpills, llvm::less_first()));
+  const PrologEpilogSGPRSpillsMap &getPrologEpilogSGPRSpills() const {
     return PrologEpilogSGPRSpills;
   }
 
-  GCNUserSGPRUsageInfo &getUserSGPRInfo() { return UserSGPRInfo; }
-
-  const GCNUserSGPRUsageInfo &getUserSGPRInfo() const { return UserSGPRInfo; }
-
   void addToPrologEpilogSGPRSpills(Register Reg,
                                    PrologEpilogSGPRSaveRestoreInfo SI) {
-    assert(!hasPrologEpilogSGPRSpillEntry(Reg));
-
-    // Insert a new entry in the right place to keep the vector in sorted order.
-    // This should be cheap since the vector is expected to be very short.
-    PrologEpilogSGPRSpills.insert(
-        upper_bound(
-            PrologEpilogSGPRSpills, Reg,
-            [](const auto &LHS, const auto &RHS) { return LHS < RHS.first; }),
-        std::make_pair(Reg, SI));
+    PrologEpilogSGPRSpills.insert(std::make_pair(Reg, SI));
   }
 
   // Check if an entry created for \p Reg in PrologEpilogSGPRSpills. Return true
   // on success and false otherwise.
   bool hasPrologEpilogSGPRSpillEntry(Register Reg) const {
-    const auto *I = find_if(PrologEpilogSGPRSpills, [&Reg](const auto &Spill) {
-      return Spill.first == Reg;
-    });
-    return I != PrologEpilogSGPRSpills.end();
+    return PrologEpilogSGPRSpills.contains(Reg);
   }
 
   // Get the scratch SGPR if allocated to save/restore \p Reg.
   Register getScratchSGPRCopyDstReg(Register Reg) const {
-    const auto *I = find_if(PrologEpilogSGPRSpills, [&Reg](const auto &Spill) {
-      return Spill.first == Reg;
-    });
+    auto I = PrologEpilogSGPRSpills.find(Reg);
     if (I != PrologEpilogSGPRSpills.end() &&
         I->second.getKind() == SGPRSaveKind::COPY_TO_SCRATCH_SGPR)
       return I->second.getReg();
@@ -692,18 +640,16 @@ public:
 
   const PrologEpilogSGPRSaveRestoreInfo &
   getPrologEpilogSGPRSaveRestoreInfo(Register Reg) const {
-    const auto *I = find_if(PrologEpilogSGPRSpills, [&Reg](const auto &Spill) {
-      return Spill.first == Reg;
-    });
+    auto I = PrologEpilogSGPRSpills.find(Reg);
     assert(I != PrologEpilogSGPRSpills.end());
 
     return I->second;
   }
 
   ArrayRef<SIRegisterInfo::SpilledReg>
-  getSGPRSpillToPhysicalVGPRLanes(int FrameIndex) const {
-    auto I = SGPRSpillsToPhysicalVGPRLanes.find(FrameIndex);
-    return (I == SGPRSpillsToPhysicalVGPRLanes.end())
+  getPrologEpilogSGPRSpillToVGPRLanes(int FrameIndex) const {
+    auto I = PrologEpilogSGPRSpillToVGPRLanes.find(FrameIndex);
+    return (I == PrologEpilogSGPRSpillToVGPRLanes.end())
                ? ArrayRef<SIRegisterInfo::SpilledReg>()
                : ArrayRef(I->second);
   }
@@ -720,8 +666,6 @@ public:
 
     return VRegFlags.inBounds(Reg) && VRegFlags[Reg] & Flag;
   }
-
-  bool hasVRegFlags() { return VRegFlags.size(); }
 
   void allocateWWMSpill(MachineFunction &MF, Register VGPR, uint64_t Size = 4,
                         Align Alignment = Align(4));
@@ -755,14 +699,7 @@ public:
       I->second.IsDead = true;
   }
 
-  // To bring the allocated WWM registers in \p WWMVGPRs to the lowest available
-  // range.
-  void shiftWwmVGPRsToLowestRange(MachineFunction &MF,
-                                  SmallVectorImpl<Register> &WWMVGPRs,
-                                  BitVector &SavedVGPRs);
-
   bool allocateSGPRSpillToVGPRLane(MachineFunction &MF, int FI,
-                                   bool SpillToPhysVGPRLane = false,
                                    bool IsPrologEpilog = false);
   bool allocateVGPRSpillToAGPR(MachineFunction &MF, int FI, bool isAGPRtoVGPR);
 
@@ -789,13 +726,8 @@ public:
   Register addKernargSegmentPtr(const SIRegisterInfo &TRI);
   Register addDispatchID(const SIRegisterInfo &TRI);
   Register addFlatScratchInit(const SIRegisterInfo &TRI);
-  Register addPrivateSegmentSize(const SIRegisterInfo &TRI);
   Register addImplicitBufferPtr(const SIRegisterInfo &TRI);
   Register addLDSKernelId();
-  SmallVectorImpl<MCRegister> *
-  addPreloadedKernArg(const SIRegisterInfo &TRI, const TargetRegisterClass *RC,
-                      unsigned AllocSizeDWord, int KernArgIdx,
-                      int PaddingSGPRs);
 
   /// Increment user SGPRs used for padding the argument list only.
   Register addReservedUserSGPR() {
@@ -805,21 +737,35 @@ public:
   }
 
   // Add system SGPRs.
-  Register addWorkGroupIDX() {
-    ArgInfo.WorkGroupIDX = ArgDescriptor::createRegister(getNextSystemSGPR());
-    NumSystemSGPRs += 1;
+  Register addWorkGroupIDX(bool HasArchitectedSGPRs) {
+    Register Reg =
+        HasArchitectedSGPRs ? (MCPhysReg)AMDGPU::TTMP9 : getNextSystemSGPR();
+    ArgInfo.WorkGroupIDX = ArgDescriptor::createRegister(Reg);
+    if (!HasArchitectedSGPRs)
+      NumSystemSGPRs += 1;
+
     return ArgInfo.WorkGroupIDX.getRegister();
   }
 
-  Register addWorkGroupIDY() {
-    ArgInfo.WorkGroupIDY = ArgDescriptor::createRegister(getNextSystemSGPR());
-    NumSystemSGPRs += 1;
+  Register addWorkGroupIDY(bool HasArchitectedSGPRs) {
+    Register Reg =
+        HasArchitectedSGPRs ? (MCPhysReg)AMDGPU::TTMP7 : getNextSystemSGPR();
+    unsigned Mask = HasArchitectedSGPRs && hasWorkGroupIDZ() ? 0xffff : ~0u;
+    ArgInfo.WorkGroupIDY = ArgDescriptor::createRegister(Reg, Mask);
+    if (!HasArchitectedSGPRs)
+      NumSystemSGPRs += 1;
+
     return ArgInfo.WorkGroupIDY.getRegister();
   }
 
-  Register addWorkGroupIDZ() {
-    ArgInfo.WorkGroupIDZ = ArgDescriptor::createRegister(getNextSystemSGPR());
-    NumSystemSGPRs += 1;
+  Register addWorkGroupIDZ(bool HasArchitectedSGPRs) {
+    Register Reg =
+        HasArchitectedSGPRs ? (MCPhysReg)AMDGPU::TTMP7 : getNextSystemSGPR();
+    unsigned Mask = HasArchitectedSGPRs ? 0xffff << 16 : ~0u;
+    ArgInfo.WorkGroupIDZ = ArgDescriptor::createRegister(Reg, Mask);
+    if (!HasArchitectedSGPRs)
+      NumSystemSGPRs += 1;
+
     return ArgInfo.WorkGroupIDZ.getRegister();
   }
 
@@ -828,8 +774,6 @@ public:
     NumSystemSGPRs += 1;
     return ArgInfo.WorkGroupInfo.getRegister();
   }
-
-  bool hasLDSKernelId() const { return LDSKernelId; }
 
   // Add special VGPR inputs
   void setWorkItemIDX(ArgDescriptor Arg) {
@@ -855,6 +799,30 @@ public:
     ArgInfo.PrivateSegmentWaveByteOffset = ArgDescriptor::createRegister(Reg);
   }
 
+  bool hasPrivateSegmentBuffer() const {
+    return PrivateSegmentBuffer;
+  }
+
+  bool hasDispatchPtr() const {
+    return DispatchPtr;
+  }
+
+  bool hasQueuePtr() const {
+    return QueuePtr;
+  }
+
+  bool hasKernargSegmentPtr() const {
+    return KernargSegmentPtr;
+  }
+
+  bool hasDispatchID() const {
+    return DispatchID;
+  }
+
+  bool hasFlatScratchInit() const {
+    return FlatScratchInit;
+  }
+
   bool hasWorkGroupIDX() const {
     return WorkGroupIDX;
   }
@@ -870,6 +838,8 @@ public:
   bool hasWorkGroupInfo() const {
     return WorkGroupInfo;
   }
+
+  bool hasLDSKernelId() const { return LDSKernelId; }
 
   bool hasPrivateSegmentWaveByteOffset() const {
     return PrivateSegmentWaveByteOffset;
@@ -891,6 +861,10 @@ public:
     return ImplicitArgPtr;
   }
 
+  bool hasImplicitBufferPtr() const {
+    return ImplicitBufferPtr;
+  }
+
   AMDGPUFunctionArgInfo &getArgInfo() {
     return ArgInfo;
   }
@@ -905,7 +879,7 @@ public:
   }
 
   MCRegister getPreloadedReg(AMDGPUFunctionArgInfo::PreloadedValue Value) const {
-    const auto *Arg = std::get<0>(ArgInfo.getPreloadedValue(Value));
+    auto Arg = std::get<0>(ArgInfo.getPreloadedValue(Value));
     return Arg ? Arg->getRegister() : MCRegister();
   }
 
@@ -925,10 +899,6 @@ public:
 
   unsigned getNumPreloadedSGPRs() const {
     return NumUserSGPRs + NumSystemSGPRs;
-  }
-
-  unsigned getNumKernargPreloadedSGPRs() const {
-    return UserSGPRInfo.getNumKernargPreloadSGPRs();
   }
 
   Register getPrivateSegmentWaveByteOffsetSystemSGPR() const {
@@ -1088,6 +1058,22 @@ public:
     return WavesPerEU.second;
   }
 
+  /// \returns SGPR used for \p Dim's work group ID.
+  Register getWorkGroupIDSGPR(unsigned Dim) const {
+    switch (Dim) {
+    case 0:
+      assert(hasWorkGroupIDX());
+      return ArgInfo.WorkGroupIDX.getRegister();
+    case 1:
+      assert(hasWorkGroupIDY());
+      return ArgInfo.WorkGroupIDY.getRegister();
+    case 2:
+      assert(hasWorkGroupIDZ());
+      return ArgInfo.WorkGroupIDZ.getRegister();
+    }
+    llvm_unreachable("unexpected dimension");
+  }
+
   const AMDGPUGWSResourcePseudoSourceValue *
   getGWSPSV(const AMDGPUTargetMachine &TM) {
     return &GWSResourcePSV;
@@ -1116,8 +1102,6 @@ public:
     limitOccupancy(MF);
   }
 
-  unsigned getMaxMemoryClusterDWords() const { return MaxMemoryClusterDWords; }
-
   bool mayNeedAGPRs() const {
     return MayNeedAGPRs;
   }
@@ -1128,13 +1112,6 @@ public:
 
   // \returns true if a function needs or may need AGPRs.
   bool usesAGPRs(const MachineFunction &MF) const;
-
-  /// \returns Default/requested number of work groups for this function.
-  SmallVector<unsigned> getMaxNumWorkGroups() const { return MaxNumWorkGroups; }
-
-  unsigned getMaxNumWorkGroupsX() const { return MaxNumWorkGroups[0]; }
-  unsigned getMaxNumWorkGroupsY() const { return MaxNumWorkGroups[1]; }
-  unsigned getMaxNumWorkGroupsZ() const { return MaxNumWorkGroups[2]; }
 };
 
 } // end namespace llvm

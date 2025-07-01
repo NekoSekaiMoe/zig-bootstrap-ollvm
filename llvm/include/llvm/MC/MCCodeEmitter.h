@@ -22,6 +22,13 @@ class MCCodeEmitter {
 protected: // Can only create subclasses.
   MCCodeEmitter();
 
+  /// EncodeInstruction - Encode the given \p Inst to bytes on the output stream
+  /// \p OS. Allows for an implementation of encodeInstruction that uses streams
+  /// instead of a SmallVector.
+  virtual void encodeInstruction(const MCInst &Inst, raw_ostream &OS,
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const {}
+
 public:
   MCCodeEmitter(const MCCodeEmitter &) = delete;
   MCCodeEmitter &operator=(const MCCodeEmitter &) = delete;
@@ -30,10 +37,16 @@ public:
   /// Lifetime management
   virtual void reset() {}
 
-  /// Encode the given \p Inst to bytes and append to \p CB.
+  /// Append the prefixes of given instruction to the code buffer.
+  ///
+  /// \param Inst a single low-level machine instruction.
+  /// \param CB code buffer
+  virtual void emitPrefix(const MCInst &Inst, SmallVectorImpl<char> &CB,
+                          const MCSubtargetInfo &STI) const {}
+  /// EncodeInstruction - Encode the given \p Inst to bytes and append to \p CB.
   virtual void encodeInstruction(const MCInst &Inst, SmallVectorImpl<char> &CB,
                                  SmallVectorImpl<MCFixup> &Fixups,
-                                 const MCSubtargetInfo &STI) const = 0;
+                                 const MCSubtargetInfo &STI) const;
 };
 
 } // end namespace llvm

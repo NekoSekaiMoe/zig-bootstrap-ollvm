@@ -19,6 +19,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/Path.h"
 #include <optional>
@@ -121,10 +122,10 @@ void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
   CurPPLexer = TheLexer;
   CurDirLookup = CurDir;
   CurLexerSubmodule = nullptr;
-  if (CurLexerCallback != CLK_LexAfterModuleImport)
-    CurLexerCallback = TheLexer->isDependencyDirectivesLexer()
-                           ? CLK_DependencyDirectivesLexer
-                           : CLK_Lexer;
+  if (CurLexerKind != CLK_LexAfterModuleImport)
+    CurLexerKind = TheLexer->isDependencyDirectivesLexer()
+                       ? CLK_DependencyDirectivesLexer
+                       : CLK_Lexer;
 
   // Notify the client, if desired, that we are in a new source file.
   if (Callbacks && !CurLexer->Is_PragmaLexer) {
@@ -160,8 +161,8 @@ void Preprocessor::EnterMacro(Token &Tok, SourceLocation ILEnd,
   PushIncludeMacroStack();
   CurDirLookup = nullptr;
   CurTokenLexer = std::move(TokLexer);
-  if (CurLexerCallback != CLK_LexAfterModuleImport)
-    CurLexerCallback = CLK_TokenLexer;
+  if (CurLexerKind != CLK_LexAfterModuleImport)
+    CurLexerKind = CLK_TokenLexer;
 }
 
 /// EnterTokenStream - Add a "macro" context to the top of the include stack,
@@ -179,7 +180,7 @@ void Preprocessor::EnterMacro(Token &Tok, SourceLocation ILEnd,
 void Preprocessor::EnterTokenStream(const Token *Toks, unsigned NumToks,
                                     bool DisableMacroExpansion, bool OwnsTokens,
                                     bool IsReinject) {
-  if (CurLexerCallback == CLK_CachingLexer) {
+  if (CurLexerKind == CLK_CachingLexer) {
     if (CachedLexPos < CachedTokens.size()) {
       assert(IsReinject && "new tokens in the middle of cached stream");
       // We're entering tokens into the middle of our cached token stream. We
@@ -215,8 +216,8 @@ void Preprocessor::EnterTokenStream(const Token *Toks, unsigned NumToks,
   PushIncludeMacroStack();
   CurDirLookup = nullptr;
   CurTokenLexer = std::move(TokLexer);
-  if (CurLexerCallback != CLK_LexAfterModuleImport)
-    CurLexerCallback = CLK_TokenLexer;
+  if (CurLexerKind != CLK_LexAfterModuleImport)
+    CurLexerKind = CLK_TokenLexer;
 }
 
 /// Compute the relative path that names the given file relative to
@@ -228,7 +229,7 @@ static void computeRelativePath(FileManager &FM, const DirectoryEntry *Dir,
   StringRef FilePath = File.getDir().getName();
   StringRef Path = FilePath;
   while (!Path.empty()) {
-    if (auto CurDir = FM.getOptionalDirectoryRef(Path)) {
+    if (auto CurDir = FM.getDirectory(Path)) {
       if (*CurDir == Dir) {
         Result = FilePath.substr(Path.size());
         llvm::sys::path::append(Result,
@@ -365,9 +366,10 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
     if (const IdentifierInfo *ControllingMacro =
           CurPPLexer->MIOpt.GetControllingMacroAtEndOfFile()) {
       // Okay, this has a controlling macro, remember in HeaderFileInfo.
-      if (OptionalFileEntryRef FE = CurPPLexer->getFileEntry()) {
-        HeaderInfo.SetFileControllingMacro(*FE, ControllingMacro);
-        if (MacroInfo *MI = getMacroInfo(ControllingMacro))
+      if (const FileEntry *FE = CurPPLexer->getFileEntry()) {
+        HeaderInfo.SetFileControllingMacro(FE, ControllingMacro);
+        if (MacroInfo *MI =
+              getMacroInfo(const_cast<IdentifierInfo*>(ControllingMacro)))
           MI->setUsedForHeaderGuard(true);
         if (const IdentifierInfo *DefinedMacro =
               CurPPLexer->MIOpt.GetDefinedMacro()) {
@@ -539,7 +541,7 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
   Result.startToken();
   CurLexer->BufferPtr = EndPos;
 
-  if (getLangOpts().IncrementalExtensions) {
+  if (isIncrementalProcessingEnabled()) {
     CurLexer->FormTokenWithChars(Result, EndPos, tok::annot_repl_input_end);
     Result.setAnnotationEndLoc(Result.getLocation());
     Result.setAnnotationValue(nullptr);
@@ -803,7 +805,7 @@ Module *Preprocessor::LeaveSubmodule(bool ForPragma) {
   llvm::SmallPtrSet<const IdentifierInfo*, 8> VisitedMacros;
   for (unsigned I = Info.OuterPendingModuleMacroNames;
        I != PendingModuleMacroNames.size(); ++I) {
-    auto *II = PendingModuleMacroNames[I];
+    auto *II = const_cast<IdentifierInfo*>(PendingModuleMacroNames[I]);
     if (!VisitedMacros.insert(II).second)
       continue;
 
@@ -853,8 +855,8 @@ Module *Preprocessor::LeaveSubmodule(bool ForPragma) {
         // Don't bother creating a module macro if it would represent a #undef
         // that doesn't override anything.
         if (Def || !Macro.getOverriddenMacros().empty())
-          addModuleMacro(LeavingMod, II, Def, Macro.getOverriddenMacros(),
-                         IsNew);
+          addModuleMacro(LeavingMod, II, Def,
+                         Macro.getOverriddenMacros(), IsNew);
 
         if (!getLangOpts().ModulesLocalVisibility) {
           // This macro is exposed to the rest of this compilation as a

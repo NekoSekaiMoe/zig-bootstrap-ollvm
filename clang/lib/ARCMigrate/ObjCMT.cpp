@@ -36,7 +36,6 @@
 using namespace clang;
 using namespace arcmt;
 using namespace ento;
-using llvm::RewriteBuffer;
 
 namespace {
 
@@ -124,7 +123,9 @@ public:
         NSIntegerTypedefed(nullptr), NSUIntegerTypedefed(nullptr),
         Remapper(remapper), FileMgr(fileMgr), PPRec(PPRec), PP(PP),
         IsOutputFile(isOutputFile), FoundationIncluded(false) {
-    AllowListFilenames.insert(AllowList.begin(), AllowList.end());
+    // FIXME: StringSet should have insert(iter, iter) to use here.
+    for (const std::string &Val : AllowList)
+      AllowListFilenames.insert(Val);
   }
 
 protected:
@@ -485,7 +486,7 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
 
   // Short circuit 'delegate' properties that contain the name "delegate" or
   // "dataSource", or have exact name "target" to have 'assign' attribute.
-  if (PropertyName == "target" || PropertyName.contains("delegate") ||
+  if (PropertyName.equals("target") || PropertyName.contains("delegate") ||
       PropertyName.contains("dataSource")) {
     QualType QT = Getter->getReturnType();
     if (!QT->isRealType())
@@ -563,7 +564,7 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
 static bool IsCategoryNameWithDeprecatedSuffix(ObjCContainerDecl *D) {
   if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(D)) {
     StringRef Name = CatDecl->getName();
-    return Name.ends_with("Deprecated");
+    return Name.endswith("Deprecated");
   }
   return false;
 }
@@ -637,7 +638,7 @@ ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
     for (const auto *MD : PDecl->methods()) {
       if (MD->isImplicit())
         continue;
-      if (MD->getImplementationControl() == ObjCImplementationControl::Optional)
+      if (MD->getImplementationControl() == ObjCMethodDecl::Optional)
         continue;
       DeclContext::lookup_result R = ImpDecl->lookup(MD->getDeclName());
       if (R.empty())
@@ -1145,7 +1146,7 @@ static bool IsValidIdentifier(ASTContext &Ctx,
     return false;
   std::string NameString = Name;
   NameString[0] = toLowercase(NameString[0]);
-  const IdentifierInfo *II = &Ctx.Idents.get(NameString);
+  IdentifierInfo *II = &Ctx.Idents.get(NameString);
   return II->getTokenID() ==  tok::identifier;
 }
 
@@ -1167,7 +1168,7 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
   if (OIT_Family != OIT_None)
     return false;
 
-  const IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
+  IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
   Selector SetterSelector =
   SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
                                          PP.getSelectorTable(),
@@ -1177,12 +1178,12 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
   if (!SetterMethod) {
     // try a different naming convention for getter: isXxxxx
     StringRef getterNameString = getterName->getName();
-    bool IsPrefix = getterNameString.starts_with("is");
+    bool IsPrefix = getterNameString.startswith("is");
     // Note that we don't want to change an isXXX method of retainable object
     // type to property (readonly or otherwise).
     if (IsPrefix && GRT->isObjCRetainableType())
       return false;
-    if (IsPrefix || getterNameString.starts_with("get")) {
+    if (IsPrefix || getterNameString.startswith("get")) {
       LengthOfPrefix = (IsPrefix ? 2 : 3);
       const char *CGetterName = getterNameString.data() + LengthOfPrefix;
       // Make sure that first character after "is" or "get" prefix can
@@ -1312,8 +1313,7 @@ void ObjCMigrateASTConsumer::migrateFactoryMethod(ASTContext &Ctx,
   std::string StringLoweredClassName = LoweredClassName.lower();
   LoweredClassName = StringLoweredClassName;
 
-  const IdentifierInfo *MethodIdName =
-      OM->getSelector().getIdentifierInfoForSlot(0);
+  IdentifierInfo *MethodIdName = OM->getSelector().getIdentifierInfoForSlot(0);
   // Handle method with no name at its first selector slot; e.g. + (id):(int)x.
   if (!MethodIdName)
     return;
@@ -1322,11 +1322,11 @@ void ObjCMigrateASTConsumer::migrateFactoryMethod(ASTContext &Ctx,
   if (OIT_Family == OIT_Singleton || OIT_Family == OIT_ReturnsSelf) {
     StringRef STRefMethodName(MethodName);
     size_t len = 0;
-    if (STRefMethodName.starts_with("standard"))
+    if (STRefMethodName.startswith("standard"))
       len = strlen("standard");
-    else if (STRefMethodName.starts_with("shared"))
+    else if (STRefMethodName.startswith("shared"))
       len = strlen("shared");
-    else if (STRefMethodName.starts_with("default"))
+    else if (STRefMethodName.startswith("default"))
       len = strlen("default");
     else
       return;
@@ -1343,7 +1343,7 @@ void ObjCMigrateASTConsumer::migrateFactoryMethod(ASTContext &Ctx,
   StringRef LoweredMethodName(MethodName);
   std::string StringLoweredMethodName = LoweredMethodName.lower();
   LoweredMethodName = StringLoweredMethodName;
-  if (!LoweredMethodName.starts_with(ClassNamePostfix))
+  if (!LoweredMethodName.startswith(ClassNamePostfix))
     return;
   if (OIT_Family == OIT_ReturnsSelf)
     ReplaceWithClasstype(*this, OM);
@@ -1785,7 +1785,7 @@ private:
       std::tie(FID, Offset) = SourceMgr.getDecomposedLoc(Loc);
       assert(FID.isValid());
       SmallString<200> Path =
-          StringRef(SourceMgr.getFileEntryRefForID(FID)->getName());
+          StringRef(SourceMgr.getFileEntryForID(FID)->getName());
       llvm::sys::fs::make_absolute(Path);
       OS << "  \"file\": \"";
       OS.write_escaped(Path.str()) << "\",\n";
@@ -1964,7 +1964,8 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
     llvm::raw_svector_ostream vecOS(newText);
     buf.write(vecOS);
     std::unique_ptr<llvm::MemoryBuffer> memBuf(
-        llvm::MemoryBuffer::getMemBufferCopy(newText.str(), file->getName()));
+        llvm::MemoryBuffer::getMemBufferCopy(
+            StringRef(newText.data(), newText.size()), file->getName()));
     SmallString<64> filePath(file->getName());
     FileMgr.FixupRelativePath(filePath);
     Remapper.remap(filePath.str(), std::move(memBuf));
@@ -2202,7 +2203,7 @@ static std::string applyEditsToTemp(FileEntryRef FE,
   TmpOut.write(NewText.data(), NewText.size());
   TmpOut.close();
 
-  return std::string(TempPath);
+  return std::string(TempPath.str());
 }
 
 bool arcmt::getFileRemappingsFromFileList(

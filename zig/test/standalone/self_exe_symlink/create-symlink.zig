@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn main() anyerror!void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() == .leak) @panic("found memory leaks");
     const allocator = gpa.allocator();
 

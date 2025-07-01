@@ -168,7 +168,7 @@ pub const Inst = struct {
         orr_shifted_register,
         /// Pseudo-instruction: Pop multiple registers
         pop_regs,
-        /// Pseudo-instruction: Push multiple registers
+        /// Psuedo-instruction: Push multiple registers
         push_regs,
         /// Return from subroutine
         ret,

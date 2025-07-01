@@ -13,6 +13,7 @@
 #include "MCTargetDesc/MipsMCNaCl.h"
 #include "Mips.h"
 #include "MipsInstrInfo.h"
+#include "MipsRegisterInfo.h"
 #include "MipsSubtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
@@ -235,7 +236,7 @@ namespace {
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.addRequired<MachineBranchProbabilityInfoWrapperPass>();
+      AU.addRequired<MachineBranchProbabilityInfo>();
       MachineFunctionPass::getAnalysisUsage(AU);
     }
 
@@ -364,8 +365,7 @@ void RegDefsUses::setCallerSaved(const MachineInstr &MI) {
   // Add RA/RA_64 to Defs to prevent users of RA/RA_64 from going into
   // the delay slot. The reason is that RA/RA_64 must not be changed
   // in the delay slot so that the callee can return to the caller.
-  if (MI.definesRegister(Mips::RA, /*TRI=*/nullptr) ||
-      MI.definesRegister(Mips::RA_64, /*TRI=*/nullptr)) {
+  if (MI.definesRegister(Mips::RA) || MI.definesRegister(Mips::RA_64)) {
     Defs.set(Mips::RA);
     Defs.set(Mips::RA_64);
   }
@@ -402,7 +402,7 @@ void RegDefsUses::addLiveOut(const MachineBasicBlock &MBB,
   for (const MachineBasicBlock *S : MBB.successors())
     if (S != &SuccBB)
       for (const auto &LI : S->liveins())
-        Uses.set(LI.PhysReg.id());
+        Uses.set(LI.PhysReg);
 }
 
 bool RegDefsUses::update(const MachineInstr &MI, unsigned Begin, unsigned End) {
@@ -563,10 +563,9 @@ Iter MipsDelaySlotFiller::replaceWithCompactBranch(MachineBasicBlock &MBB,
   Branch = TII->genInstrWithNewOpc(NewOpcode, Branch);
 
   auto *ToErase = cast<MachineInstr>(&*std::next(Branch));
-  // Update call info for the Branch.
-  if (ToErase->shouldUpdateAdditionalCallInfo())
-    ToErase->getMF()->moveAdditionalCallInfo(ToErase,
-                                             cast<MachineInstr>(&*Branch));
+  // Update call site info for the Branch.
+  if (ToErase->shouldUpdateCallSiteInfo())
+    ToErase->getMF()->moveCallSiteInfo(ToErase, cast<MachineInstr>(&*Branch));
   ToErase->eraseFromParent();
   return Branch;
 }
@@ -611,8 +610,7 @@ bool MipsDelaySlotFiller::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
       continue;
 
     // Delay slot filling is disabled at -O0, or in microMIPS32R6.
-    if (!DisableDelaySlotFiller &&
-        (TM->getOptLevel() != CodeGenOptLevel::None) &&
+    if (!DisableDelaySlotFiller && (TM->getOptLevel() != CodeGenOpt::None) &&
         !(InMicroMipsMode && STI.hasMips32r6())) {
 
       bool Filled = false;
@@ -744,12 +742,6 @@ bool MipsDelaySlotFiller::searchRange(MachineBasicBlock &MBB, IterTy Begin,
     bool InMicroMipsMode = STI.inMicroMipsMode();
     const MipsInstrInfo *TII = STI.getInstrInfo();
     unsigned Opcode = (*Slot).getOpcode();
-
-    // In mips1-4, should not put mflo into the delay slot for the return.
-    if ((IsMFLOMFHI(CurrI->getOpcode())) &&
-        (!STI.hasMips32() && !STI.hasMips5()))
-      continue;
-
     // This is complicated by the tail call optimization. For non-PIC code
     // there is only a 32bit sized unconditional branch which can be assumed
     // to be able to reach the target. b16 only has a range of +/- 1 KB.
@@ -878,7 +870,7 @@ MipsDelaySlotFiller::selectSuccBB(MachineBasicBlock &B) const {
     return nullptr;
 
   // Select the successor with the larget edge weight.
-  auto &Prob = getAnalysis<MachineBranchProbabilityInfoWrapperPass>().getMBPI();
+  auto &Prob = getAnalysis<MachineBranchProbabilityInfo>();
   MachineBasicBlock *S = *std::max_element(
       B.succ_begin(), B.succ_end(),
       [&](const MachineBasicBlock *Dst0, const MachineBasicBlock *Dst1) {

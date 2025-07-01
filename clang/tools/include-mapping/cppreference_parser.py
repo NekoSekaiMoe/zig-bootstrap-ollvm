@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # ===- cppreference_parser.py -  ------------------------------*- python -*--===#
 #
 # Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -7,7 +7,7 @@
 #
 # ===------------------------------------------------------------------------===#
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString
 
 import collections
 import multiprocessing
@@ -40,7 +40,7 @@ def _HasClass(tag, *classes):
     return False
 
 
-def _ParseSymbolPage(symbol_page_html, symbol_name, qual_name):
+def _ParseSymbolPage(symbol_page_html, symbol_name):
     """Parse symbol page and retrieve the include header defined in this page.
     The symbol page provides header for the symbol, specifically in
     "Defined in header <header>" section. An example:
@@ -69,9 +69,7 @@ def _ParseSymbolPage(symbol_page_html, symbol_name, qual_name):
                 was_decl = True
                 # Symbols are in the first cell.
                 found_symbols = row.find("td").stripped_strings
-                if not any(
-                    sym == symbol_name or sym == qual_name for sym in found_symbols
-                ):
+                if not symbol_name in found_symbols:
                     continue
                 headers.update(current_headers)
             elif _HasClass(row, "t-dsc-header"):
@@ -89,22 +87,6 @@ def _ParseSymbolPage(symbol_page_html, symbol_name, qual_name):
                     all_headers.add(header_code.text)
     # If the symbol was never named, consider all named headers.
     return headers or all_headers
-
-
-def _ParseSymbolVariant(caption):
-    if not (isinstance(caption, NavigableString) and "(" in caption):
-        return None
-
-    if ")" in caption.text:  # (locale), (algorithm), etc.
-        return caption.text.strip(" ()")
-
-    second_part = caption.next_sibling
-    if isinstance(second_part, Tag) and second_part.name == "code":
-        # (<code>std::complex</code>), etc.
-        third_part = second_part.next_sibling
-        if isinstance(third_part, NavigableString) and third_part.text.startswith(")"):
-            return second_part.text
-    return None
 
 
 def _ParseIndexPage(index_page_html):
@@ -125,7 +107,9 @@ def _ParseIndexPage(index_page_html):
         # This accidentally accepts begin/end despite the (iterator) caption: the
         # (since C++11) note is first. They are good symbols, so the bug is unfixed.
         caption = symbol_href.next_sibling
-        variant = _ParseSymbolVariant(caption)
+        variant = None
+        if isinstance(caption, NavigableString) and "(" in caption:
+            variant = caption.text.strip(" ()")
         symbol_tt = symbol_href.find("tt")
         if symbol_tt:
             symbols.append(
@@ -138,9 +122,9 @@ def _ParseIndexPage(index_page_html):
     return symbols
 
 
-def _ReadSymbolPage(path, name, qual_name):
-    with open(path, encoding="utf-8") as f:
-        return _ParseSymbolPage(f.read(), name, qual_name)
+def _ReadSymbolPage(path, name):
+    with open(path) as f:
+        return _ParseSymbolPage(f.read(), name)
 
 
 def _GetSymbols(pool, root_dir, index_page_name, namespace, variants_to_accept):
@@ -156,14 +140,15 @@ def _GetSymbols(pool, root_dir, index_page_name, namespace, variants_to_accept):
     #      contains the defined header.
     #   2. Parse the symbol page to get the defined header.
     index_page_path = os.path.join(root_dir, index_page_name)
-    with open(index_page_path, "r", encoding="utf-8") as f:
+    with open(index_page_path, "r") as f:
         # Read each symbol page in parallel.
         results = []  # (symbol_name, promise of [header...])
         for symbol_name, symbol_page_path, variant in _ParseIndexPage(f.read()):
             # Variant symbols (e.g. the std::locale version of isalpha) add ambiguity.
             # FIXME: use these as a fallback rather than ignoring entirely.
-            qualified_symbol_name = (namespace or "") + symbol_name
-            variants_for_symbol = variants_to_accept.get(qualified_symbol_name, ())
+            variants_for_symbol = variants_to_accept.get(
+                (namespace or "") + symbol_name, ()
+            )
             if variant and variant not in variants_for_symbol:
                 continue
             path = os.path.join(root_dir, symbol_page_path)
@@ -171,9 +156,7 @@ def _GetSymbols(pool, root_dir, index_page_name, namespace, variants_to_accept):
                 results.append(
                     (
                         symbol_name,
-                        pool.apply_async(
-                            _ReadSymbolPage, (path, symbol_name, qualified_symbol_name)
-                        ),
+                        pool.apply_async(_ReadSymbolPage, (path, symbol_name)),
                     )
                 )
             else:
@@ -193,10 +176,6 @@ def _GetSymbols(pool, root_dir, index_page_name, namespace, variants_to_accept):
     return symbols
 
 
-def signal_ignore_initializer():
-    return signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
 def GetSymbols(parse_pages):
     """Get all symbols by parsing the given pages.
 
@@ -209,21 +188,13 @@ def GetSymbols(parse_pages):
     variants_to_accept = {
         # std::remove<> has variant algorithm.
         "std::remove": ("algorithm"),
-        # These functions don't have a generic version, and all variants are defined in <chrono>
-        "std::chrono::abs": ("std::chrono::duration"),
-        "std::chrono::ceil": ("std::chrono::duration"),
-        "std::chrono::floor": ("std::chrono::duration"),
-        "std::chrono::from_stream": ("std::chrono::day"),
-        "std::chrono::round": ("std::chrono::duration"),
-        # Same, but in <filesystem>
-        "std::filesystem::begin": ("std::filesystem::directory_iterator"),
-        "std::filesystem::end": ("std::filesystem::directory_iterator"),
-        "std::ranges::get": ("std::ranges::subrange"),
     }
     symbols = []
     # Run many workers to process individual symbol pages under the symbol index.
     # Don't allow workers to capture Ctrl-C.
-    pool = multiprocessing.Pool(initializer=signal_ignore_initializer)
+    pool = multiprocessing.Pool(
+        initializer=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
+    )
     try:
         for root_dir, page_name, namespace in parse_pages:
             symbols.extend(

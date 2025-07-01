@@ -20,6 +20,7 @@
 
 #include "WebAssembly.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Pass.h"
@@ -135,7 +136,6 @@ bool WebAssemblyAddMissingPrototypes::runOnModule(Module &M) {
         Function::Create(NewType, F.getLinkage(), F.getName() + ".fixed_sig");
     NewF->setAttributes(F.getAttributes());
     NewF->removeFnAttr("no-prototype");
-    NewF->IsNewDbgInfoFormat = F.IsNewDbgInfoFormat;
     Replacements.emplace_back(&F, NewF);
   }
 

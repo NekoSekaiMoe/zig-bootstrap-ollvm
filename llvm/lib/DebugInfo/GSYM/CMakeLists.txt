@@ -8,8 +8,6 @@ add_llvm_component_library(LLVMDebugInfoGSYM
   InlineInfo.cpp
   LineTable.cpp
   LookupResult.cpp
-  CallSiteInfo.cpp
-  MergedFunctionsInfo.cpp
   ObjectFileTransformer.cpp
   ExtractRanges.cpp
 
@@ -19,9 +17,6 @@ add_llvm_component_library(LLVMDebugInfoGSYM
 
   DEPENDS
   LLVMMC
-
-  LINK_LIBS
-  ${LLVM_PTHREAD_LIB}
 
   LINK_COMPONENTS
   MC

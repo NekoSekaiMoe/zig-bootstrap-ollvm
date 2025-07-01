@@ -15,23 +15,23 @@ const common = @import("common.zig");
 pub const panic = common.panic;
 
 comptime {
-    @export(&__roundh, .{ .name = "__roundh", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&roundf, .{ .name = "roundf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&round, .{ .name = "round", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__roundx, .{ .name = "__roundx", .linkage = common.linkage, .visibility = common.visibility });
+    @export(__roundh, .{ .name = "__roundh", .linkage = common.linkage, .visibility = common.visibility });
+    @export(roundf, .{ .name = "roundf", .linkage = common.linkage, .visibility = common.visibility });
+    @export(round, .{ .name = "round", .linkage = common.linkage, .visibility = common.visibility });
+    @export(__roundx, .{ .name = "__roundx", .linkage = common.linkage, .visibility = common.visibility });
     if (common.want_ppc_abi) {
-        @export(&roundq, .{ .name = "roundf128", .linkage = common.linkage, .visibility = common.visibility });
+        @export(roundq, .{ .name = "roundf128", .linkage = common.linkage, .visibility = common.visibility });
     }
-    @export(&roundq, .{ .name = "roundq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&roundl, .{ .name = "roundl", .linkage = common.linkage, .visibility = common.visibility });
+    @export(roundq, .{ .name = "roundq", .linkage = common.linkage, .visibility = common.visibility });
+    @export(roundl, .{ .name = "roundl", .linkage = common.linkage, .visibility = common.visibility });
 }
 
-pub fn __roundh(x: f16) callconv(.c) f16 {
+pub fn __roundh(x: f16) callconv(.C) f16 {
     // TODO: more efficient implementation
     return @floatCast(roundf(x));
 }
 
-pub fn roundf(x_: f32) callconv(.c) f32 {
+pub fn roundf(x_: f32) callconv(.C) f32 {
     const f32_toint = 1.0 / math.floatEps(f32);
 
     var x = x_;
@@ -46,7 +46,7 @@ pub fn roundf(x_: f32) callconv(.c) f32 {
         x = -x;
     }
     if (e < 0x7F - 1) {
-        if (common.want_float_exceptions) mem.doNotOptimizeAway(x + f32_toint);
+        mem.doNotOptimizeAway(x + f32_toint);
         return 0 * @as(f32, @bitCast(u));
     }
 
@@ -66,7 +66,7 @@ pub fn roundf(x_: f32) callconv(.c) f32 {
     }
 }
 
-pub fn round(x_: f64) callconv(.c) f64 {
+pub fn round(x_: f64) callconv(.C) f64 {
     const f64_toint = 1.0 / math.floatEps(f64);
 
     var x = x_;
@@ -81,7 +81,7 @@ pub fn round(x_: f64) callconv(.c) f64 {
         x = -x;
     }
     if (e < 0x3ff - 1) {
-        if (common.want_float_exceptions) mem.doNotOptimizeAway(x + f64_toint);
+        mem.doNotOptimizeAway(x + f64_toint);
         return 0 * @as(f64, @bitCast(u));
     }
 
@@ -101,12 +101,12 @@ pub fn round(x_: f64) callconv(.c) f64 {
     }
 }
 
-pub fn __roundx(x: f80) callconv(.c) f80 {
+pub fn __roundx(x: f80) callconv(.C) f80 {
     // TODO: more efficient implementation
     return @floatCast(roundq(x));
 }
 
-pub fn roundq(x_: f128) callconv(.c) f128 {
+pub fn roundq(x_: f128) callconv(.C) f128 {
     const f128_toint = 1.0 / math.floatEps(f128);
 
     var x = x_;
@@ -121,7 +121,7 @@ pub fn roundq(x_: f128) callconv(.c) f128 {
         x = -x;
     }
     if (e < 0x3FFF - 1) {
-        if (common.want_float_exceptions) mem.doNotOptimizeAway(x + f128_toint);
+        mem.doNotOptimizeAway(x + f128_toint);
         return 0 * @as(f128, @bitCast(u));
     }
 
@@ -141,8 +141,8 @@ pub fn roundq(x_: f128) callconv(.c) f128 {
     }
 }
 
-pub fn roundl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
+pub fn roundl(x: c_longdouble) callconv(.C) c_longdouble {
+    switch (@typeInfo(c_longdouble).Float.bits) {
         16 => return __roundh(x),
         32 => return roundf(x),
         64 => return round(x),

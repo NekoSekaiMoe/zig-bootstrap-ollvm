@@ -32,25 +32,13 @@
 #include <sys/cdefs.h>
 #include <machine/_types.h>
 
-#if defined(__has_feature) && __has_feature(modules)
-#define USE_CLANG_TYPES 1
-#else
-#define USE_CLANG_TYPES 0
-#endif
-
-#if USE_CLANG_TYPES
-#include <sys/_types/_null.h>
-#endif
-
 /*
  * Type definitions; takes common type definitions that must be used
  * in multiple header files due to [XSI], removes them from the system
  * space, and puts them in the implementation space.
  */
 
-#if USE_CLANG_TYPES
-#define __DARWIN_NULL NULL
-#elif defined(__cplusplus)
+#ifdef __cplusplus
 #ifdef __GNUG__
 #define __DARWIN_NULL __null
 #else /* ! __GNUG__ */
@@ -62,7 +50,7 @@
 #endif /* __GNUG__ */
 #else /* ! __cplusplus */
 #define __DARWIN_NULL ((void *)0)
-#endif
+#endif /* __cplusplus */
 
 typedef __int64_t       __darwin_blkcnt_t;      /* total blocks */
 typedef __int32_t       __darwin_blksize_t;     /* preferred block size */
@@ -88,8 +76,6 @@ typedef __uint32_t      __darwin_uid_t;         /* [???] user IDs */
 typedef __uint32_t      __darwin_useconds_t;    /* [???] microseconds */
 typedef unsigned char   __darwin_uuid_t[16];
 typedef char    __darwin_uuid_string_t[37];
-
-#undef USE_CLANG_TYPES
 
 #include <sys/_pthread/_pthread_types.h>
 

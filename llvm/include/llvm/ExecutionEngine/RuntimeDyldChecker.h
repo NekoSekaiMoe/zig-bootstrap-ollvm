@@ -9,11 +9,9 @@
 #ifndef LLVM_EXECUTIONENGINE_RUNTIMEDYLDCHECKER_H
 #define LLVM_EXECUTIONENGINE_RUNTIMEDYLDCHECKER_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
-#include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/TargetParser/SubtargetFeature.h"
-#include "llvm/TargetParser/Triple.h"
 #include <optional>
 
 #include <cstdint>
@@ -30,9 +28,6 @@ class MCInstPrinter;
 class RuntimeDyld;
 class RuntimeDyldCheckerImpl;
 class raw_ostream;
-
-/// Holds target-specific properties for a symbol.
-using TargetFlagsType = uint8_t;
 
 /// RuntimeDyld invariant checker for verifying that RuntimeDyld has
 ///        correctly applied relocations.
@@ -83,11 +78,10 @@ public:
   public:
     MemoryRegionInfo() = default;
 
-    /// Constructor for symbols/sections with content and TargetFlag.
-    MemoryRegionInfo(ArrayRef<char> Content, JITTargetAddress TargetAddress,
-                     TargetFlagsType TargetFlags)
+    /// Constructor for symbols/sections with content.
+    MemoryRegionInfo(ArrayRef<char> Content, JITTargetAddress TargetAddress)
         : ContentPtr(Content.data()), Size(Content.size()),
-          TargetAddress(TargetAddress), TargetFlags(TargetFlags) {}
+          TargetAddress(TargetAddress) {}
 
     /// Constructor for zero-fill symbols/sections.
     MemoryRegionInfo(uint64_t Size, JITTargetAddress TargetAddress)
@@ -133,20 +127,10 @@ public:
     /// Return the target address for this region.
     JITTargetAddress getTargetAddress() const { return TargetAddress; }
 
-    /// Get the target flags for this Symbol.
-    TargetFlagsType getTargetFlags() const { return TargetFlags; }
-
-    /// Set the target flags for this Symbol.
-    void setTargetFlags(TargetFlagsType Flags) {
-      assert(Flags <= 1 && "Add more bits to store more than one flag");
-      TargetFlags = Flags;
-    }
-
   private:
     const char *ContentPtr = nullptr;
     uint64_t Size = 0;
     JITTargetAddress TargetAddress = 0;
-    TargetFlagsType TargetFlags = 0;
   };
 
   using IsSymbolValidFunction = std::function<bool(StringRef Symbol)>;
@@ -155,7 +139,7 @@ public:
   using GetSectionInfoFunction = std::function<Expected<MemoryRegionInfo>(
       StringRef FileName, StringRef SectionName)>;
   using GetStubInfoFunction = std::function<Expected<MemoryRegionInfo>(
-      StringRef StubContainer, StringRef TargetName, StringRef StubKindFilter)>;
+      StringRef StubContainer, StringRef TargetName)>;
   using GetGOTInfoFunction = std::function<Expected<MemoryRegionInfo>(
       StringRef GOTContainer, StringRef TargetName)>;
 
@@ -163,8 +147,9 @@ public:
                      GetSymbolInfoFunction GetSymbolInfo,
                      GetSectionInfoFunction GetSectionInfo,
                      GetStubInfoFunction GetStubInfo,
-                     GetGOTInfoFunction GetGOTInfo, llvm::endianness Endianness,
-                     Triple TT, StringRef CPU, SubtargetFeatures TF,
+                     GetGOTInfoFunction GetGOTInfo,
+                     support::endianness Endianness,
+                     MCDisassembler *Disassembler, MCInstPrinter *InstPrinter,
                      raw_ostream &ErrStream);
   ~RuntimeDyldChecker();
 

@@ -21,26 +21,17 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef _XLOCALE_H_
-#define _XLOCALE_H_
+#ifndef __XLOCALE_H_
+#define __XLOCALE_H_
 
 #include <sys/cdefs.h>
-#include <_bounds.h>
 
-#ifndef _USE_EXTENDED_LOCALES_
-#define _USE_EXTENDED_LOCALES_
-#endif /* _USE_EXTENDED_LOCALES_ */
-
-#include <_locale.h>
-#include <__xlocale.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
+struct _xlocale; /* forward reference */
+typedef struct _xlocale *		locale_t;
 
 __BEGIN_DECLS
-extern const locale_t _c_locale;
-
-struct lconv *	localeconv_l(locale_t);
-__const char *	querylocale(int, locale_t);
+int		___mb_cur_max(void);
+int		___mb_cur_max_l(locale_t);
 __END_DECLS
 
-#endif /* _XLOCALE_H_ */
+#endif /* __XLOCALE_H_ */

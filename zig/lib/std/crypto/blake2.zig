@@ -786,7 +786,7 @@ test "blake2b384 streaming" {
 
 test "comptime blake2b384" {
     comptime {
-        @setEvalBranchQuota(20000);
+        @setEvalBranchQuota(10000);
         var block = [_]u8{0} ** Blake2b384.block_length;
         var out: [Blake2b384.digest_length]u8 = undefined;
 
@@ -878,7 +878,7 @@ test "blake2b512 keyed" {
 
 test "comptime blake2b512" {
     comptime {
-        @setEvalBranchQuota(12000);
+        @setEvalBranchQuota(10000);
         var block = [_]u8{0} ** Blake2b512.block_length;
         var out: [Blake2b512.digest_length]u8 = undefined;
 

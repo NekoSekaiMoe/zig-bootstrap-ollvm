@@ -80,14 +80,10 @@ AliasResult AMDGPUAAResult::alias(const MemoryLocation &LocA,
     } else if (const Argument *Arg = dyn_cast<Argument>(ObjA)) {
       const Function *F = Arg->getParent();
       switch (F->getCallingConv()) {
-      case CallingConv::AMDGPU_KERNEL: {
+      case CallingConv::AMDGPU_KERNEL:
         // In the kernel function, kernel arguments won't alias to (local)
         // variables in shared or private address space.
-        const auto *ObjB =
-            getUnderlyingObject(B.Ptr->stripPointerCastsForAliasAnalysis());
-        return ObjA != ObjB && isIdentifiedObject(ObjB) ? AliasResult::NoAlias
-                                                        : AliasResult::MayAlias;
-      }
+        return AliasResult::NoAlias;
       default:
         // TODO: In the regular function, if that local variable in the
         // location B is not captured, that argument pointer won't alias to it
@@ -97,7 +93,8 @@ AliasResult AMDGPUAAResult::alias(const MemoryLocation &LocA,
     }
   }
 
-  return AliasResult::MayAlias;
+  // Forward the query to the next alias analysis.
+  return AAResultBase::alias(LocA, LocB, AAQI, nullptr);
 }
 
 ModRefInfo AMDGPUAAResult::getModRefInfoMask(const MemoryLocation &Loc,
@@ -114,5 +111,5 @@ ModRefInfo AMDGPUAAResult::getModRefInfoMask(const MemoryLocation &Loc,
       AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT)
     return ModRefInfo::NoModRef;
 
-  return ModRefInfo::ModRef;
+  return AAResultBase::getModRefInfoMask(Loc, AAQI, IgnoreLocals);
 }

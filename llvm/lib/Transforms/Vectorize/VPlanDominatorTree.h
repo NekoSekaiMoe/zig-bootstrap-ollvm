@@ -32,17 +32,10 @@ template <> struct DomTreeNodeTraits<VPBlockBase> {
   static ParentPtr getParent(NodePtr B) { return B->getPlan(); }
 };
 
+///
 /// Template specialization of the standard LLVM dominator tree utility for
 /// VPBlockBases.
-class VPDominatorTree : public DominatorTreeBase<VPBlockBase, false> {
-  using Base = DominatorTreeBase<VPBlockBase, false>;
-
-public:
-  VPDominatorTree() = default;
-
-  /// Returns true if \p A properly dominates \p B.
-  bool properlyDominates(const VPRecipeBase *A, const VPRecipeBase *B);
-};
+using VPDominatorTree = DomTreeBase<VPBlockBase>;
 
 using VPDomTreeNode = DomTreeNodeBase<VPBlockBase>;
 

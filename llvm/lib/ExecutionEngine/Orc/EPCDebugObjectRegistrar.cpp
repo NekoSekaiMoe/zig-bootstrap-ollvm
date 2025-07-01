@@ -9,6 +9,9 @@
 #include "llvm/ExecutionEngine/Orc/EPCDebugObjectRegistrar.h"
 
 #include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/Shared/SimplePackedSerialization.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 
 namespace llvm {
 namespace orc {
@@ -19,7 +22,7 @@ Expected<std::unique_ptr<EPCDebugObjectRegistrar>> createJITLoaderGDBRegistrar(
   auto &EPC = ES.getExecutorProcessControl();
 
   if (!RegistrationFunctionDylib) {
-    if (auto D = EPC.getDylibMgr().loadDylib(nullptr))
+    if (auto D = EPC.loadDylib(nullptr))
       RegistrationFunctionDylib = *D;
     else
       return D.takeError();
@@ -33,8 +36,8 @@ Expected<std::unique_ptr<EPCDebugObjectRegistrar>> createJITLoaderGDBRegistrar(
   SymbolLookupSet RegistrationSymbols;
   RegistrationSymbols.add(RegisterFn);
 
-  auto Result = EPC.getDylibMgr().lookupSymbols(
-      {{*RegistrationFunctionDylib, RegistrationSymbols}});
+  auto Result =
+      EPC.lookupSymbols({{*RegistrationFunctionDylib, RegistrationSymbols}});
   if (!Result)
     return Result.takeError();
 
@@ -42,8 +45,7 @@ Expected<std::unique_ptr<EPCDebugObjectRegistrar>> createJITLoaderGDBRegistrar(
   assert((*Result)[0].size() == 1 &&
          "Unexpected number of addresses in result");
 
-  ExecutorAddr RegisterAddr = (*Result)[0][0].getAddress();
-  return std::make_unique<EPCDebugObjectRegistrar>(ES, RegisterAddr);
+  return std::make_unique<EPCDebugObjectRegistrar>(ES, (*Result)[0][0]);
 }
 
 Error EPCDebugObjectRegistrar::registerDebugObject(ExecutorAddrRange TargetMem,

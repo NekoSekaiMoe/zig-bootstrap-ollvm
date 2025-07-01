@@ -11,11 +11,9 @@ pub fn build(b: *std.Build) void {
     });
 
     const main = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("main.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("main.zig"),
+        .optimize = optimize,
+        .target = target,
     });
     main.pie = true;
 

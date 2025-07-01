@@ -83,11 +83,13 @@ pub fn discover(tc: *Toolchain) !void {
 
     const target = tc.getTarget();
     tc.inner = switch (target.os.tag) {
-        .linux => if (target.cpu.arch == .hexagon)
+        .elfiamcu,
+        .linux,
+        => if (target.cpu.arch == .hexagon)
             .{ .unknown = {} } // TODO
         else if (target.cpu.arch.isMIPS())
             .{ .unknown = {} } // TODO
-        else if (target.cpu.arch.isPowerPC())
+        else if (target.cpu.arch.isPPC())
             .{ .unknown = {} } // TODO
         else if (target.cpu.arch == .ve)
             .{ .unknown = {} } // TODO
@@ -159,7 +161,7 @@ pub fn getLinkerPath(tc: *const Toolchain, buf: []u8) ![]const u8 {
     } else {
         var linker_name = try std.ArrayList(u8).initCapacity(tc.driver.comp.gpa, 5 + use_linker.len); // "ld64." ++ use_linker
         defer linker_name.deinit();
-        if (tc.getTarget().os.tag.isDarwin()) {
+        if (tc.getTarget().isDarwin()) {
             linker_name.appendSliceAssumeCapacity("ld64.");
         } else {
             linker_name.appendSliceAssumeCapacity("ld.");
@@ -219,7 +221,7 @@ pub fn addFilePathLibArgs(tc: *const Toolchain, argv: *std.ArrayList([]const u8)
 /// If not found there, just use `name`
 /// Writes the result to `buf` and returns a slice of it
 fn getProgramPath(tc: *const Toolchain, name: []const u8, buf: []u8) []const u8 {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var fib = std.heap.FixedBufferAllocator.init(&path_buf);
 
     var tool_specific_buf: [64]u8 = undefined;
@@ -249,7 +251,7 @@ pub fn getSysroot(tc: *const Toolchain) []const u8 {
 /// Search for `name` in a variety of places
 /// TODO: cache results based on `name` so we're not repeatedly allocating the same strings?
 pub fn getFilePath(tc: *const Toolchain, name: []const u8) ![]const u8 {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var fib = std.heap.FixedBufferAllocator.init(&path_buf);
     const allocator = fib.allocator();
 
@@ -302,7 +304,7 @@ const PathKind = enum {
 /// Join `components` into a path. If the path exists, dupe it into the toolchain arena and
 /// add it to the specified path list.
 pub fn addPathIfExists(tc: *Toolchain, components: []const []const u8, dest_kind: PathKind) !void {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var fib = std.heap.FixedBufferAllocator.init(&path_buf);
 
     const candidate = try std.fs.path.join(fib.allocator(), components);
@@ -341,7 +343,7 @@ pub fn buildLinkerArgs(tc: *Toolchain, argv: *std.ArrayList([]const u8)) !void {
 }
 
 fn getDefaultRuntimeLibKind(tc: *const Toolchain) RuntimeLibKind {
-    if (tc.getTarget().abi.isAndroid()) {
+    if (tc.getTarget().isAndroid()) {
         return .compiler_rt;
     }
     return .libgcc;
@@ -367,7 +369,7 @@ pub fn getCompilerRt(tc: *const Toolchain, component: []const u8, file_kind: Fil
 
 fn getLibGCCKind(tc: *const Toolchain) LibGCCKind {
     const target = tc.getTarget();
-    if (tc.driver.static_libgcc or tc.driver.static or tc.driver.static_pie or target.abi.isAndroid()) {
+    if (tc.driver.static_libgcc or tc.driver.static or tc.driver.static_pie or target.isAndroid()) {
         return .static;
     }
     if (tc.driver.shared_libgcc) {
@@ -382,7 +384,7 @@ fn getUnwindLibKind(tc: *const Toolchain) !UnwindLibKind {
         switch (tc.getRuntimeLibKind()) {
             .compiler_rt => {
                 const target = tc.getTarget();
-                if (target.abi.isAndroid() or target.os.tag == .aix) {
+                if (target.isAndroid() or target.os.tag == .aix) {
                     return .compiler_rt;
                 } else {
                     return .none;
@@ -415,13 +417,14 @@ fn getAsNeededOption(is_solaris: bool, needed: bool) []const u8 {
 fn addUnwindLibrary(tc: *const Toolchain, argv: *std.ArrayList([]const u8)) !void {
     const unw = try tc.getUnwindLibKind();
     const target = tc.getTarget();
-    if ((target.abi.isAndroid() and unw == .libgcc) or
+    if ((target.isAndroid() and unw == .libgcc) or
+        target.os.tag == .elfiamcu or
         target.ofmt == .wasm or
         target_util.isWindowsMSVCEnvironment(target) or
         unw == .none) return;
 
     const lgk = tc.getLibGCCKind();
-    const as_needed = lgk == .unspecified and !target.abi.isAndroid() and !target_util.isCygwinMinGW(target) and target.os.tag != .aix;
+    const as_needed = lgk == .unspecified and !target.isAndroid() and !target_util.isCygwinMinGW(target) and target.os.tag != .aix;
     if (as_needed) {
         try argv.append(getAsNeededOption(target.os.tag == .solaris, true));
     }
@@ -480,7 +483,7 @@ pub fn addRuntimeLibs(tc: *const Toolchain, argv: *std.ArrayList([]const u8)) !v
         },
     }
 
-    if (target.abi.isAndroid() and !tc.driver.static and !tc.driver.static_pie) {
+    if (target.isAndroid() and !tc.driver.static and !tc.driver.static_pie) {
         try argv.append("-ldl");
     }
 }

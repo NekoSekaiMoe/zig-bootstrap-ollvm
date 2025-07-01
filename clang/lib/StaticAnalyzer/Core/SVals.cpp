@@ -111,9 +111,9 @@ SymbolRef SVal::getAsSymbol(bool IncludeBaseRegions) const {
 
 const llvm::APSInt *SVal::getAsInteger() const {
   if (auto CI = getAs<nonloc::ConcreteInt>())
-    return CI->getValue().get();
+    return &CI->getValue();
   if (auto CI = getAs<loc::ConcreteInt>())
-    return CI->getValue().get();
+    return &CI->getValue();
   return nullptr;
 }
 
@@ -136,10 +136,10 @@ private:
 public:
   TypeRetrievingVisitor(const ASTContext &Context) : Context(Context) {}
 
-  QualType VisitMemRegionVal(loc::MemRegionVal MRV) {
+  QualType VisitLocMemRegionVal(loc::MemRegionVal MRV) {
     return Visit(MRV.getRegion());
   }
-  QualType VisitGotoLabel(loc::GotoLabel GL) {
+  QualType VisitLocGotoLabel(loc::GotoLabel GL) {
     return QualType{Context.VoidPtrTy};
   }
   template <class ConcreteInt> QualType VisitConcreteInt(ConcreteInt CI) {
@@ -148,7 +148,13 @@ public:
       return Context.BoolTy;
     return Context.getIntTypeForBitwidth(Value.getBitWidth(), Value.isSigned());
   }
-  QualType VisitLocAsInteger(nonloc::LocAsInteger LI) {
+  QualType VisitLocConcreteInt(loc::ConcreteInt CI) {
+    return VisitConcreteInt(CI);
+  }
+  QualType VisitNonLocConcreteInt(nonloc::ConcreteInt CI) {
+    return VisitConcreteInt(CI);
+  }
+  QualType VisitNonLocLocAsInteger(nonloc::LocAsInteger LI) {
     QualType NestedType = Visit(LI.getLoc());
     if (NestedType.isNull())
       return NestedType;
@@ -156,13 +162,13 @@ public:
     return Context.getIntTypeForBitwidth(LI.getNumBits(),
                                          NestedType->isSignedIntegerType());
   }
-  QualType VisitCompoundVal(nonloc::CompoundVal CV) {
+  QualType VisitNonLocCompoundVal(nonloc::CompoundVal CV) {
     return CV.getValue()->getType();
   }
-  QualType VisitLazyCompoundVal(nonloc::LazyCompoundVal LCV) {
+  QualType VisitNonLocLazyCompoundVal(nonloc::LazyCompoundVal LCV) {
     return LCV.getRegion()->getValueType();
   }
-  QualType VisitSymbolVal(nonloc::SymbolVal SV) {
+  QualType VisitNonLocSymbolVal(nonloc::SymbolVal SV) {
     return Visit(SV.getSymbol());
   }
   QualType VisitSymbolicRegion(const SymbolicRegion *SR) {
@@ -205,10 +211,10 @@ const NamedDecl *nonloc::PointerToMember::getDecl() const {
     return nullptr;
 
   const NamedDecl *ND = nullptr;
-  if (const auto *NDP = dyn_cast<const NamedDecl *>(PTMD))
-    ND = NDP;
+  if (PTMD.is<const NamedDecl *>())
+    ND = PTMD.get<const NamedDecl *>();
   else
-    ND = cast<const PointerToMemberData *>(PTMD)->getDeclaratorDecl();
+    ND = PTMD.get<const PointerToMemberData *>()->getDeclaratorDecl();
 
   return ND;
 }
@@ -227,16 +233,16 @@ nonloc::CompoundVal::iterator nonloc::CompoundVal::end() const {
 
 nonloc::PointerToMember::iterator nonloc::PointerToMember::begin() const {
   const PTMDataType PTMD = getPTMData();
-  if (isa<const NamedDecl *>(PTMD))
+  if (PTMD.is<const NamedDecl *>())
     return {};
-  return cast<const PointerToMemberData *>(PTMD)->begin();
+  return PTMD.get<const PointerToMemberData *>()->begin();
 }
 
 nonloc::PointerToMember::iterator nonloc::PointerToMember::end() const {
   const PTMDataType PTMD = getPTMData();
-  if (isa<const NamedDecl *>(PTMD))
+  if (PTMD.is<const NamedDecl *>())
     return {};
-  return cast<const PointerToMemberData *>(PTMD)->end();
+  return PTMD.get<const PointerToMemberData *>()->end();
 }
 
 //===----------------------------------------------------------------------===//
@@ -249,9 +255,9 @@ bool SVal::isConstant() const {
 
 bool SVal::isConstant(int I) const {
   if (std::optional<loc::ConcreteInt> LV = getAs<loc::ConcreteInt>())
-    return *LV->getValue().get() == I;
+    return LV->getValue() == I;
   if (std::optional<nonloc::ConcreteInt> NV = getAs<nonloc::ConcreteInt>())
-    return *NV->getValue().get() == I;
+    return NV->getValue() == I;
   return false;
 }
 
@@ -263,23 +269,6 @@ bool SVal::isZeroConstant() const {
 // Pretty-Printing.
 //===----------------------------------------------------------------------===//
 
-StringRef SVal::getKindStr() const {
-  switch (getKind()) {
-#define BASIC_SVAL(Id, Parent)                                                 \
-  case Id##Kind:                                                               \
-    return #Id;
-#define LOC_SVAL(Id, Parent)                                                   \
-  case Loc##Id##Kind:                                                          \
-    return #Id;
-#define NONLOC_SVAL(Id, Parent)                                                \
-  case NonLoc##Id##Kind:                                                       \
-    return #Id;
-#include "clang/StaticAnalyzer/Core/PathSensitive/SVals.def"
-#undef REGION
-  }
-  llvm_unreachable("Unkown kind!");
-}
-
 LLVM_DUMP_METHOD void SVal::dump() const { dumpToStream(llvm::errs()); }
 
 void SVal::printJson(raw_ostream &Out, bool AddQuotes) const {
@@ -288,37 +277,34 @@ void SVal::printJson(raw_ostream &Out, bool AddQuotes) const {
 
   dumpToStream(TempOut);
 
-  Out << JsonFormat(Buf, AddQuotes);
+  Out << JsonFormat(TempOut.str(), AddQuotes);
 }
 
 void SVal::dumpToStream(raw_ostream &os) const {
-  if (isUndef()) {
-    os << "Undefined";
-    return;
+  switch (getBaseKind()) {
+    case UnknownValKind:
+      os << "Unknown";
+      break;
+    case NonLocKind:
+      castAs<NonLoc>().dumpToStream(os);
+      break;
+    case LocKind:
+      castAs<Loc>().dumpToStream(os);
+      break;
+    case UndefinedValKind:
+      os << "Undefined";
+      break;
   }
-  if (isUnknown()) {
-    os << "Unknown";
-    return;
-  }
-  if (NonLoc::classof(*this)) {
-    castAs<NonLoc>().dumpToStream(os);
-    return;
-  }
-  if (Loc::classof(*this)) {
-    castAs<Loc>().dumpToStream(os);
-    return;
-  }
-  llvm_unreachable("Unhandled SVal kind!");
 }
 
 void NonLoc::dumpToStream(raw_ostream &os) const {
-  switch (getKind()) {
-  case nonloc::ConcreteIntKind: {
-    APSIntPtr Value = castAs<nonloc::ConcreteInt>().getValue();
-    os << Value << ' ' << (Value->isSigned() ? 'S' : 'U')
-       << Value->getBitWidth() << 'b';
-    break;
-  }
+  switch (getSubKind()) {
+    case nonloc::ConcreteIntKind: {
+      const auto &Value = castAs<nonloc::ConcreteInt>().getValue();
+      os << Value << ' ' << (Value.isSigned() ? 'S' : 'U')
+         << Value.getBitWidth() << 'b';
+      break;
+    }
     case nonloc::SymbolValKind:
       os << castAs<nonloc::SymbolVal>().getSymbol();
       break;
@@ -374,21 +360,21 @@ void NonLoc::dumpToStream(raw_ostream &os) const {
     default:
       assert(false && "Pretty-printed not implemented for this NonLoc.");
       break;
-    }
+  }
 }
 
 void Loc::dumpToStream(raw_ostream &os) const {
-  switch (getKind()) {
-  case loc::ConcreteIntKind:
-    os << castAs<loc::ConcreteInt>().getValue()->getZExtValue() << " (Loc)";
-    break;
-  case loc::GotoLabelKind:
-    os << "&&" << castAs<loc::GotoLabel>().getLabel()->getName();
-    break;
-  case loc::MemRegionValKind:
-    os << '&' << castAs<loc::MemRegionVal>().getRegion()->getString();
-    break;
-  default:
-    llvm_unreachable("Pretty-printing not implemented for this Loc.");
+  switch (getSubKind()) {
+    case loc::ConcreteIntKind:
+      os << castAs<loc::ConcreteInt>().getValue().getZExtValue() << " (Loc)";
+      break;
+    case loc::GotoLabelKind:
+      os << "&&" << castAs<loc::GotoLabel>().getLabel()->getName();
+      break;
+    case loc::MemRegionValKind:
+      os << '&' << castAs<loc::MemRegionVal>().getRegion()->getString();
+      break;
+    default:
+      llvm_unreachable("Pretty-printing not implemented for this Loc.");
   }
 }

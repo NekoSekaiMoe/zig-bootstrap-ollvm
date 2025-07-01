@@ -59,10 +59,14 @@ private:
   /// HazardRec - The hazard recognizer to use.
   ScheduleHazardRecognizer *HazardRec;
 
+  /// AA - AAResults for making memory reference queries.
+  AAResults *AA;
+
 public:
-  ScheduleDAGVLIW(MachineFunction &MF, SchedulingPriorityQueue *AvailableQueue)
-      : ScheduleDAGSDNodes(MF), AvailableQueue(AvailableQueue) {
-    const TargetSubtargetInfo &STI = MF.getSubtarget();
+  ScheduleDAGVLIW(MachineFunction &mf, AAResults *aa,
+                  SchedulingPriorityQueue *availqueue)
+      : ScheduleDAGSDNodes(mf), AvailableQueue(availqueue), AA(aa) {
+    const TargetSubtargetInfo &STI = mf.getSubtarget();
     HazardRec = STI.getInstrInfo()->CreateTargetHazardRecognizer(&STI, this);
   }
 
@@ -87,7 +91,7 @@ void ScheduleDAGVLIW::Schedule() {
                     << " '" << BB->getName() << "' **********\n");
 
   // Build the scheduling graph.
-  BuildSchedGraph();
+  BuildSchedGraph(AA);
 
   AvailableQueue->initNodes(SUnits);
 
@@ -261,7 +265,7 @@ void ScheduleDAGVLIW::listScheduleTopDown() {
 //===----------------------------------------------------------------------===//
 
 /// createVLIWDAGScheduler - This creates a top-down list scheduler.
-ScheduleDAGSDNodes *llvm::createVLIWDAGScheduler(SelectionDAGISel *IS,
-                                                 CodeGenOptLevel) {
-  return new ScheduleDAGVLIW(*IS->MF, new ResourcePriorityQueue(IS));
+ScheduleDAGSDNodes *
+llvm::createVLIWDAGScheduler(SelectionDAGISel *IS, CodeGenOpt::Level) {
+  return new ScheduleDAGVLIW(*IS->MF, IS->AA, new ResourcePriorityQueue(IS));
 }

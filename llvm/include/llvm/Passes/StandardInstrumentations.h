@@ -18,14 +18,10 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSet.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/OptBisect.h"
 #include "llvm/IR/PassTimingInfo.h"
 #include "llvm/IR/ValueHandle.h"
-#include "llvm/Passes/DroppedVariableStatsIR.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Transforms/IPO/SampleProfileProbe.h"
@@ -37,7 +33,6 @@ namespace llvm {
 
 class Module;
 class Function;
-class MachineFunction;
 class PassInstrumentationCallbacks;
 
 /// Instrumentation to print IR before/after passes.
@@ -51,39 +46,24 @@ public:
   void registerCallbacks(PassInstrumentationCallbacks &PIC);
 
 private:
-  struct PassRunDescriptor {
-    const Module *M;
-    const std::string DumpIRFilename;
-    const std::string IRName;
-    const StringRef PassID;
-
-    PassRunDescriptor(const Module *M, std::string DumpIRFilename,
-                      std::string IRName, const StringRef PassID)
-        : M{M}, DumpIRFilename{DumpIRFilename}, IRName{IRName}, PassID(PassID) {
-    }
-  };
-
   void printBeforePass(StringRef PassID, Any IR);
   void printAfterPass(StringRef PassID, Any IR);
   void printAfterPassInvalidated(StringRef PassID);
 
   bool shouldPrintBeforePass(StringRef PassID);
   bool shouldPrintAfterPass(StringRef PassID);
-  bool shouldPrintBeforeCurrentPassNumber();
-  bool shouldPrintAfterCurrentPassNumber();
   bool shouldPrintPassNumbers();
-  bool shouldPrintBeforeSomePassNumber();
-  bool shouldPrintAfterSomePassNumber();
+  bool shouldPrintAtPassNumber();
 
-  void pushPassRunDescriptor(StringRef PassID, Any IR,
-                             std::string &DumpIRFilename);
-  PassRunDescriptor popPassRunDescriptor(StringRef PassID);
-  std::string fetchDumpFilename(StringRef PassId, Any IR);
+  using PrintModuleDesc = std::tuple<const Module *, std::string, StringRef>;
+
+  void pushModuleDesc(StringRef PassID, Any IR);
+  PrintModuleDesc popModuleDesc(StringRef PassID);
 
   PassInstrumentationCallbacks *PIC;
-  /// Stack of Pass Run descriptions, enough to print the IR unit after a given
+  /// Stack of Module description, enough to print the module after a given
   /// pass.
-  SmallVector<PassRunDescriptor, 2> PassRunDescriptorStack;
+  SmallVector<PrintModuleDesc, 2> ModuleDescStack;
 
   /// Used for print-at-pass-number
   unsigned CurrentPassNumber = 0;
@@ -173,7 +153,7 @@ public:
                     FunctionAnalysisManager::Invalidator &);
   };
 
-#if LLVM_ENABLE_ABI_BREAKING_CHECKS
+#ifdef LLVM_ENABLE_ABI_BREAKING_CHECKS
   SmallVector<StringRef, 8> PassStack;
 #endif
 
@@ -321,11 +301,6 @@ public:
     B.print(SS, nullptr, true, true);
   }
 
-  BlockDataT(const MachineBasicBlock &B) : Label(B.getName().str()), Data(B) {
-    raw_string_ostream SS(Body);
-    B.print(SS);
-  }
-
   bool operator==(const BlockDataT &That) const { return Body == That.Body; }
   bool operator!=(const BlockDataT &That) const { return Body != That.Body; }
 
@@ -377,7 +352,6 @@ protected:
 class EmptyData {
 public:
   EmptyData(const BasicBlock &) {}
-  EmptyData(const MachineBasicBlock &) {}
 };
 
 // The data saved for comparing functions.
@@ -419,8 +393,7 @@ public:
 
 protected:
   // Generate the data for \p F into \p Data.
-  template <typename FunctionT>
-  static bool generateFunctionData(IRDataT<T> &Data, const FunctionT &F);
+  static bool generateFunctionData(IRDataT<T> &Data, const Function &F);
 
   const IRDataT<T> &Before;
   const IRDataT<T> &After;
@@ -463,8 +436,7 @@ class VerifyInstrumentation {
 
 public:
   VerifyInstrumentation(bool DebugLogging) : DebugLogging(DebugLogging) {}
-  void registerCallbacks(PassInstrumentationCallbacks &PIC,
-                         ModuleAnalysisManager *MAM);
+  void registerCallbacks(PassInstrumentationCallbacks &PIC);
 };
 
 /// This class implements --time-trace functionality for new pass manager.
@@ -491,7 +463,6 @@ class DCData {
 public:
   // Fill the map with the transitions from basic block \p B.
   DCData(const BasicBlock &B);
-  DCData(const MachineBasicBlock &B);
 
   // Return an iterator to the names of the successor blocks.
   StringMap<std::string>::const_iterator begin() const {
@@ -597,7 +568,6 @@ class StandardInstrumentations {
   PrintCrashIRInstrumentation PrintCrashIR;
   IRChangedTester ChangeTester;
   VerifyInstrumentation Verify;
-  DroppedVariableStatsIR DroppedStatsIR;
 
   bool VerifyEach;
 

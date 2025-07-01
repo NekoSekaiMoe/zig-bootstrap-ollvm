@@ -142,10 +142,9 @@ bool A15SDOptimizer::usesRegClass(MachineOperand &MO,
 }
 
 unsigned A15SDOptimizer::getDPRLaneFromSPR(unsigned SReg) {
-  MCRegister DReg =
-      TRI->getMatchingSuperReg(SReg, ARM::ssub_1, &ARM::DPRRegClass);
-  if (DReg)
-    return ARM::ssub_1;
+  unsigned DReg = TRI->getMatchingSuperReg(SReg, ARM::ssub_1,
+                                           &ARM::DPRRegClass);
+  if (DReg != ARM::NoRegister) return ARM::ssub_1;
   return ARM::ssub_0;
 }
 
@@ -157,7 +156,7 @@ unsigned A15SDOptimizer::getPrefSPRLane(unsigned SReg) {
 
   MachineInstr *MI = MRI->getVRegDef(SReg);
   if (!MI) return ARM::ssub_0;
-  MachineOperand *MO = MI->findRegisterDefOperand(SReg, /*TRI=*/nullptr);
+  MachineOperand *MO = MI->findRegisterDefOperand(SReg);
   if (!MO) return ARM::ssub_0;
   assert(MO->isReg() && "Non-register operand found!");
 
@@ -193,7 +192,7 @@ void A15SDOptimizer::eraseInstrWithNoUses(MachineInstr *MI) {
       Register Reg = MO.getReg();
       if (!Reg.isVirtual())
         continue;
-      MachineOperand *Op = MI->findRegisterDefOperand(Reg, /*TRI=*/nullptr);
+      MachineOperand *Op = MI->findRegisterDefOperand(Reg);
 
       if (!Op)
         continue;

@@ -46,9 +46,8 @@ static cl::opt<bool> ShowFSBranchProb(
     cl::desc("Print setting flow sensitive branch probabilities"));
 static cl::opt<unsigned> FSProfileDebugProbDiffThreshold(
     "fs-profile-debug-prob-diff-threshold", cl::init(10),
-    cl::desc(
-        "Only show debug message if the branch probability is greater than "
-        "this value (in percentage)."));
+    cl::desc("Only show debug message if the branch probility is greater than "
+             "this value (in percentage)."));
 
 static cl::opt<unsigned> FSProfileDebugBWThreshold(
     "fs-profile-debug-bw-threshold", cl::init(10000),
@@ -62,18 +61,16 @@ static cl::opt<bool> ViewBFIAfter("fs-viewbfi-after", cl::Hidden,
                                   cl::init(false),
                                   cl::desc("View BFI after MIR loader"));
 
-namespace llvm {
 extern cl::opt<bool> ImprovedFSDiscriminator;
-}
 char MIRProfileLoaderPass::ID = 0;
 
 INITIALIZE_PASS_BEGIN(MIRProfileLoaderPass, DEBUG_TYPE,
                       "Load MIR Sample Profile",
                       /* cfg = */ false, /* is_analysis = */ false)
-INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachineDominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachinePostDominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachineLoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfo)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(MachinePostDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
 INITIALIZE_PASS_DEPENDENCY(MachineOptimizationRemarkEmitterPass)
 INITIALIZE_PASS_END(MIRProfileLoaderPass, DEBUG_TYPE, "Load MIR Sample Profile",
                     /* cfg = */ false, /* is_analysis = */ false)
@@ -127,10 +124,8 @@ template <> struct IRTraits<MachineBasicBlock> {
   using PostDominatorTreeT = MachinePostDominatorTree;
   using OptRemarkEmitterT = MachineOptimizationRemarkEmitter;
   using OptRemarkAnalysisT = MachineOptimizationRemarkAnalysis;
-  using PredRangeT =
-      iterator_range<SmallVectorImpl<MachineBasicBlock *>::iterator>;
-  using SuccRangeT =
-      iterator_range<SmallVectorImpl<MachineBasicBlock *>::iterator>;
+  using PredRangeT = iterator_range<std::vector<MachineBasicBlock *>::iterator>;
+  using SuccRangeT = iterator_range<std::vector<MachineBasicBlock *>::iterator>;
   static Function &getFunction(MachineFunction &F) { return F.getFunction(); }
   static const MachineBasicBlock *getEntryBB(const MachineFunction *F) {
     return GraphTraits<const MachineFunction *>::getEntryNode(F);
@@ -366,33 +361,26 @@ bool MIRProfileLoaderPass::runOnMachineFunction(MachineFunction &MF) {
 
   LLVM_DEBUG(dbgs() << "MIRProfileLoader pass working on Func: "
                     << MF.getFunction().getName() << "\n");
-  MBFI = &getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
-  auto *MDT = &getAnalysis<MachineDominatorTreeWrapperPass>().getDomTree();
-  auto *MPDT =
-      &getAnalysis<MachinePostDominatorTreeWrapperPass>().getPostDomTree();
+  MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
+  MIRSampleLoader->setInitVals(
+      &getAnalysis<MachineDominatorTree>(),
+      &getAnalysis<MachinePostDominatorTree>(), &getAnalysis<MachineLoopInfo>(),
+      MBFI, &getAnalysis<MachineOptimizationRemarkEmitterPass>().getORE());
 
   MF.RenumberBlocks();
-  MDT->updateBlockNumbers();
-  MPDT->updateBlockNumbers();
-
-  MIRSampleLoader->setInitVals(
-      MDT, MPDT, &getAnalysis<MachineLoopInfoWrapperPass>().getLI(), MBFI,
-      &getAnalysis<MachineOptimizationRemarkEmitterPass>().getORE());
-
   if (ViewBFIBefore && ViewBlockLayoutWithBFI != GVDT_None &&
       (ViewBlockFreqFuncName.empty() ||
-       MF.getFunction().getName() == ViewBlockFreqFuncName)) {
+       MF.getFunction().getName().equals(ViewBlockFreqFuncName))) {
     MBFI->view("MIR_Prof_loader_b." + MF.getName(), false);
   }
 
   bool Changed = MIRSampleLoader->runOnFunction(MF);
   if (Changed)
-    MBFI->calculate(MF, *MBFI->getMBPI(),
-                    *&getAnalysis<MachineLoopInfoWrapperPass>().getLI());
+    MBFI->calculate(MF, *MBFI->getMBPI(), *&getAnalysis<MachineLoopInfo>());
 
   if (ViewBFIAfter && ViewBlockLayoutWithBFI != GVDT_None &&
       (ViewBlockFreqFuncName.empty() ||
-       MF.getFunction().getName() == ViewBlockFreqFuncName)) {
+       MF.getFunction().getName().equals(ViewBlockFreqFuncName))) {
     MBFI->view("MIR_prof_loader_a." + MF.getName(), false);
   }
 
@@ -409,10 +397,10 @@ bool MIRProfileLoaderPass::doInitialization(Module &M) {
 
 void MIRProfileLoaderPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-  AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
-  AU.addRequired<MachineDominatorTreeWrapperPass>();
-  AU.addRequired<MachinePostDominatorTreeWrapperPass>();
-  AU.addRequiredTransitive<MachineLoopInfoWrapperPass>();
+  AU.addRequired<MachineBlockFrequencyInfo>();
+  AU.addRequired<MachineDominatorTree>();
+  AU.addRequired<MachinePostDominatorTree>();
+  AU.addRequiredTransitive<MachineLoopInfo>();
   AU.addRequired<MachineOptimizationRemarkEmitterPass>();
   MachineFunctionPass::getAnalysisUsage(AU);
 }

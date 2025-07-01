@@ -19,7 +19,9 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/ExecutionEngine/JITLink/JITLinkDylib.h"
 #include "llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/Object/ELFObjectFile.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/MSVCErrorWorkarounds.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -149,9 +151,9 @@ protected:
 
   JITLinkMemoryManager &MemMgr;
   const JITLinkDylib *JD = nullptr;
-  ExecutionSession &ES;
 
 private:
+  ExecutionSession &ES;
   DebugObjectFlags Flags;
   FinalizedAlloc Alloc;
 };
@@ -234,7 +236,7 @@ static bool isDwarfSection(StringRef SectionName) {
 
 std::unique_ptr<WritableMemoryBuffer>
 ELFDebugObject::CopyBuffer(MemoryBufferRef Buffer, Error &Err) {
-  ErrorAsOutParameter _(Err);
+  ErrorAsOutParameter _(&Err);
   size_t Size = Buffer.getBufferSize();
   StringRef Name = Buffer.getBufferIdentifier();
   if (auto Copy = WritableMemoryBuffer::getNewUninitMemBuffer(Size, Name)) {
@@ -332,8 +334,7 @@ Expected<SimpleSegmentAlloc> ELFDebugObject::finalizeWorkingMemory() {
 
   // Allocate working memory for debug object in read-only segment.
   auto Alloc = SimpleSegmentAlloc::Create(
-      MemMgr, ES.getSymbolStringPool(), ES.getTargetTriple(), JD,
-      {{MemProt::Read, {Size, Align(PageSize)}}});
+      MemMgr, JD, {{MemProt::Read, {Size, Align(PageSize)}}});
   if (!Alloc)
     return Alloc;
 

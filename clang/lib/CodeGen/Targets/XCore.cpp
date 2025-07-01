@@ -113,8 +113,8 @@ public:
 class XCoreABIInfo : public DefaultABIInfo {
 public:
   XCoreABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
-  RValue EmitVAArg(CodeGenFunction &CGF, Address VAListAddr, QualType Ty,
-                   AggValueSlot Slot) const override;
+  Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                    QualType Ty) const override;
 };
 
 class XCoreTargetCodeGenInfo : public TargetCodeGenInfo {
@@ -134,8 +134,8 @@ public:
 
 // TODO: this implementation is likely now redundant with the default
 // EmitVAArg.
-RValue XCoreABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
-                               QualType Ty, AggValueSlot Slot) const {
+Address XCoreABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                QualType Ty) const {
   CGBuilderTy &Builder = CGF.Builder;
 
   // Get the VAList.
@@ -180,10 +180,10 @@ RValue XCoreABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   // Increment the VAList.
   if (!ArgSize.isZero()) {
     Address APN = Builder.CreateConstInBoundsByteGEP(AP, ArgSize);
-    Builder.CreateStore(APN.emitRawPointer(CGF), VAListAddr);
+    Builder.CreateStore(APN.getPointer(), VAListAddr);
   }
 
-  return CGF.EmitLoadOfAnyValue(CGF.MakeAddrLValue(Val, Ty), Slot);
+  return Val;
 }
 
 /// During the expansion of a RecordType, an incomplete TypeString is placed
@@ -343,7 +343,7 @@ static bool extractFieldType(SmallVectorImpl<FieldEncoding> &FE,
     if (Field->isBitField()) {
       Enc += "b(";
       llvm::raw_svector_ostream OS(Enc);
-      OS << Field->getBitWidthValue();
+      OS << Field->getBitWidthValue(CGM.getContext());
       Enc += ':';
     }
     if (!appendType(Enc, Field->getType(), CGM, TSC))
@@ -543,7 +543,7 @@ static bool appendArrayType(SmallStringEnc &Enc, QualType QT,
                             const ArrayType *AT,
                             const CodeGen::CodeGenModule &CGM,
                             TypeStringCache &TSC, StringRef NoSizeEnc) {
-  if (AT->getSizeModifier() != ArraySizeModifier::Normal)
+  if (AT->getSizeModifier() != ArrayType::Normal)
     return false;
   Enc += "a(";
   if (const ConstantArrayType *CAT = dyn_cast<ConstantArrayType>(AT))

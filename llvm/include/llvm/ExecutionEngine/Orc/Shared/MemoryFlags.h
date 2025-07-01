@@ -72,7 +72,7 @@ inline MemProt fromSysMemoryProtectionFlags(sys::Memory::ProtectionFlags PF) {
 /// deallocated if a call is made to
 /// JITLinkMemoryManager::InFlightAllocation::abandon. The policies below apply
 /// to finalized allocations.
-enum class MemLifetime {
+enum class MemLifetimePolicy {
   /// Standard memory should be allocated by the allocator and then deallocated
   /// when the deallocate method is called for the finalized allocation.
   Standard,
@@ -89,15 +89,15 @@ enum class MemLifetime {
 };
 
 /// Print a MemDeallocPolicy.
-inline raw_ostream &operator<<(raw_ostream &OS, MemLifetime MLP) {
+inline raw_ostream &operator<<(raw_ostream &OS, MemLifetimePolicy MLP) {
   switch (MLP) {
-  case MemLifetime::Standard:
+  case MemLifetimePolicy::Standard:
     OS << "standard";
     break;
-  case MemLifetime::Finalize:
+  case MemLifetimePolicy::Finalize:
     OS << "finalize";
     break;
-  case MemLifetime::NoAlloc:
+  case MemLifetimePolicy::NoAlloc:
     OS << "noalloc";
     break;
   }
@@ -124,11 +124,11 @@ public:
   AllocGroup() = default;
 
   /// Create an AllocGroup from a MemProt only -- uses
-  /// MemLifetime::Standard.
+  /// MemLifetimePolicy::Standard.
   AllocGroup(MemProt MP) : Id(static_cast<underlying_type>(MP)) {}
 
-  /// Create an AllocGroup from a MemProt and a MemLifetime.
-  AllocGroup(MemProt MP, MemLifetime MLP)
+  /// Create an AllocGroup from a MemProt and a MemLifetimePolicy.
+  AllocGroup(MemProt MP, MemLifetimePolicy MLP)
       : Id(static_cast<underlying_type>(MP) |
            (static_cast<underlying_type>(MLP) << BitsForProt)) {}
 
@@ -137,9 +137,9 @@ public:
     return static_cast<MemProt>(Id & ((1U << BitsForProt) - 1));
   }
 
-  /// Returns the MemLifetime for this group.
-  MemLifetime getMemLifetime() const {
-    return static_cast<MemLifetime>(Id >> BitsForProt);
+  /// Returns the MemLifetimePolicy for this group.
+  MemLifetimePolicy getMemLifetimePolicy() const {
+    return static_cast<MemLifetimePolicy>(Id >> BitsForProt);
   }
 
   friend bool operator==(const AllocGroup &LHS, const AllocGroup &RHS) {
@@ -184,7 +184,7 @@ public:
   iterator end() { return Elems.end(); }
   iterator find(AllocGroup G) {
     auto I = lower_bound(Elems, G, compareKey);
-    return (I == end() || I->first == G) ? I : end();
+    return (I->first == G) ? I : end();
   }
 
   bool empty() const { return Elems.empty(); }
@@ -203,7 +203,8 @@ private:
 
 /// Print an AllocGroup.
 inline raw_ostream &operator<<(raw_ostream &OS, AllocGroup AG) {
-  return OS << '(' << AG.getMemProt() << ", " << AG.getMemLifetime() << ')';
+  return OS << '(' << AG.getMemProt() << ", " << AG.getMemLifetimePolicy()
+            << ')';
 }
 
 } // end namespace orc

@@ -1,4 +1,4 @@
-//===- TableGenBackendSkeleton.cpp - Skeleton TableGen backend --*- C++ -*-===//
+//===- SkeletonEmitter.cpp - Skeleton TableGen backend          -*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
@@ -29,10 +30,10 @@ namespace {
 
 class SkeletonEmitter {
 private:
-  const RecordKeeper &Records;
+  RecordKeeper &Records;
 
 public:
-  SkeletonEmitter(const RecordKeeper &RK) : Records(RK) {}
+  SkeletonEmitter(RecordKeeper &RK) : Records(RK) {}
 
   void run(raw_ostream &OS);
 }; // emitter class
@@ -55,7 +56,7 @@ static TableGen::Emitter::OptClass<SkeletonEmitter>
 //===----------------------------------------------------------------------===//
 // Option B: Register "EmitSkeleton" directly
 // The emitter entry may be private scope.
-static void EmitSkeleton(const RecordKeeper &RK, raw_ostream &OS) {
+static void EmitSkeleton(RecordKeeper &RK, raw_ostream &OS) {
   // Instantiate the emitter class and invoke run().
   SkeletonEmitter(RK).run(OS);
 }

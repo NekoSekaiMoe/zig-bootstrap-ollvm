@@ -1,4 +1,4 @@
-/* Copyright (C) 1991-2025 Free Software Foundation, Inc.
+/* Copyright (C) 1991-2023 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -93,8 +93,6 @@ enum
 #define IPPROTO_ETHERNET	IPPROTO_ETHERNET
     IPPROTO_RAW = 255,	   /* Raw IP packets.  */
 #define IPPROTO_RAW		IPPROTO_RAW
-    IPPROTO_SMC = 256,	   /* Shared Memory Communications.  */
-#define IPPROTO_SMC		IPPROTO_SMC
     IPPROTO_MPTCP = 262,   /* Multipath TCP connection.  */
 #define IPPROTO_MPTCP		IPPROTO_MPTCP
     IPPROTO_MAX
@@ -246,7 +244,7 @@ extern const struct in6_addr in6addr_loopback;   /* ::1 */
 
 
 /* Structure describing an Internet socket address.  */
-struct __attribute_struct_may_alias__ sockaddr_in
+struct sockaddr_in
   {
     __SOCKADDR_COMMON (sin_);
     in_port_t sin_port;			/* Port number.  */
@@ -259,11 +257,9 @@ struct __attribute_struct_may_alias__ sockaddr_in
 			   - sizeof (struct in_addr)];
   };
 
-#if __USE_KERNEL_IPV6_DEFS
-struct __attribute_struct_may_alias__ sockaddr_in6;
-#else
+#if !__USE_KERNEL_IPV6_DEFS
 /* Ditto, for IPv6.  */
-struct __attribute_struct_may_alias__ sockaddr_in6
+struct sockaddr_in6
   {
     __SOCKADDR_COMMON (sin6_);
     in_port_t sin6_port;	/* Transport layer port # */

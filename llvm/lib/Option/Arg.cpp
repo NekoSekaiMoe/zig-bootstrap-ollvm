@@ -45,8 +45,10 @@ Arg::~Arg() {
 }
 
 void Arg::print(raw_ostream& O) const {
-  O << "<Opt:";
-  Opt.print(O, /*AddNewLine=*/false);
+  O << "<";
+
+  O << " Opt:";
+  Opt.print(O);
 
   O << " Index:" << Index;
 

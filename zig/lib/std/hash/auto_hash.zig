@@ -22,14 +22,14 @@ pub const HashStrategy = enum {
 pub fn hashPointer(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     const info = @typeInfo(@TypeOf(key));
 
-    switch (info.pointer.size) {
-        .one => switch (strat) {
+    switch (info.Pointer.size) {
+        .One => switch (strat) {
             .Shallow => hash(hasher, @intFromPtr(key), .Shallow),
             .Deep => hash(hasher, key.*, .Shallow),
             .DeepRecursive => hash(hasher, key.*, .DeepRecursive),
         },
 
-        .slice => {
+        .Slice => {
             switch (strat) {
                 .Shallow => {
                     hashPointer(hasher, key.ptr, .Shallow);
@@ -40,8 +40,8 @@ pub fn hashPointer(hasher: anytype, key: anytype, comptime strat: HashStrategy) 
             hash(hasher, key.len, .Shallow);
         },
 
-        .many,
-        .c,
+        .Many,
+        .C,
         => switch (strat) {
             .Shallow => hash(hasher, @intFromPtr(key), .Shallow),
             else => @compileError(
@@ -64,7 +64,7 @@ pub fn hashArray(hasher: anytype, key: anytype, comptime strat: HashStrategy) vo
 pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     const Key = @TypeOf(key);
     const Hasher = switch (@typeInfo(@TypeOf(hasher))) {
-        .pointer => |ptr| ptr.child,
+        .Pointer => |ptr| ptr.child,
         else => @TypeOf(hasher),
     };
 
@@ -74,24 +74,24 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     }
 
     switch (@typeInfo(Key)) {
-        .noreturn,
-        .@"opaque",
-        .undefined,
-        .null,
-        .comptime_float,
-        .comptime_int,
-        .type,
-        .enum_literal,
-        .frame,
-        .float,
+        .NoReturn,
+        .Opaque,
+        .Undefined,
+        .Null,
+        .ComptimeFloat,
+        .ComptimeInt,
+        .Type,
+        .EnumLiteral,
+        .Frame,
+        .Float,
         => @compileError("unable to hash type " ++ @typeName(Key)),
 
-        .void => return,
+        .Void => return,
 
         // Help the optimizer see that hashing an int is easy by inlining!
         // TODO Check if the situation is better after #561 is resolved.
-        .int => |int| switch (int.signedness) {
-            .signed => hash(hasher, @as(@Type(.{ .int = .{
+        .Int => |int| switch (int.signedness) {
+            .signed => hash(hasher, @as(@Type(.{ .Int = .{
                 .bits = int.bits,
                 .signedness = .unsigned,
             } }), @bitCast(key)), strat),
@@ -107,18 +107,18 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
             },
         },
 
-        .bool => hash(hasher, @intFromBool(key), strat),
-        .@"enum" => hash(hasher, @intFromEnum(key), strat),
-        .error_set => hash(hasher, @intFromError(key), strat),
-        .@"anyframe", .@"fn" => hash(hasher, @intFromPtr(key), strat),
+        .Bool => hash(hasher, @intFromBool(key), strat),
+        .Enum => hash(hasher, @intFromEnum(key), strat),
+        .ErrorSet => hash(hasher, @intFromError(key), strat),
+        .AnyFrame, .Fn => hash(hasher, @intFromPtr(key), strat),
 
-        .pointer => @call(.always_inline, hashPointer, .{ hasher, key, strat }),
+        .Pointer => @call(.always_inline, hashPointer, .{ hasher, key, strat }),
 
-        .optional => if (key) |k| hash(hasher, k, strat),
+        .Optional => if (key) |k| hash(hasher, k, strat),
 
-        .array => hashArray(hasher, key, strat),
+        .Array => hashArray(hasher, key, strat),
 
-        .vector => |info| {
+        .Vector => |info| {
             if (std.meta.hasUniqueRepresentation(Key)) {
                 hasher.update(mem.asBytes(&key));
             } else {
@@ -129,7 +129,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
             }
         },
 
-        .@"struct" => |info| {
+        .Struct => |info| {
             inline for (info.fields) |field| {
                 // We reuse the hash of the previous field as the seed for the
                 // next one so that they're dependant.
@@ -137,7 +137,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
             }
         },
 
-        .@"union" => |info| {
+        .Union => |info| {
             if (info.tag_type) |tag_type| {
                 const tag = std.meta.activeTag(key);
                 hash(hasher, tag, strat);
@@ -155,7 +155,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
             } else @compileError("cannot hash untagged union type: " ++ @typeName(Key) ++ ", provide your own hash function");
         },
 
-        .error_union => blk: {
+        .ErrorUnion => blk: {
             const payload = key catch |err| {
                 hash(hasher, err, strat);
                 break :blk;
@@ -167,9 +167,9 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
 
 inline fn typeContainsSlice(comptime K: type) bool {
     return switch (@typeInfo(K)) {
-        .pointer => |info| info.size == .slice,
+        .Pointer => |info| info.size == .Slice,
 
-        inline .@"struct", .@"union" => |info| {
+        inline .Struct, .Union => |info| {
             inline for (info.fields) |field| {
                 if (typeContainsSlice(field.type)) {
                     return true;

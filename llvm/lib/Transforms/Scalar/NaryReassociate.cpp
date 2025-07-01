@@ -205,7 +205,7 @@ bool NaryReassociatePass::runImpl(Function &F, AssumptionCache *AC_,
   SE = SE_;
   TLI = TLI_;
   TTI = TTI_;
-  DL = &F.getDataLayout();
+  DL = &F.getParent()->getDataLayout();
 
   bool Changed = false, ChangedInThisIteration;
   do {
@@ -359,13 +359,12 @@ bool NaryReassociatePass::requiresSignExtension(Value *Index,
 GetElementPtrInst *
 NaryReassociatePass::tryReassociateGEPAtIndex(GetElementPtrInst *GEP,
                                               unsigned I, Type *IndexedType) {
-  SimplifyQuery SQ(*DL, DT, AC, GEP);
   Value *IndexToSplit = GEP->getOperand(I + 1);
   if (SExtInst *SExt = dyn_cast<SExtInst>(IndexToSplit)) {
     IndexToSplit = SExt->getOperand(0);
   } else if (ZExtInst *ZExt = dyn_cast<ZExtInst>(IndexToSplit)) {
     // zext can be treated as sext if the source is non-negative.
-    if (isKnownNonNegative(ZExt->getOperand(0), SQ))
+    if (isKnownNonNegative(ZExt->getOperand(0), *DL, 0, AC, GEP, DT))
       IndexToSplit = ZExt->getOperand(0);
   }
 
@@ -374,7 +373,8 @@ NaryReassociatePass::tryReassociateGEPAtIndex(GetElementPtrInst *GEP,
     // nsw, we cannot split the add because
     //   sext(LHS + RHS) != sext(LHS) + sext(RHS).
     if (requiresSignExtension(IndexToSplit, GEP) &&
-        computeOverflowForSignedAdd(AO, SQ) != OverflowResult::NeverOverflows)
+        computeOverflowForSignedAdd(AO, *DL, AC, GEP, DT) !=
+            OverflowResult::NeverOverflows)
       return nullptr;
 
     Value *LHS = AO->getOperand(0), *RHS = AO->getOperand(1);
@@ -402,7 +402,7 @@ NaryReassociatePass::tryReassociateGEPAtIndex(GetElementPtrInst *GEP,
     IndexExprs.push_back(SE->getSCEV(Index));
   // Replace the I-th index with LHS.
   IndexExprs[I] = SE->getSCEV(LHS);
-  if (isKnownNonNegative(LHS, SimplifyQuery(*DL, DT, AC, GEP)) &&
+  if (isKnownNonNegative(LHS, *DL, 0, AC, GEP, DT) &&
       DL->getTypeSizeInBits(LHS->getType()).getFixedValue() <
           DL->getTypeSizeInBits(GEP->getOperand(I)->getType())
               .getFixedValue()) {
@@ -421,7 +421,10 @@ NaryReassociatePass::tryReassociateGEPAtIndex(GetElementPtrInst *GEP,
     return nullptr;
 
   IRBuilder<> Builder(GEP);
-  // Candidate should have the same pointer type as GEP.
+  // Candidate does not necessarily have the same pointer type as GEP. Use
+  // bitcast or pointer cast to make sure they have the same type, so that the
+  // later RAUW doesn't complain.
+  Candidate = Builder.CreateBitOrPointerCast(Candidate, GEP->getType());
   assert(Candidate->getType() == GEP->getType());
 
   // NewGEP = (char *)Candidate + RHS * sizeof(IndexedType)
@@ -508,15 +511,14 @@ Instruction *NaryReassociatePass::tryReassociatedBinaryOp(const SCEV *LHSExpr,
   Instruction *NewI = nullptr;
   switch (I->getOpcode()) {
   case Instruction::Add:
-    NewI = BinaryOperator::CreateAdd(LHS, RHS, "", I->getIterator());
+    NewI = BinaryOperator::CreateAdd(LHS, RHS, "", I);
     break;
   case Instruction::Mul:
-    NewI = BinaryOperator::CreateMul(LHS, RHS, "", I->getIterator());
+    NewI = BinaryOperator::CreateMul(LHS, RHS, "", I);
     break;
   default:
     llvm_unreachable("Unexpected instruction.");
   }
-  NewI->setDebugLoc(I->getDebugLoc());
   NewI->takeName(I);
   return NewI;
 }
@@ -562,24 +564,14 @@ NaryReassociatePass::findClosestMatchingDominator(const SCEV *CandidateExpr,
   // optimization makes the algorithm O(n).
   while (!Candidates.empty()) {
     // Candidates stores WeakTrackingVHs, so a candidate can be nullptr if it's
-    // removed during rewriting.
-    if (Value *Candidate = Candidates.pop_back_val()) {
+    // removed
+    // during rewriting.
+    if (Value *Candidate = Candidates.back()) {
       Instruction *CandidateInstruction = cast<Instruction>(Candidate);
-      if (!DT->dominates(CandidateInstruction, Dominatee))
-        continue;
-
-      // Make sure that the instruction is safe to reuse without introducing
-      // poison.
-      SmallVector<Instruction *> DropPoisonGeneratingInsts;
-      if (!SE->canReuseInstruction(CandidateExpr, CandidateInstruction,
-                                   DropPoisonGeneratingInsts))
-        continue;
-
-      for (Instruction *I : DropPoisonGeneratingInsts)
-        I->dropPoisonGeneratingAnnotations();
-
-      return CandidateInstruction;
+      if (DT->dominates(CandidateInstruction, Dominatee))
+        return CandidateInstruction;
     }
+    Candidates.pop_back();
   }
   return nullptr;
 }

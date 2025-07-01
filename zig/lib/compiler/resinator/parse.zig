@@ -4,10 +4,9 @@ const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
-const ResourceType = @import("rc.zig").ResourceType;
+const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
-const ErrorDetailsWithoutCodePage = @import("errors.zig").ErrorDetailsWithoutCodePage;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const SourceBytes = @import("literals.zig").SourceBytes;
 const Compiler = @import("compile.zig").Compiler;
@@ -31,7 +30,6 @@ pub const Parser = struct {
 
     pub const Options = struct {
         warn_instead_of_error_on_invalid_code_page: bool = false,
-        disjoint_code_page: bool = false,
     };
 
     pub fn init(lexer: *Lexer, options: Options) Parser {
@@ -49,7 +47,6 @@ pub const Parser = struct {
         diagnostics: *Diagnostics,
         input_code_page_lookup: CodePageLookup,
         output_code_page_lookup: CodePageLookup,
-        warned_about_disjoint_code_page: bool,
     };
 
     pub fn parse(self: *Self, allocator: Allocator, diagnostics: *Diagnostics) Error!*Tree {
@@ -64,7 +61,6 @@ pub const Parser = struct {
             .diagnostics = diagnostics,
             .input_code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.default_code_page),
             .output_code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.default_code_page),
-            .warned_about_disjoint_code_page = false,
         };
 
         const parsed_root = try self.parseRoot();
@@ -115,12 +111,12 @@ pub const Parser = struct {
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
     fn parseCommonResourceAttributes(self: *Self) ![]Token {
-        var common_resource_attributes: std.ArrayListUnmanaged(Token) = .empty;
+        var common_resource_attributes = std.ArrayListUnmanaged(Token){};
         while (true) {
             const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
             if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
                 try common_resource_attributes.append(self.state.arena, maybe_common_resource_attribute);
-                try self.nextToken(.normal);
+                self.nextToken(.normal) catch unreachable;
             } else {
                 break;
             }
@@ -134,13 +130,8 @@ pub const Parser = struct {
     /// optional statements (if any). If there are no optional statements, the
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
-    fn parseOptionalStatements(self: *Self, resource: ResourceType) ![]*Node {
-        var optional_statements: std.ArrayListUnmanaged(*Node) = .empty;
-
-        const num_statement_types = @typeInfo(rc.OptionalStatements).@"enum".fields.len;
-        var statement_type_has_duplicates = [_]bool{false} ** num_statement_types;
-        var last_statement_per_type = [_]?*Node{null} ** num_statement_types;
-
+    fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
+        var optional_statements = std.ArrayListUnmanaged(*Node){};
         while (true) {
             const lookahead_token = try self.lookaheadToken(.normal);
             if (lookahead_token.id != .literal) break;
@@ -149,13 +140,7 @@ pub const Parser = struct {
                 .dialog, .dialogex => rc.OptionalStatements.dialog_map.get(slice) orelse break,
                 else => break,
             };
-            try self.nextToken(.normal);
-
-            const type_i = @intFromEnum(optional_statement_type);
-            if (last_statement_per_type[type_i] != null) {
-                statement_type_has_duplicates[type_i] = true;
-            }
-
+            self.nextToken(.normal) catch unreachable;
             switch (optional_statement_type) {
                 .language => {
                     const language = try self.parseLanguageStatement();
@@ -181,7 +166,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const value = self.state.token;
                     if (!value.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = value,
                             .extra = .{ .expected_types = .{
@@ -238,7 +223,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const typeface = self.state.token;
                     if (!typeface.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = typeface,
                             .extra = .{ .expected_types = .{
@@ -287,42 +272,7 @@ pub const Parser = struct {
                     try optional_statements.append(self.state.arena, &node.base);
                 },
             }
-
-            last_statement_per_type[type_i] = optional_statements.items[optional_statements.items.len - 1];
         }
-
-        for (optional_statements.items) |optional_statement| {
-            const type_i = type_i: {
-                switch (optional_statement.id) {
-                    .simple_statement => {
-                        const simple_statement: *Node.SimpleStatement = @alignCast(@fieldParentPtr("base", optional_statement));
-                        const statement_identifier = simple_statement.identifier;
-                        const slice = statement_identifier.slice(self.lexer.buffer);
-                        const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse
-                            rc.OptionalStatements.dialog_map.get(slice).?;
-                        break :type_i @intFromEnum(optional_statement_type);
-                    },
-                    .font_statement => {
-                        break :type_i @intFromEnum(rc.OptionalStatements.font);
-                    },
-                    .language_statement => {
-                        break :type_i @intFromEnum(rc.OptionalStatements.language);
-                    },
-                    else => unreachable,
-                }
-            };
-            if (!statement_type_has_duplicates[type_i]) continue;
-            if (optional_statement == last_statement_per_type[type_i].?) continue;
-
-            try self.addErrorDetails(.{
-                .err = .duplicate_optional_statement_skipped,
-                .type = .warning,
-                .token = optional_statement.getFirstToken(),
-                .token_span_start = optional_statement.getFirstToken(),
-                .token_span_end = optional_statement.getLastToken(),
-            });
-        }
-
         return optional_statements.toOwnedSlice(self.state.arena);
     }
 
@@ -361,13 +311,12 @@ pub const Parser = struct {
                     const maybe_end_token = try self.lookaheadToken(.normal);
                     switch (maybe_end_token.id) {
                         .end => {
-                            try self.nextToken(.normal);
+                            self.nextToken(.normal) catch unreachable;
                             break;
                         },
                         .eof => {
-                            return self.addErrorDetailsWithCodePageAndFail(.{
+                            return self.addErrorDetailsAndFail(ErrorDetails{
                                 .err = .unfinished_string_table_block,
-                                .code_page = self.lexer.current_code_page,
                                 .token = maybe_end_token,
                             });
                         },
@@ -379,7 +328,7 @@ pub const Parser = struct {
 
                     try self.nextToken(.normal);
                     if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = self.state.token,
                             .extra = .{ .expected_types = .{ .string_literal = true } },
@@ -396,7 +345,7 @@ pub const Parser = struct {
                 }
 
                 if (strings.items.len == 0) {
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .expected_token, // TODO: probably a more specific error message
                         .token = self.state.token,
                         .extra = .{ .expected = .number },
@@ -425,12 +374,7 @@ pub const Parser = struct {
         // of projects. So, we have special compatibility for this particular case.
         const maybe_eof = try self.lookaheadToken(.whitespace_delimiter_only);
         if (maybe_eof.id == .eof) {
-            try self.addErrorDetails(.{
-                .err = .dangling_literal_at_eof,
-                .type = .warning,
-                .token = first_token,
-            });
-
+            // TODO: emit warning
             var context = try self.state.arena.alloc(Token, 2);
             context[0] = first_token;
             context[1] = maybe_eof;
@@ -469,12 +413,12 @@ pub const Parser = struct {
             if (maybe_ordinal == null) {
                 const would_be_win32_rc_ordinal = res.NameOrOrdinal.maybeNonAsciiOrdinalFromString(id_bytes);
                 if (would_be_win32_rc_ordinal) |win32_rc_ordinal| {
-                    try self.addErrorDetails(.{
+                    try self.addErrorDetails(ErrorDetails{
                         .err = .id_must_be_ordinal,
                         .token = id_token,
                         .extra = .{ .resource = resource },
                     });
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .win32_non_ascii_ordinal,
                         .token = id_token,
                         .type = .note,
@@ -482,7 +426,7 @@ pub const Parser = struct {
                         .extra = .{ .number = win32_rc_ordinal.ordinal },
                     });
                 } else {
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .id_must_be_ordinal,
                         .token = id_token,
                         .extra = .{ .resource = resource },
@@ -501,13 +445,13 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var accelerators: std.ArrayListUnmanaged(*Node) = .empty;
+                var accelerators = std.ArrayListUnmanaged(*Node){};
 
                 while (true) {
                     const lookahead = try self.lookaheadToken(.normal);
                     switch (lookahead.id) {
                         .end, .eof => {
-                            try self.nextToken(.normal);
+                            self.nextToken(.normal) catch unreachable;
                             break;
                         },
                         else => {},
@@ -519,7 +463,7 @@ pub const Parser = struct {
 
                     const idvalue = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
-                    var type_and_options: std.ArrayListUnmanaged(Token) = .empty;
+                    var type_and_options = std.ArrayListUnmanaged(Token){};
                     while (true) {
                         if (!(try self.parseOptionalToken(.comma))) break;
 
@@ -584,7 +528,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var controls: std.ArrayListUnmanaged(*Node) = .empty;
+                var controls = std.ArrayListUnmanaged(*Node){};
                 defer controls.deinit(self.state.allocator);
                 while (try self.parseControlStatement(resource)) |control_node| {
                     // The number of controls must fit in a u16 in order for it to
@@ -643,7 +587,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var buttons: std.ArrayListUnmanaged(*Node) = .empty;
+                var buttons = std.ArrayListUnmanaged(*Node){};
                 defer buttons.deinit(self.state.allocator);
                 while (try self.parseToolbarButtonStatement()) |button_node| {
                     // The number of buttons must fit in a u16 in order for it to
@@ -701,7 +645,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var items: std.ArrayListUnmanaged(*Node) = .empty;
+                var items = std.ArrayListUnmanaged(*Node){};
                 defer items.deinit(self.state.allocator);
                 while (try self.parseMenuItemStatement(resource, id_token, 1)) |item_node| {
                     try items.append(self.state.allocator, item_node);
@@ -735,7 +679,7 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                var fixed_info: std.ArrayListUnmanaged(*Node) = .empty;
+                var fixed_info = std.ArrayListUnmanaged(*Node){};
                 while (try self.parseVersionStatement()) |version_statement| {
                     try fixed_info.append(self.state.arena, version_statement);
                 }
@@ -744,7 +688,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var block_statements: std.ArrayListUnmanaged(*Node) = .empty;
+                var block_statements = std.ArrayListUnmanaged(*Node){};
                 while (try self.parseVersionBlockOrValue(id_token, 1)) |block_node| {
                     try block_statements.append(self.state.arena, block_node);
                 }
@@ -795,19 +739,19 @@ pub const Parser = struct {
 
                 const maybe_begin = try self.lookaheadToken(.normal);
                 if (maybe_begin.id == .begin) {
-                    try self.nextToken(.normal);
+                    self.nextToken(.normal) catch unreachable;
 
                     if (!resource.canUseRawData()) {
-                        try self.addErrorDetails(.{
+                        try self.addErrorDetails(ErrorDetails{
                             .err = .resource_type_cant_use_raw_data,
-                            .token = self.state.token,
+                            .token = maybe_begin,
                             .extra = .{ .resource = resource },
                         });
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .resource_type_cant_use_raw_data,
                             .type = .note,
                             .print_source_line = false,
-                            .token = self.state.token,
+                            .token = maybe_begin,
                         });
                     }
 
@@ -858,12 +802,11 @@ pub const Parser = struct {
             const maybe_end_token = try self.lookaheadToken(.normal);
             switch (maybe_end_token.id) {
                 .comma => {
-                    try self.nextToken(.normal);
                     // comma as the first token in a raw data block is an error
                     if (raw_data.items.len == 0) {
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
-                            .token = self.state.token,
+                            .token = maybe_end_token,
                             .extra = .{ .expected_types = .{
                                 .number = true,
                                 .number_expression = true,
@@ -872,16 +815,16 @@ pub const Parser = struct {
                         });
                     }
                     // otherwise just skip over commas
+                    self.nextToken(.normal) catch unreachable;
                     continue;
                 },
                 .end => {
-                    try self.nextToken(.normal);
+                    self.nextToken(.normal) catch unreachable;
                     break;
                 },
                 .eof => {
-                    return self.addErrorDetailsWithCodePageAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .unfinished_raw_data_block,
-                        .code_page = self.lexer.current_code_page,
                         .token = maybe_end_token,
                     });
                 },
@@ -893,12 +836,10 @@ pub const Parser = struct {
             if (expression.isNumberExpression()) {
                 const maybe_close_paren = try self.lookaheadToken(.normal);
                 if (maybe_close_paren.id == .close_paren) {
-                    // advance to ensure that the code page lookup is populated for this token
-                    try self.nextToken(.normal);
                     // <number expression>) is an error
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .expected_token,
-                        .token = self.state.token,
+                        .token = maybe_close_paren,
                         .extra = .{ .expected = .operator },
                     });
                 }
@@ -911,10 +852,10 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// control statement (or unchanged if the function returns null).
-    fn parseControlStatement(self: *Self, resource: ResourceType) Error!?*Node {
+    fn parseControlStatement(self: *Self, resource: Resource) Error!?*Node {
         const control_token = try self.lookaheadToken(.normal);
         const control = rc.Control.map.get(control_token.slice(self.lexer.buffer)) orelse return null;
-        try self.nextToken(.normal);
+        self.nextToken(.normal) catch unreachable;
 
         try self.skipAnyCommas();
 
@@ -926,7 +867,7 @@ pub const Parser = struct {
                     text = self.state.token;
                 },
                 else => {
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .expected_something_else,
                         .token = self.state.token,
                         .extra = .{ .expected_types = .{
@@ -979,16 +920,14 @@ pub const Parser = struct {
             // the style parameter.
             const lookahead_token = try self.lookaheadToken(.normal);
             if (lookahead_token.id != .comma and lookahead_token.id != .eof) {
-                try self.addErrorDetailsWithCodePage(.{
+                try self.addErrorDetails(.{
                     .err = .rc_could_miscompile_control_params,
                     .type = .warning,
-                    .code_page = self.lexer.current_code_page,
                     .token = lookahead_token,
                 });
-                try self.addErrorDetailsWithCodePage(.{
+                try self.addErrorDetails(.{
                     .err = .rc_could_miscompile_control_params,
                     .type = .note,
-                    .code_page = self.lexer.current_code_page,
                     .token = style.?.getFirstToken(),
                     .token_span_end = style.?.getLastToken(),
                 });
@@ -1048,7 +987,7 @@ pub const Parser = struct {
     fn parseToolbarButtonStatement(self: *Self) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const button_type = rc.ToolbarButton.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
-        try self.nextToken(.normal);
+        self.nextToken(.normal) catch unreachable;
 
         switch (button_type) {
             .separator => {
@@ -1075,10 +1014,10 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// menuitem statement (or unchanged if the function returns null).
-    fn parseMenuItemStatement(self: *Self, resource: ResourceType, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
+    fn parseMenuItemStatement(self: *Self, resource: Resource, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
         const menuitem_token = try self.lookaheadToken(.normal);
         const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
-        try self.nextToken(.normal);
+        self.nextToken(.normal) catch unreachable;
 
         if (nesting_level > max_nested_menu_level) {
             try self.addErrorDetails(.{
@@ -1111,7 +1050,7 @@ pub const Parser = struct {
                     } else {
                         const text = self.state.token;
                         if (!text.isStringLiteral()) {
-                            return self.addErrorDetailsAndFail(.{
+                            return self.addErrorDetailsAndFail(ErrorDetails{
                                 .err = .expected_something_else,
                                 .token = text,
                                 .extra = .{ .expected_types = .{
@@ -1125,13 +1064,13 @@ pub const Parser = struct {
 
                         _ = try self.parseOptionalToken(.comma);
 
-                        var options: std.ArrayListUnmanaged(Token) = .empty;
+                        var options = std.ArrayListUnmanaged(Token){};
                         while (true) {
                             const option_token = try self.lookaheadToken(.normal);
                             if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
                                 break;
                             }
-                            try self.nextToken(.normal);
+                            self.nextToken(.normal) catch unreachable;
                             try options.append(self.state.arena, option_token);
                             try self.skipAnyCommas();
                         }
@@ -1150,7 +1089,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const text = self.state.token;
                     if (!text.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(.{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = text,
                             .extra = .{ .expected_types = .{
@@ -1160,13 +1099,13 @@ pub const Parser = struct {
                     }
                     try self.skipAnyCommas();
 
-                    var options: std.ArrayListUnmanaged(Token) = .empty;
+                    var options = std.ArrayListUnmanaged(Token){};
                     while (true) {
                         const option_token = try self.lookaheadToken(.normal);
                         if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
                             break;
                         }
-                        try self.nextToken(.normal);
+                        self.nextToken(.normal) catch unreachable;
                         try options.append(self.state.arena, option_token);
                         try self.skipAnyCommas();
                     }
@@ -1175,7 +1114,7 @@ pub const Parser = struct {
                     const begin_token = self.state.token;
                     try self.check(.begin);
 
-                    var items: std.ArrayListUnmanaged(*Node) = .empty;
+                    var items = std.ArrayListUnmanaged(*Node){};
                     while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                         try items.append(self.state.arena, item_node);
                     }
@@ -1207,7 +1146,7 @@ pub const Parser = struct {
                 try self.nextToken(.normal);
                 const text = self.state.token;
                 if (!text.isStringLiteral()) {
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .expected_something_else,
                         .token = text,
                         .extra = .{ .expected_types = .{
@@ -1245,7 +1184,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var items: std.ArrayListUnmanaged(*Node) = .empty;
+                var items = std.ArrayListUnmanaged(*Node){};
                 while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                     try items.append(self.state.arena, item_node);
                 }
@@ -1318,7 +1257,7 @@ pub const Parser = struct {
     fn parseVersionStatement(self: *Self) Error!?*Node {
         const type_token = try self.lookaheadToken(.normal);
         const statement_type = rc.VersionInfo.map.get(type_token.slice(self.lexer.buffer)) orelse return null;
-        try self.nextToken(.normal);
+        self.nextToken(.normal) catch unreachable;
         switch (statement_type) {
             .file_version, .product_version => {
                 var parts_buffer: [4]*Node = undefined;
@@ -1362,7 +1301,7 @@ pub const Parser = struct {
     fn parseVersionBlockOrValue(self: *Self, top_level_version_id_token: Token, nesting_level: u32) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const keyword = rc.VersionBlock.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
-        try self.nextToken(.normal);
+        self.nextToken(.normal) catch unreachable;
 
         if (nesting_level > max_nested_version_level) {
             try self.addErrorDetails(.{
@@ -1402,7 +1341,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var children: std.ArrayListUnmanaged(*Node) = .empty;
+                var children = std.ArrayListUnmanaged(*Node){};
                 while (try self.parseVersionBlockOrValue(top_level_version_id_token, nesting_level + 1)) |value_node| {
                     try children.append(self.state.arena, value_node);
                 }
@@ -1435,7 +1374,7 @@ pub const Parser = struct {
     }
 
     fn parseBlockValuesList(self: *Self, had_comma_before_first_value: bool) Error![]*Node {
-        var values: std.ArrayListUnmanaged(*Node) = .empty;
+        var values = std.ArrayListUnmanaged(*Node){};
         var seen_number: bool = false;
         var first_string_value: ?*Node = null;
         while (true) {
@@ -1602,7 +1541,7 @@ pub const Parser = struct {
             }
         };
 
-        pub fn toErrorDetails(options: ParseExpressionOptions, token: Token) ErrorDetailsWithoutCodePage {
+        pub fn toErrorDetails(options: ParseExpressionOptions, token: Token) ErrorDetails {
             // TODO: expected_types_override interaction with is_known_to_be_number_expression?
             const expected_types = options.expected_types_override orelse ErrorDetails.ExpectedTypes{
                 .number = options.allowed_types.number,
@@ -1610,7 +1549,7 @@ pub const Parser = struct {
                 .string_literal = options.allowed_types.string and !options.is_known_to_be_number_expression,
                 .literal = options.allowed_types.literal and !options.is_known_to_be_number_expression,
             };
-            return .{
+            return ErrorDetails{
                 .err = .expected_something_else,
                 .token = token,
                 .extra = .{ .expected_types = expected_types },
@@ -1751,7 +1690,7 @@ pub const Parser = struct {
 
         try self.addErrorDetails(options.toErrorDetails(self.state.token));
         if (is_close_paren_expression) {
-            try self.addErrorDetails(.{
+            try self.addErrorDetails(ErrorDetails{
                 .err = .close_paren_expression,
                 .type = .note,
                 .token = self.state.token,
@@ -1759,7 +1698,7 @@ pub const Parser = struct {
             });
         }
         if (is_unary_plus_expression) {
-            try self.addErrorDetails(.{
+            try self.addErrorDetails(ErrorDetails{
                 .err = .unary_plus_expression,
                 .type = .note,
                 .token = self.state.token,
@@ -1800,7 +1739,7 @@ pub const Parser = struct {
             });
 
             if (!rhs_node.isNumberExpression()) {
-                return self.addErrorDetailsAndFail(.{
+                return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_something_else,
                     .token = rhs_node.getFirstToken(),
                     .token_span_end = rhs_node.getLastToken(),
@@ -1842,39 +1781,16 @@ pub const Parser = struct {
     fn parseOptionalTokenAdvanced(self: *Self, id: Token.Id, comptime method: Lexer.LexMethod) Error!bool {
         const maybe_token = try self.lookaheadToken(method);
         if (maybe_token.id != id) return false;
-        try self.nextToken(method);
+        self.nextToken(method) catch unreachable;
         return true;
     }
 
-    fn addErrorDetailsWithCodePage(self: *Self, details: ErrorDetails) Allocator.Error!void {
+    fn addErrorDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
         try self.state.diagnostics.append(details);
     }
 
-    fn addErrorDetailsWithCodePageAndFail(self: *Self, details: ErrorDetails) Error {
-        try self.addErrorDetailsWithCodePage(details);
-        return error.ParseError;
-    }
-
-    /// Code page is looked up in input_code_page_lookup using the token, meaning the token
-    /// must come from nextToken (i.e. it can't be a lookahead token).
-    fn addErrorDetails(self: *Self, details_without_code_page: ErrorDetailsWithoutCodePage) Allocator.Error!void {
-        const details = ErrorDetails{
-            .err = details_without_code_page.err,
-            .code_page = self.state.input_code_page_lookup.getForToken(details_without_code_page.token),
-            .token = details_without_code_page.token,
-            .token_span_start = details_without_code_page.token_span_start,
-            .token_span_end = details_without_code_page.token_span_end,
-            .type = details_without_code_page.type,
-            .print_source_line = details_without_code_page.print_source_line,
-            .extra = details_without_code_page.extra,
-        };
-        try self.addErrorDetailsWithCodePage(details);
-    }
-
-    /// Code page is looked up in input_code_page_lookup using the token, meaning the token
-    /// must come from nextToken (i.e. it can't be a lookahead token).
-    fn addErrorDetailsAndFail(self: *Self, details_without_code_page: ErrorDetailsWithoutCodePage) Error {
-        try self.addErrorDetails(details_without_code_page);
+    fn addErrorDetailsAndFail(self: *Self, details: ErrorDetails) Error {
+        try self.addErrorDetails(details);
         return error.ParseError;
     }
 
@@ -1882,34 +1798,35 @@ pub const Parser = struct {
         self.state.token = token: while (true) {
             const token = self.lexer.next(method) catch |err| switch (err) {
                 error.CodePagePragmaInIncludedFile => {
-                    // The Win32 RC compiler silently ignores such `#pragma code_page` directives,
+                    // The Win32 RC compiler silently ignores such `#pragma code_point` directives,
                     // but we want to both ignore them *and* emit a warning
-                    var details = self.lexer.getErrorDetails(err);
-                    details.type = .warning;
-                    try self.addErrorDetailsWithCodePage(details);
+                    try self.addErrorDetails(.{
+                        .err = .code_page_pragma_in_included_file,
+                        .type = .warning,
+                        .token = self.lexer.error_context_token.?,
+                    });
                     continue;
                 },
                 error.CodePagePragmaInvalidCodePage => {
                     var details = self.lexer.getErrorDetails(err);
                     if (!self.options.warn_instead_of_error_on_invalid_code_page) {
-                        return self.addErrorDetailsWithCodePageAndFail(details);
+                        return self.addErrorDetailsAndFail(details);
                     }
                     details.type = .warning;
-                    try self.addErrorDetailsWithCodePage(details);
+                    try self.addErrorDetails(details);
                     continue;
                 },
                 error.InvalidDigitCharacterInNumberLiteral => {
                     const details = self.lexer.getErrorDetails(err);
-                    try self.addErrorDetailsWithCodePage(details);
-                    return self.addErrorDetailsWithCodePageAndFail(.{
+                    try self.addErrorDetails(details);
+                    return self.addErrorDetailsAndFail(.{
                         .err = details.err,
                         .type = .note,
-                        .code_page = self.lexer.current_code_page,
                         .token = details.token,
                         .print_source_line = false,
                     });
                 },
-                else => return self.addErrorDetailsWithCodePageAndFail(self.lexer.getErrorDetails(err)),
+                else => return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err)),
             };
             break :token token;
         };
@@ -1918,29 +1835,7 @@ pub const Parser = struct {
         // But only set the output code page to the current code page if we are past the first code_page pragma in the file.
         // Otherwise, we want to fill the lookup using the default code page so that lookups still work for lines that
         // don't have an explicit output code page set.
-        const is_disjoint_code_page = self.options.disjoint_code_page and self.lexer.seen_pragma_code_pages == 1;
-        const output_code_page = if (is_disjoint_code_page)
-            self.state.output_code_page_lookup.default_code_page
-        else
-            self.lexer.current_code_page;
-
-        if (is_disjoint_code_page and !self.state.warned_about_disjoint_code_page) {
-            try self.addErrorDetailsWithCodePage(.{
-                .err = .disjoint_code_page,
-                .type = .warning,
-                .code_page = self.state.input_code_page_lookup.getForLineNum(self.lexer.last_pragma_code_page_token.?.line_number),
-                .token = self.lexer.last_pragma_code_page_token.?,
-            });
-            try self.addErrorDetailsWithCodePage(.{
-                .err = .disjoint_code_page,
-                .type = .note,
-                .code_page = self.state.input_code_page_lookup.getForLineNum(self.lexer.last_pragma_code_page_token.?.line_number),
-                .token = self.lexer.last_pragma_code_page_token.?,
-                .print_source_line = false,
-            });
-            self.state.warned_about_disjoint_code_page = true;
-        }
-
+        const output_code_page = if (self.lexer.seen_pragma_code_pages > 1) self.lexer.current_code_page else self.state.output_code_page_lookup.default_code_page;
         try self.state.output_code_page_lookup.setForToken(self.state.token, output_code_page);
     }
 
@@ -1951,7 +1846,7 @@ pub const Parser = struct {
                 // Ignore this error and get the next valid token, we'll deal with this
                 // properly when getting the token for real
                 error.CodePagePragmaInIncludedFile => continue,
-                else => return self.addErrorDetailsWithCodePageAndFail(self.state.lookahead_lexer.getErrorDetails(err)),
+                else => return self.addErrorDetailsAndFail(self.state.lookahead_lexer.getErrorDetails(err)),
             };
         };
     }
@@ -1965,7 +1860,7 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => {},
             else => {
-                return self.addErrorDetailsAndFail(.{
+                return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },
@@ -1976,7 +1871,7 @@ pub const Parser = struct {
 
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
-            return self.addErrorDetailsAndFail(.{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_token,
                 .token = self.state.token,
                 .extra = .{ .expected = expected_token_id },
@@ -1984,14 +1879,14 @@ pub const Parser = struct {
         }
     }
 
-    fn checkResource(self: *Self) !ResourceType {
+    fn checkResource(self: *Self) !Resource {
         switch (self.state.token.id) {
-            .literal => return ResourceType.fromString(.{
+            .literal => return Resource.fromString(.{
                 .slice = self.state.token.slice(self.lexer.buffer),
                 .code_page = self.lexer.current_code_page,
             }),
             else => {
-                return self.addErrorDetailsAndFail(.{
+                return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },

@@ -28,8 +28,6 @@ bool llvm::shouldOptimizeForSize(const MachineFunction *MF,
                                  ProfileSummaryInfo *PSI,
                                  const MachineBlockFrequencyInfo *MBFI,
                                  PGSOQueryType QueryType) {
-  if (MF->getFunction().hasOptSize())
-    return true;
   return shouldFuncOptimizeForSizeImpl(MF, PSI, MBFI, QueryType);
 }
 
@@ -38,8 +36,6 @@ bool llvm::shouldOptimizeForSize(const MachineBasicBlock *MBB,
                                  const MachineBlockFrequencyInfo *MBFI,
                                  PGSOQueryType QueryType) {
   assert(MBB);
-  if (MBB->getParent()->getFunction().hasOptSize())
-    return true;
   return shouldOptimizeForSizeImpl(MBB, PSI, MBFI, QueryType);
 }
 
@@ -48,9 +44,7 @@ bool llvm::shouldOptimizeForSize(const MachineBasicBlock *MBB,
                                  MBFIWrapper *MBFIW,
                                  PGSOQueryType QueryType) {
   assert(MBB);
-  if (MBB->getParent()->getFunction().hasOptSize())
-    return true;
-  if (!MBFIW)
+  if (!PSI || !MBFIW)
     return false;
   BlockFrequency BlockFreq = MBFIW->getBlockFreq(MBB);
   return shouldOptimizeForSizeImpl(BlockFreq, PSI, &MBFIW->getMBFI(),

@@ -9,7 +9,6 @@
 #ifndef LLVM_SUPPORT_WITHCOLOR_H
 #define LLVM_SUPPORT_WITHCOLOR_H
 
-#include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace llvm {
@@ -59,8 +58,8 @@ public:
   /// @param OS The output stream
   /// @param S Symbolic name for syntax element to color
   /// @param Mode Enable, disable or compute whether to use colors.
-  LLVM_CTOR_NODISCARD WithColor(raw_ostream &OS, HighlightColor S,
-                                ColorMode Mode = ColorMode::Auto);
+  WithColor(raw_ostream &OS, HighlightColor S,
+            ColorMode Mode = ColorMode::Auto);
   /// To be used like this: WithColor(OS, raw_ostream::BLACK) << "text";
   /// @param OS The output stream
   /// @param Color ANSI color to use, the special SAVEDCOLOR can be used to
@@ -68,9 +67,10 @@ public:
   /// @param Bold Bold/brighter text, default false
   /// @param BG If true, change the background, default: change foreground
   /// @param Mode Enable, disable or compute whether to use colors.
-  LLVM_CTOR_NODISCARD WithColor(
-      raw_ostream &OS, raw_ostream::Colors Color = raw_ostream::SAVEDCOLOR,
-      bool Bold = false, bool BG = false, ColorMode Mode = ColorMode::Auto)
+  WithColor(raw_ostream &OS,
+            raw_ostream::Colors Color = raw_ostream::SAVEDCOLOR,
+            bool Bold = false, bool BG = false,
+            ColorMode Mode = ColorMode::Auto)
       : OS(OS), Mode(Mode) {
     changeColor(Color, Bold, BG);
   }

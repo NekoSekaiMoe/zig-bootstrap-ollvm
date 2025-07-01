@@ -31,7 +31,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/CodeGen/CallBrPrepare.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -52,18 +51,17 @@
 
 using namespace llvm;
 
-#define DEBUG_TYPE "callbr-prepare"
-
-static bool SplitCriticalEdges(ArrayRef<CallBrInst *> CBRs, DominatorTree &DT);
-static bool InsertIntrinsicCalls(ArrayRef<CallBrInst *> CBRs,
-                                 DominatorTree &DT);
-static void UpdateSSA(DominatorTree &DT, CallBrInst *CBR, CallInst *Intrinsic,
-                      SSAUpdater &SSAUpdate);
-static SmallVector<CallBrInst *, 2> FindCallBrs(Function &Fn);
+#define DEBUG_TYPE "callbrprepare"
 
 namespace {
 
 class CallBrPrepare : public FunctionPass {
+  bool SplitCriticalEdges(ArrayRef<CallBrInst *> CBRs, DominatorTree &DT);
+  bool InsertIntrinsicCalls(ArrayRef<CallBrInst *> CBRs,
+                            DominatorTree &DT) const;
+  void UpdateSSA(DominatorTree &DT, CallBrInst *CBR, CallInst *Intrinsic,
+                 SSAUpdater &SSAUpdate) const;
+
 public:
   CallBrPrepare() : FunctionPass(ID) {}
   void getAnalysisUsage(AnalysisUsage &AU) const override;
@@ -73,32 +71,10 @@ public:
 
 } // end anonymous namespace
 
-PreservedAnalyses CallBrPreparePass::run(Function &Fn,
-                                         FunctionAnalysisManager &FAM) {
-  bool Changed = false;
-  SmallVector<CallBrInst *, 2> CBRs = FindCallBrs(Fn);
-
-  if (CBRs.empty())
-    return PreservedAnalyses::all();
-
-  auto &DT = FAM.getResult<DominatorTreeAnalysis>(Fn);
-
-  Changed |= SplitCriticalEdges(CBRs, DT);
-  Changed |= InsertIntrinsicCalls(CBRs, DT);
-
-  if (!Changed)
-    return PreservedAnalyses::all();
-  PreservedAnalyses PA;
-  PA.preserve<DominatorTreeAnalysis>();
-  return PA;
-}
-
 char CallBrPrepare::ID = 0;
-INITIALIZE_PASS_BEGIN(CallBrPrepare, "callbrprepare", "Prepare callbr", false,
-                      false)
+INITIALIZE_PASS_BEGIN(CallBrPrepare, DEBUG_TYPE, "Prepare callbr", false, false)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_END(CallBrPrepare, "callbrprepare", "Prepare callbr", false,
-                    false)
+INITIALIZE_PASS_END(CallBrPrepare, DEBUG_TYPE, "Prepare callbr", false, false)
 
 FunctionPass *llvm::createCallBrPass() { return new CallBrPrepare(); }
 
@@ -106,7 +82,7 @@ void CallBrPrepare::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addPreserved<DominatorTreeWrapperPass>();
 }
 
-SmallVector<CallBrInst *, 2> FindCallBrs(Function &Fn) {
+static SmallVector<CallBrInst *, 2> FindCallBrs(Function &Fn) {
   SmallVector<CallBrInst *, 2> CBRs;
   for (BasicBlock &BB : Fn)
     if (auto *CBR = dyn_cast<CallBrInst>(BB.getTerminator()))
@@ -115,7 +91,8 @@ SmallVector<CallBrInst *, 2> FindCallBrs(Function &Fn) {
   return CBRs;
 }
 
-bool SplitCriticalEdges(ArrayRef<CallBrInst *> CBRs, DominatorTree &DT) {
+bool CallBrPrepare::SplitCriticalEdges(ArrayRef<CallBrInst *> CBRs,
+                                       DominatorTree &DT) {
   bool Changed = false;
   CriticalEdgeSplittingOptions Options(&DT);
   Options.setMergeIdenticalEdges();
@@ -137,7 +114,8 @@ bool SplitCriticalEdges(ArrayRef<CallBrInst *> CBRs, DominatorTree &DT) {
   return Changed;
 }
 
-bool InsertIntrinsicCalls(ArrayRef<CallBrInst *> CBRs, DominatorTree &DT) {
+bool CallBrPrepare::InsertIntrinsicCalls(ArrayRef<CallBrInst *> CBRs,
+                                         DominatorTree &DT) const {
   bool Changed = false;
   SmallPtrSet<const BasicBlock *, 4> Visited;
   IRBuilder<> Builder(CBRs[0]->getContext());
@@ -182,8 +160,9 @@ static void PrintDebugDomInfo(const DominatorTree &DT, const Use &U,
 }
 #endif
 
-void UpdateSSA(DominatorTree &DT, CallBrInst *CBR, CallInst *Intrinsic,
-               SSAUpdater &SSAUpdate) {
+void CallBrPrepare::UpdateSSA(DominatorTree &DT, CallBrInst *CBR,
+                              CallInst *Intrinsic,
+                              SSAUpdater &SSAUpdate) const {
 
   SmallPtrSet<Use *, 4> Visited;
   BasicBlock *DefaultDest = CBR->getDefaultDest();

@@ -40,8 +40,6 @@ public:
   explicit InlineSizeEstimatorAnalysisPrinterPass(raw_ostream &OS) : OS(OS) {}
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-
-  static bool isRequired() { return true; }
 };
 } // namespace llvm
 #endif // LLVM_ANALYSIS_INLINESIZEESTIMATORANALYSIS_H

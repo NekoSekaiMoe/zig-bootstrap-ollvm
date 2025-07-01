@@ -35,12 +35,10 @@ using namespace sampleprofutil;
 
 // TODO(xur): Remove this option and related code once we make true as the
 // default.
-namespace llvm {
 cl::opt<bool> ImprovedFSDiscriminator(
     "improved-fs-discriminator", cl::Hidden, cl::init(false),
     cl::desc("New FS discriminators encoding (incompatible with the original "
              "encoding)"));
-}
 
 char MIRAddFSDiscriminators::ID = 0;
 

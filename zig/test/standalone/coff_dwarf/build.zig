@@ -7,32 +7,30 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target = if (builtin.os.tag == .windows)
-        b.standardTargetOptions(.{})
-    else
-        b.resolveTargetQuery(.{ .os_tag = .windows });
+    const target = b.standardTargetOptions(.{});
+
+    if (builtin.os.tag != .windows) return;
+
+    if (builtin.cpu.arch == .aarch64) {
+        // https://github.com/ziglang/zig/issues/18427
+        return;
+    }
 
     const exe = b.addExecutable(.{
         .name = "main",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("main.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("main.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
-    const lib = b.addLibrary(.{
-        .linkage = .dynamic,
+    const lib = b.addSharedLibrary(.{
         .name = "shared_lib",
-        .root_module = b.createModule(.{
-            .root_source_file = null,
-            .optimize = optimize,
-            .target = target,
-            .link_libc = true,
-        }),
+        .optimize = optimize,
+        .target = target,
     });
-    lib.root_module.addCSourceFile(.{ .file = b.path("shared_lib.c"), .flags = &.{"-gdwarf"} });
-    exe.root_module.linkLibrary(lib);
+    lib.addCSourceFile(.{ .file = b.path("shared_lib.c"), .flags = &.{"-gdwarf"} });
+    lib.linkLibC();
+    exe.linkLibrary(lib);
 
     const run = b.addRunArtifact(exe);
     run.expectExitCode(0);

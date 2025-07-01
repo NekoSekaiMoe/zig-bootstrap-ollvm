@@ -16,6 +16,7 @@
 
 #include "PPC.h"
 #include "PPCSubtarget.h"
+#include "PPCTargetMachine.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Instructions.h"
@@ -122,7 +123,9 @@ bool PPCGenScalarMASSEntries::runOnModule(Module &M) {
     // The call to createScalarMASSCall() invalidates the iterator over users
     // upon replacing the users. Precomputing the current list of users allows
     // us to replace all the call sites.
-    SmallVector<User *, 4> TheUsers(Func.users());
+    SmallVector<User *, 4> TheUsers;
+    for (auto *User : Func.users())
+      TheUsers.push_back(User);
 
     for (auto *User : TheUsers)
       if (auto *CI = dyn_cast_or_null<CallInst>(User)) {

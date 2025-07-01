@@ -18,7 +18,6 @@
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/Parallel.h"
-#include "llvm/Support/TimeProfiler.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -188,7 +187,7 @@ Error DbiStreamBuilder::generateFileInfoSubstream() {
   uint32_t NamesOffset = calculateNamesOffset();
 
   FileInfoBuffer = MutableBinaryByteStream(MutableArrayRef<uint8_t>(Data, Size),
-                                           llvm::endianness::little);
+                                           llvm::support::little);
 
   WritableBinaryStreamRef MetadataBuffer =
       WritableBinaryStreamRef(FileInfoBuffer).keep_front(NamesOffset);
@@ -382,7 +381,6 @@ void DbiStreamBuilder::createSectionMap(
 
 Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
                                WritableBinaryStreamRef MsfBuffer) {
-  llvm::TimeTraceScope timeScope("Commit DBI stream");
   if (auto EC = finalize())
     return EC;
 

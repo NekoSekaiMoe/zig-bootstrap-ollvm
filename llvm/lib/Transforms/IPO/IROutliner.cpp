@@ -154,7 +154,8 @@ struct OutlinableGroup {
 /// \param SourceBB - the BasicBlock to pull Instructions from.
 /// \param TargetBB - the BasicBlock to put Instruction into.
 static void moveBBContents(BasicBlock &SourceBB, BasicBlock &TargetBB) {
-  TargetBB.splice(TargetBB.end(), &SourceBB);
+  for (Instruction &I : llvm::make_early_inc_range(SourceBB))
+    I.moveBefore(TargetBB, TargetBB.end());
 }
 
 /// A function to sort the keys of \p Map, which must be a mapping of constant
@@ -197,7 +198,7 @@ Value *OutlinableRegion::findCorrespondingValueIn(const OutlinableRegion &Other,
 BasicBlock *
 OutlinableRegion::findCorrespondingBlockIn(const OutlinableRegion &Other,
                                            BasicBlock *BB) {
-  Instruction *FirstNonPHI = &*BB->getFirstNonPHIOrDbg();
+  Instruction *FirstNonPHI = BB->getFirstNonPHI();
   assert(FirstNonPHI && "block is empty?");
   Value *CorrespondingVal = findCorrespondingValueIn(Other, FirstNonPHI);
   if (!CorrespondingVal)
@@ -556,7 +557,7 @@ collectRegionsConstants(OutlinableRegion &Region,
 
     // Iterate over the operands in an instruction. If the global value number,
     // assigned by the IRSimilarityCandidate, has been seen before, we check if
-    // the number has been found to be not the same value in each instance.
+    // the the number has been found to be not the same value in each instance.
     for (Value *V : ID.OperVals) {
       std::optional<unsigned> GVNOpt = C.getGVN(V);
       assert(GVNOpt && "Expected a GVN for operand?");
@@ -678,9 +679,11 @@ Function *IROutliner::createFunction(Module &M, OutlinableGroup &Group,
     Mg.getNameWithPrefix(MangledNameStream, F, false);
 
     DISubprogram *OutlinedSP = DB.createFunction(
-        Unit /* Context */, F->getName(), Dummy, Unit /* File */,
+        Unit /* Context */, F->getName(), MangledNameStream.str(),
+        Unit /* File */,
         0 /* Line 0 is reserved for compiler-generated code. */,
-        DB.createSubroutineType(DB.getOrCreateTypeArray({})), /* void type */
+        DB.createSubroutineType(
+            DB.getOrCreateTypeArray(std::nullopt)), /* void type */
         0, /* Line 0 is reserved for compiler-generated code. */
         DINode::DIFlags::FlagArtificial /* Compiler-generated code. */,
         /* Outlined code is optimized code by definition. */
@@ -719,12 +722,6 @@ static void moveFunctionData(Function &Old, Function &New,
     std::vector<Instruction *> DebugInsts;
 
     for (Instruction &Val : CurrBB) {
-      // Since debug-info originates from many different locations in the
-      // program, it will cause incorrect reporting from a debugger if we keep
-      // the same debug instructions. Drop non-intrinsic DbgVariableRecords
-      // here, collect intrinsics for removal later.
-      Val.dropDbgRecords();
-
       // We must handle the scoping of called functions differently than
       // other outlined instructions.
       if (!isa<CallInst>(&Val)) {
@@ -748,7 +745,10 @@ static void moveFunctionData(Function &Old, Function &New,
       // From this point we are only handling call instructions.
       CallInst *CI = cast<CallInst>(&Val);
 
-      // Collect debug intrinsics for later removal.
+      // We add any debug statements here, to be removed after.  Since the
+      // instructions originate from many different locations in the program,
+      // it will cause incorrect reporting from a debugger if we keep the
+      // same debug instructions.
       if (isa<DbgInfoIntrinsic>(CI)) {
         DebugInsts.push_back(&Val);
         continue;
@@ -766,7 +766,7 @@ static void moveFunctionData(Function &Old, Function &New,
   }
 }
 
-/// Find the constants that will need to be lifted into arguments
+/// Find the the constants that will need to be lifted into arguments
 /// as they are not the same in each instance of the region.
 ///
 /// \param [in] C - The IRSimilarityCandidate containing the region we are
@@ -787,8 +787,10 @@ static void findConstants(IRSimilarityCandidate &C, DenseSet<unsigned> &NotSame,
       // global value numbering.
       unsigned GVN = *C.getGVN(V);
       if (isa<Constant>(V))
-        if (NotSame.contains(GVN) && Seen.insert(GVN).second)
+        if (NotSame.contains(GVN) && !Seen.contains(GVN)) {
           Inputs.push_back(GVN);
+          Seen.insert(GVN);
+        }
     }
   }
 }
@@ -812,9 +814,8 @@ static void mapInputsToGVNs(IRSimilarityCandidate &C,
   // replacement.
   for (Value *Input : CurrentInputs) {
     assert(Input && "Have a nullptr as an input");
-    auto It = OutputMappings.find(Input);
-    if (It != OutputMappings.end())
-      Input = It->second;
+    if (OutputMappings.contains(Input))
+      Input = OutputMappings.find(Input)->second;
     assert(C.getGVN(Input) && "Could not find a numbering for the given input");
     EndInputNumbers.push_back(*C.getGVN(Input));
   }
@@ -835,9 +836,8 @@ remapExtractedInputs(const ArrayRef<Value *> ArgInputs,
   // Get the global value number for each input that will be extracted as an
   // argument by the code extractor, remapping if needed for reloaded values.
   for (Value *Input : ArgInputs) {
-    auto It = OutputMappings.find(Input);
-    if (It != OutputMappings.end())
-      Input = It->second;
+    if (OutputMappings.contains(Input))
+      Input = OutputMappings.find(Input)->second;
     RemappedArgInputs.insert(Input);
   }
 }
@@ -1331,10 +1331,11 @@ findExtractedOutputToOverallOutputMapping(Module &M, OutlinableRegion &Region,
       if (!isa<PointerType>(Group.ArgumentTypes[Jdx]))
         continue;
 
-      if (!AggArgsUsed.insert(Jdx).second)
+      if (AggArgsUsed.contains(Jdx))
         continue;
 
       TypeFound = true;
+      AggArgsUsed.insert(Jdx);
       Region.ExtractedArgToAgg.insert(std::make_pair(OriginalIndex, Jdx));
       Region.AggArgToExtracted.insert(std::make_pair(Jdx, OriginalIndex));
       AggArgIdx = Jdx;
@@ -1345,7 +1346,7 @@ findExtractedOutputToOverallOutputMapping(Module &M, OutlinableRegion &Region,
     // the output, so we add a pointer type to the argument types of the overall
     // function to handle this output and create a mapping to it.
     if (!TypeFound) {
-      Group.ArgumentTypes.push_back(PointerType::get(Output->getContext(),
+      Group.ArgumentTypes.push_back(Output->getType()->getPointerTo(
           M.getDataLayout().getAllocaAddrSpace()));
       // Mark the new pointer type as the last value in the aggregate argument
       // list.
@@ -1498,7 +1499,7 @@ CallInst *replaceCalledFunction(Module &M, OutlinableRegion &Region) {
                     << *AggFunc << " with new set of arguments\n");
   // Create the new call instruction and erase the old one.
   Call = CallInst::Create(AggFunc->getFunctionType(), AggFunc, NewCallArgs, "",
-                          Call->getIterator());
+                          Call);
 
   // It is possible that the call to the outlined function is either the first
   // instruction is in the new block, the last instruction, or both.  If either
@@ -1513,7 +1514,7 @@ CallInst *replaceCalledFunction(Module &M, OutlinableRegion &Region) {
   // Transfer any debug information.
   Call->setDebugLoc(Region.Call->getDebugLoc());
   // Since our output may determine which branch we go to, we make sure to
-  // propagate this new call value through the module.
+  // propogate this new call value through the module.
   OldCall->replaceAllUsesWith(Call);
 
   // Remove the old instruction.
@@ -1754,7 +1755,7 @@ findOrCreatePHIInBlock(PHINode &PN, OutlinableRegion &Region,
   // If we've made it here, it means we weren't able to replace the PHINode, so
   // we must insert it ourselves.
   PHINode *NewPN = cast<PHINode>(PN.clone());
-  NewPN->insertBefore(OverallPhiBlock->begin());
+  NewPN->insertBefore(&*OverallPhiBlock->begin());
   for (unsigned Idx = 0, Edx = NewPN->getNumIncomingValues(); Idx < Edx;
        Idx++) {
     Value *IncomingVal = NewPN->getIncomingValue(Idx);

@@ -8,9 +8,11 @@
 	.file	"sincos.S"
 	.text
 	.align 2
-	/* zig patch: remove sincos symbol because sincos in compiler_rt is used instead */
+	.globl __MINGW_USYMBOL(sincos)
 	.globl __MINGW_USYMBOL(sincosl)
+	.def	__MINGW_USYMBOL(sincos);	.scl	2;	.type	32;	.endef
 	.def	__MINGW_USYMBOL(sincosl);	.scl	2;	.type	32;	.endef
+__MINGW_USYMBOL(sincos):
 __MINGW_USYMBOL(sincosl):
 	str d8, [sp, #-32]!
 	str x30, [sp, #8]

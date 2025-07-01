@@ -49,27 +49,12 @@ typedef __bf16 __m128bh __attribute__((__vector_size__(16), __aligned__(16)));
 #endif
 
 /* Define the default attributes for the functions in this file. */
-#if defined(__EVEX512__) && !defined(__AVX10_1_512__)
-#define __DEFAULT_FN_ATTRS                                                     \
-  __attribute__((__always_inline__, __nodebug__,                               \
-                 __target__("sse2,no-evex512"), __min_vector_width__(128)))
-#else
 #define __DEFAULT_FN_ATTRS                                                     \
   __attribute__((__always_inline__, __nodebug__, __target__("sse2"),           \
                  __min_vector_width__(128)))
-#endif
-
-#if defined(__cplusplus) && (__cplusplus >= 201103L)
-#define __DEFAULT_FN_ATTRS_CONSTEXPR __DEFAULT_FN_ATTRS constexpr
-#else
-#define __DEFAULT_FN_ATTRS_CONSTEXPR __DEFAULT_FN_ATTRS
-#endif
-
-#define __trunc64(x)                                                           \
-  (__m64) __builtin_shufflevector((__v2di)(x), __extension__(__v2di){}, 0)
-#define __anyext128(x)                                                         \
-  (__m128i) __builtin_shufflevector((__v2si)(x), __extension__(__v2si){}, 0,   \
-                                    1, -1, -1)
+#define __DEFAULT_FN_ATTRS_MMX                                                 \
+  __attribute__((__always_inline__, __nodebug__, __target__("mmx,sse2"),       \
+                 __min_vector_width__(64)))
 
 /// Adds lower double-precision values in both operands and returns the
 ///    sum in the lower 64 bits of the result. The upper 64 bits of the result
@@ -86,8 +71,8 @@ typedef __bf16 __m128bh __attribute__((__vector_size__(16), __aligned__(16)));
 /// \returns A 128-bit vector of [2 x double] whose lower 64 bits contain the
 ///    sum of the lower 64 bits of both operands. The upper 64 bits are copied
 ///    from the upper 64 bits of the first source operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_add_sd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_add_sd(__m128d __a,
+                                                        __m128d __b) {
   __a[0] += __b[0];
   return __a;
 }
@@ -104,8 +89,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_add_sd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing one of the source operands.
 /// \returns A 128-bit vector of [2 x double] containing the sums of both
 ///    operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_add_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_add_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2df)__a + (__v2df)__b);
 }
 
@@ -126,8 +111,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_add_pd(__m128d __a,
 /// \returns A 128-bit vector of [2 x double] whose lower 64 bits contain the
 ///    difference of the lower 64 bits of both operands. The upper 64 bits are
 ///    copied from the upper 64 bits of the first source operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_sub_sd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_sub_sd(__m128d __a,
+                                                        __m128d __b) {
   __a[0] -= __b[0];
   return __a;
 }
@@ -144,8 +129,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_sub_sd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing the subtrahend.
 /// \returns A 128-bit vector of [2 x double] containing the differences between
 ///    both operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_sub_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_sub_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2df)__a - (__v2df)__b);
 }
 
@@ -165,8 +150,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_sub_pd(__m128d __a,
 /// \returns A 128-bit vector of [2 x double] whose lower 64 bits contain the
 ///    product of the lower 64 bits of both operands. The upper 64 bits are
 ///    copied from the upper 64 bits of the first source operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_mul_sd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_mul_sd(__m128d __a,
+                                                        __m128d __b) {
   __a[0] *= __b[0];
   return __a;
 }
@@ -183,8 +168,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_mul_sd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing one of the operands.
 /// \returns A 128-bit vector of [2 x double] containing the products of both
 ///    operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_mul_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_mul_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2df)__a * (__v2df)__b);
 }
 
@@ -205,8 +190,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_mul_pd(__m128d __a,
 /// \returns A 128-bit vector of [2 x double] whose lower 64 bits contain the
 ///    quotient of the lower 64 bits of both operands. The upper 64 bits are
 ///    copied from the upper 64 bits of the first source operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_div_sd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_div_sd(__m128d __a,
+                                                        __m128d __b) {
   __a[0] /= __b[0];
   return __a;
 }
@@ -224,8 +209,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_div_sd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing the divisor.
 /// \returns A 128-bit vector of [2 x double] containing the quotients of both
 ///    operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_div_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_div_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2df)__a / (__v2df)__b);
 }
 
@@ -274,8 +259,6 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_sqrt_pd(__m128d __a) {
 ///    result. The upper 64 bits of the result are copied from the upper
 ///    double-precision value of the first operand.
 ///
-///    If either value in a comparison is NaN, returns the value from \a __b.
-///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VMINSD / MINSD </c> instruction.
@@ -295,10 +278,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_min_sd(__m128d __a,
 }
 
 /// Performs element-by-element comparison of the two 128-bit vectors of
-///    [2 x double] and returns a vector containing the lesser of each pair of
+///    [2 x double] and returns the vector containing the lesser of each pair of
 ///    values.
-///
-///    If either value in a comparison is NaN, returns the value from \a __b.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -320,8 +301,6 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_min_pd(__m128d __a,
 ///    result. The upper 64 bits of the result are copied from the upper
 ///    double-precision value of the first operand.
 ///
-///    If either value in a comparison is NaN, returns the value from \a __b.
-///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VMAXSD / MAXSD </c> instruction.
@@ -341,10 +320,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_max_sd(__m128d __a,
 }
 
 /// Performs element-by-element comparison of the two 128-bit vectors of
-///    [2 x double] and returns a vector containing the greater of each pair
+///    [2 x double] and returns the vector containing the greater of each pair
 ///    of values.
-///
-///    If either value in a comparison is NaN, returns the value from \a __b.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -373,8 +350,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_max_pd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing one of the source operands.
 /// \returns A 128-bit vector of [2 x double] containing the bitwise AND of the
 ///    values between both operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_and_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_and_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2du)__a & (__v2du)__b);
 }
 
@@ -393,8 +370,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_and_pd(__m128d __a,
 /// \returns A 128-bit vector of [2 x double] containing the bitwise AND of the
 ///    values in the second operand and the one's complement of the first
 ///    operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_andnot_pd(__m128d __a, __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_andnot_pd(__m128d __a,
+                                                           __m128d __b) {
   return (__m128d)(~(__v2du)__a & (__v2du)__b);
 }
 
@@ -410,8 +387,8 @@ _mm_andnot_pd(__m128d __a, __m128d __b) {
 ///    A 128-bit vector of [2 x double] containing one of the source operands.
 /// \returns A 128-bit vector of [2 x double] containing the bitwise OR of the
 ///    values between both operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_or_pd(__m128d __a,
-                                                                 __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_or_pd(__m128d __a,
+                                                       __m128d __b) {
   return (__m128d)((__v2du)__a | (__v2du)__b);
 }
 
@@ -427,16 +404,14 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_or_pd(__m128d __a,
 ///    A 128-bit vector of [2 x double] containing one of the source operands.
 /// \returns A 128-bit vector of [2 x double] containing the bitwise XOR of the
 ///    values between both operands.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_xor_pd(__m128d __a,
-                                                                  __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_xor_pd(__m128d __a,
+                                                        __m128d __b) {
   return (__m128d)((__v2du)__a ^ (__v2du)__b);
 }
 
 /// Compares each of the corresponding double-precision values of the
-///    128-bit vectors of [2 x double] for equality.
-///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    128-bit vectors of [2 x double] for equality. Each comparison yields 0x0
+///    for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -454,10 +429,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpeq_pd(__m128d __a,
 
 /// Compares each of the corresponding double-precision values of the
 ///    128-bit vectors of [2 x double] to determine if the values in the first
-///    operand are less than those in the second operand.
-///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    operand are less than those in the second operand. Each comparison
+///    yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -477,8 +450,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmplt_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are less than or equal to those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -498,8 +470,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmple_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are greater than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -519,8 +490,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpgt_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are greater than or equal to those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -540,8 +510,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpge_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are ordered with respect to those in the second operand.
 ///
-///    A pair of double-precision values are ordered with respect to each
-///    other if neither value is a NaN. Each comparison returns 0x0 for false,
+///    A pair of double-precision values are "ordered" with respect to each
+///    other if neither value is a NaN. Each comparison yields 0x0 for false,
 ///    0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
@@ -562,8 +532,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpord_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are unordered with respect to those in the second operand.
 ///
-///    A pair of double-precision values are unordered with respect to each
-///    other if one or both values are NaN. Each comparison returns 0x0 for
+///    A pair of double-precision values are "unordered" with respect to each
+///    other if one or both values are NaN. Each comparison yields 0x0 for
 ///    false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
@@ -585,8 +555,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpunord_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are unequal to those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -606,8 +575,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpneq_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are not less than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -627,8 +595,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnlt_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are not less than or equal to those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -648,8 +615,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnle_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are not greater than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -669,8 +635,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpngt_pd(__m128d __a,
 ///    128-bit vectors of [2 x double] to determine if the values in the first
 ///    operand are not greater than or equal to those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -689,8 +654,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnge_pd(__m128d __a,
 /// Compares the lower double-precision floating-point values in each of
 ///    the two 128-bit floating-point vectors of [2 x double] for equality.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -714,8 +678,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpeq_sd(__m128d __a,
 ///    the value in the first parameter is less than the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -739,8 +702,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmplt_sd(__m128d __a,
 ///    the value in the first parameter is less than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -764,8 +726,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmple_sd(__m128d __a,
 ///    the value in the first parameter is greater than the corresponding value
 ///    in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -790,8 +751,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpgt_sd(__m128d __a,
 ///    the value in the first parameter is greater than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns false.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -813,11 +773,11 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpge_sd(__m128d __a,
 
 /// Compares the lower double-precision floating-point values in each of
 ///    the two 128-bit floating-point vectors of [2 x double] to determine if
-///    the value in the first parameter is ordered with respect to the
+///    the value in the first parameter is "ordered" with respect to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true. A pair
-///    of double-precision values are ordered with respect to each other if
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true. A pair
+///    of double-precision values are "ordered" with respect to each other if
 ///    neither value is a NaN.
 ///
 /// \headerfile <x86intrin.h>
@@ -839,11 +799,11 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpord_sd(__m128d __a,
 
 /// Compares the lower double-precision floating-point values in each of
 ///    the two 128-bit floating-point vectors of [2 x double] to determine if
-///    the value in the first parameter is unordered with respect to the
+///    the value in the first parameter is "unordered" with respect to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true. A pair
-///    of double-precision values are unordered with respect to each other if
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true. A pair
+///    of double-precision values are "unordered" with respect to each other if
 ///    one or both values are NaN.
 ///
 /// \headerfile <x86intrin.h>
@@ -869,8 +829,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpunord_sd(__m128d __a,
 ///    the value in the first parameter is unequal to the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -894,8 +853,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpneq_sd(__m128d __a,
 ///    the value in the first parameter is not less than the corresponding
 ///    value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -919,8 +877,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnlt_sd(__m128d __a,
 ///    the value in the first parameter is not less than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -944,8 +901,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnle_sd(__m128d __a,
 ///    the value in the first parameter is not greater than the corresponding
 ///    value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -970,8 +926,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpngt_sd(__m128d __a,
 ///    the value in the first parameter is not greater than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, returns true.
+///    The comparison yields 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -994,8 +949,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnge_sd(__m128d __a,
 /// Compares the lower double-precision floating-point values in each of
 ///    the two 128-bit floating-point vectors of [2 x double] for equality.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1007,7 +962,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cmpnge_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comieq_sd(__m128d __a,
                                                        __m128d __b) {
   return __builtin_ia32_comisdeq((__v2df)__a, (__v2df)__b);
@@ -1018,8 +974,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comieq_sd(__m128d __a,
 ///    the value in the first parameter is less than the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1031,7 +987,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comieq_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comilt_sd(__m128d __a,
                                                        __m128d __b) {
   return __builtin_ia32_comisdlt((__v2df)__a, (__v2df)__b);
@@ -1042,8 +999,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comilt_sd(__m128d __a,
 ///    the value in the first parameter is less than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1055,7 +1012,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comilt_sd(__m128d __a,
 /// \param __b
 ///     A 128-bit vector of [2 x double]. The lower double-precision value is
 ///     compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comile_sd(__m128d __a,
                                                        __m128d __b) {
   return __builtin_ia32_comisdle((__v2df)__a, (__v2df)__b);
@@ -1066,8 +1024,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comile_sd(__m128d __a,
 ///    the value in the first parameter is greater than the corresponding value
 ///    in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1079,7 +1037,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comile_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comigt_sd(__m128d __a,
                                                        __m128d __b) {
   return __builtin_ia32_comisdgt((__v2df)__a, (__v2df)__b);
@@ -1090,8 +1049,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comigt_sd(__m128d __a,
 ///    the value in the first parameter is greater than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1103,7 +1062,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comigt_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comige_sd(__m128d __a,
                                                        __m128d __b) {
   return __builtin_ia32_comisdge((__v2df)__a, (__v2df)__b);
@@ -1114,8 +1074,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comige_sd(__m128d __a,
 ///    the value in the first parameter is unequal to the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 1.
+///    The comparison yields 0 for false, 1 for true. If either of the two
+///    lower double-precision values is NaN, 1 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1127,17 +1087,18 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comige_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 1 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_comineq_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_comisdneq((__v2df)__a, (__v2df)__b);
 }
 
 /// Compares the lower double-precision floating-point values in each of
-///    the two 128-bit floating-point vectors of [2 x double] for equality.
+///    the two 128-bit floating-point vectors of [2 x double] for equality. The
+///    comparison yields 0 for false, 1 for true.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    If either of the two lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1149,7 +1110,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_comineq_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomieq_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_ucomisdeq((__v2df)__a, (__v2df)__b);
@@ -1160,8 +1122,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomieq_sd(__m128d __a,
 ///    the value in the first parameter is less than the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two lower
+///    double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1173,7 +1135,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomieq_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomilt_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_ucomisdlt((__v2df)__a, (__v2df)__b);
@@ -1184,8 +1147,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomilt_sd(__m128d __a,
 ///    the value in the first parameter is less than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two lower
+///    double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1197,7 +1160,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomilt_sd(__m128d __a,
 /// \param __b
 ///     A 128-bit vector of [2 x double]. The lower double-precision value is
 ///     compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomile_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_ucomisdle((__v2df)__a, (__v2df)__b);
@@ -1208,8 +1172,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomile_sd(__m128d __a,
 ///    the value in the first parameter is greater than the corresponding value
 ///    in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true. If either of the two lower
+///    double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1221,7 +1185,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomile_sd(__m128d __a,
 /// \param __b
 ///     A 128-bit vector of [2 x double]. The lower double-precision value is
 ///     compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///     lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomigt_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_ucomisdgt((__v2df)__a, (__v2df)__b);
@@ -1232,8 +1197,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomigt_sd(__m128d __a,
 ///    the value in the first parameter is greater than or equal to the
 ///    corresponding value in the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 0.
+///    The comparison yields 0 for false, 1 for true.  If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1245,7 +1210,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomigt_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison results.
+/// \returns An integer containing the comparison results. If either of the two
+///    lower double-precision values is NaN, 0 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomige_sd(__m128d __a,
                                                         __m128d __b) {
   return __builtin_ia32_ucomisdge((__v2df)__a, (__v2df)__b);
@@ -1256,8 +1222,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomige_sd(__m128d __a,
 ///    the value in the first parameter is unequal to the corresponding value in
 ///    the second parameter.
 ///
-///    The comparison returns 0 for false, 1 for true. If either value in a
-///    comparison is NaN, returns 1.
+///    The comparison yields 0 for false, 1 for true. If either of the two lower
+///    double-precision values is NaN, 1 is returned.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1269,7 +1235,8 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomige_sd(__m128d __a,
 /// \param __b
 ///    A 128-bit vector of [2 x double]. The lower double-precision value is
 ///    compared to the lower double-precision value of \a __a.
-/// \returns An integer containing the comparison result.
+/// \returns An integer containing the comparison result. If either of the two
+///    lower double-precision values is NaN, 1 is returned.
 static __inline__ int __DEFAULT_FN_ATTRS _mm_ucomineq_sd(__m128d __a,
                                                          __m128d __b) {
   return __builtin_ia32_ucomisdneq((__v2df)__a, (__v2df)__b);
@@ -1306,8 +1273,7 @@ static __inline__ __m128 __DEFAULT_FN_ATTRS _mm_cvtpd_ps(__m128d __a) {
 ///    floating-point elements are converted to double-precision values. The
 ///    upper two elements are unused.
 /// \returns A 128-bit vector of [2 x double] containing the converted values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtps_pd(__m128 __a) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cvtps_pd(__m128 __a) {
   return (__m128d) __builtin_convertvector(
       __builtin_shufflevector((__v4sf)__a, (__v4sf)__a, 0, 1), __v2df);
 }
@@ -1328,8 +1294,7 @@ _mm_cvtps_pd(__m128 __a) {
 ///
 ///    The upper two elements are unused.
 /// \returns A 128-bit vector of [2 x double] containing the converted values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtepi32_pd(__m128i __a) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cvtepi32_pd(__m128i __a) {
   return (__m128d) __builtin_convertvector(
       __builtin_shufflevector((__v4si)__a, (__v4si)__a, 0, 1), __v2df);
 }
@@ -1338,10 +1303,6 @@ _mm_cvtepi32_pd(__m128i __a) {
 ///    128-bit vector of [2 x double] into two signed 32-bit integer values,
 ///    returned in the lower 64 bits of a 128-bit vector of [4 x i32]. The upper
 ///    64 bits of the result vector are set to zero.
-///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1357,10 +1318,6 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cvtpd_epi32(__m128d __a) {
 
 /// Converts the low-order element of a 128-bit vector of [2 x double]
 ///    into a 32-bit signed integer value.
-///
-///    If the converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1415,8 +1372,8 @@ static __inline__ __m128 __DEFAULT_FN_ATTRS _mm_cvtsd_ss(__m128 __a,
 /// \returns A 128-bit vector of [2 x double]. The lower 64 bits contain the
 ///    converted value from the second parameter. The upper 64 bits are copied
 ///    from the upper 64 bits of the first parameter.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtsi32_sd(__m128d __a, int __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cvtsi32_sd(__m128d __a,
+                                                            int __b) {
   __a[0] = __b;
   return __a;
 }
@@ -1440,20 +1397,19 @@ _mm_cvtsi32_sd(__m128d __a, int __b) {
 /// \returns A 128-bit vector of [2 x double]. The lower 64 bits contain the
 ///    converted value from the second parameter. The upper 64 bits are copied
 ///    from the upper 64 bits of the first parameter.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtss_sd(__m128d __a, __m128 __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cvtss_sd(__m128d __a,
+                                                          __m128 __b) {
   __a[0] = __b[0];
   return __a;
 }
 
 /// Converts the two double-precision floating-point elements of a
-///    128-bit vector of [2 x double] into two signed truncated (rounded
-///    toward zero) 32-bit integer values, returned in the lower 64 bits
-///    of a 128-bit vector of [4 x i32].
+///    128-bit vector of [2 x double] into two signed 32-bit integer values,
+///    returned in the lower 64 bits of a 128-bit vector of [4 x i32].
 ///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+///    If the result of either conversion is inexact, the result is truncated
+///    (rounded towards zero) regardless of the current MXCSR setting. The upper
+///    64 bits of the result vector are set to zero.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1469,11 +1425,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cvttpd_epi32(__m128d __a) {
 }
 
 /// Converts the low-order element of a [2 x double] vector into a 32-bit
-///    signed truncated (rounded toward zero) integer value.
-///
-///    If the converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+///    signed integer value, truncating the result when it is inexact.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1492,10 +1444,6 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_cvttsd_si32(__m128d __a) {
 ///    128-bit vector of [2 x double] into two signed 32-bit integer values,
 ///    returned in a 64-bit vector of [2 x i32].
 ///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
-///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> CVTPD2PI </c> instruction.
@@ -1503,17 +1451,16 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_cvttsd_si32(__m128d __a) {
 /// \param __a
 ///    A 128-bit vector of [2 x double].
 /// \returns A 64-bit vector of [2 x i32] containing the converted values.
-static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_cvtpd_pi32(__m128d __a) {
-  return __trunc64(__builtin_ia32_cvtpd2dq((__v2df)__a));
+static __inline__ __m64 __DEFAULT_FN_ATTRS_MMX _mm_cvtpd_pi32(__m128d __a) {
+  return (__m64)__builtin_ia32_cvtpd2pi((__v2df)__a);
 }
 
 /// Converts the two double-precision floating-point elements of a
-///    128-bit vector of [2 x double] into two signed truncated (rounded toward
-///    zero) 32-bit integer values, returned in a 64-bit vector of [2 x i32].
+///    128-bit vector of [2 x double] into two signed 32-bit integer values,
+///    returned in a 64-bit vector of [2 x i32].
 ///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+///    If the result of either conversion is inexact, the result is truncated
+///    (rounded towards zero) regardless of the current MXCSR setting.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1522,8 +1469,8 @@ static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_cvtpd_pi32(__m128d __a) {
 /// \param __a
 ///    A 128-bit vector of [2 x double].
 /// \returns A 64-bit vector of [2 x i32] containing the converted values.
-static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_cvttpd_pi32(__m128d __a) {
-  return __trunc64(__builtin_ia32_cvttpd2dq((__v2df)__a));
+static __inline__ __m64 __DEFAULT_FN_ATTRS_MMX _mm_cvttpd_pi32(__m128d __a) {
+  return (__m64)__builtin_ia32_cvttpd2pi((__v2df)__a);
 }
 
 /// Converts the two signed 32-bit integer elements of a 64-bit vector of
@@ -1537,9 +1484,8 @@ static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_cvttpd_pi32(__m128d __a) {
 /// \param __a
 ///    A 64-bit vector of [2 x i32].
 /// \returns A 128-bit vector of [2 x double] containing the converted values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtpi32_pd(__m64 __a) {
-  return (__m128d) __builtin_convertvector((__v2si)__a, __v2df);
+static __inline__ __m128d __DEFAULT_FN_ATTRS_MMX _mm_cvtpi32_pd(__m64 __a) {
+  return __builtin_ia32_cvtpi2pd((__v2si)__a);
 }
 
 /// Returns the low-order element of a 128-bit vector of [2 x double] as
@@ -1553,8 +1499,7 @@ _mm_cvtpi32_pd(__m64 __a) {
 ///    A 128-bit vector of [2 x double]. The lower 64 bits are returned.
 /// \returns A double-precision floating-point value copied from the lower 64
 ///    bits of \a __a.
-static __inline__ double __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtsd_f64(__m128d __a) {
+static __inline__ double __DEFAULT_FN_ATTRS _mm_cvtsd_f64(__m128d __a) {
   return __a[0];
 }
 
@@ -1789,8 +1734,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_undefined_pd(void) {
 /// \returns An initialized 128-bit floating-point vector of [2 x double]. The
 ///    lower 64 bits contain the value of the parameter. The upper 64 bits are
 ///    set to zero.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_sd(double __w) {
-  return __extension__(__m128d){__w, 0.0};
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_set_sd(double __w) {
+  return __extension__(__m128d){__w, 0};
 }
 
 /// Constructs a 128-bit floating-point vector of [2 x double], with each
@@ -1805,7 +1750,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_sd(double __w) {
 ///    A double-precision floating-point value used to initialize each vector
 ///    element of the result.
 /// \returns An initialized 128-bit floating-point vector of [2 x double].
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_pd(double __w) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_set1_pd(double __w) {
   return __extension__(__m128d){__w, __w};
 }
 
@@ -1821,7 +1766,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_pd(double __w) {
 ///    A double-precision floating-point value used to initialize each vector
 ///    element of the result.
 /// \returns An initialized 128-bit floating-point vector of [2 x double].
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_pd1(double __w) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_set_pd1(double __w) {
   return _mm_set1_pd(__w);
 }
 
@@ -1839,8 +1784,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_pd1(double __w) {
 ///    A double-precision floating-point value used to initialize the lower 64
 ///    bits of the result.
 /// \returns An initialized 128-bit floating-point vector of [2 x double].
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_pd(double __w,
-                                                                  double __x) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_set_pd(double __w,
+                                                        double __x) {
   return __extension__(__m128d){__x, __w};
 }
 
@@ -1859,8 +1804,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_pd(double __w,
 ///    A double-precision floating-point value used to initialize the upper 64
 ///    bits of the result.
 /// \returns An initialized 128-bit floating-point vector of [2 x double].
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_setr_pd(double __w,
-                                                                   double __x) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_setr_pd(double __w,
+                                                         double __x) {
   return __extension__(__m128d){__w, __x};
 }
 
@@ -1873,7 +1818,7 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_setr_pd(double __w,
 ///
 /// \returns An initialized 128-bit floating-point vector of [2 x double] with
 ///    all elements set to zero.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_setzero_pd(void) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_setzero_pd(void) {
   return __extension__(__m128d){0.0, 0.0};
 }
 
@@ -1892,8 +1837,8 @@ static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR _mm_setzero_pd(void) {
 ///    A 128-bit vector of [2 x double]. The lower 64 bits are written to the
 ///    lower 64 bits of the result.
 /// \returns A 128-bit vector of [2 x double] containing the moved values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_move_sd(__m128d __a, __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_move_sd(__m128d __a,
+                                                         __m128d __b) {
   __a[0] = __b[0];
   return __a;
 }
@@ -2110,8 +2055,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_add_epi16(__m128i __a,
 ///    A 128-bit vector of [4 x i32].
 /// \returns A 128-bit vector of [4 x i32] containing the sums of both
 ///    parameters.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_add_epi32(__m128i __a, __m128i __b) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_add_epi32(__m128i __a,
+                                                           __m128i __b) {
   return (__m128i)((__v4su)__a + (__v4su)__b);
 }
 
@@ -2127,8 +2072,9 @@ _mm_add_epi32(__m128i __a, __m128i __b) {
 /// \param __b
 ///    A 64-bit integer.
 /// \returns A 64-bit integer containing the sum of both parameters.
-static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_add_si64(__m64 __a, __m64 __b) {
-  return (__m64)(((unsigned long long)__a) + ((unsigned long long)__b));
+static __inline__ __m64 __DEFAULT_FN_ATTRS_MMX _mm_add_si64(__m64 __a,
+                                                            __m64 __b) {
+  return (__m64)__builtin_ia32_paddq((__v1di)__a, (__v1di)__b);
 }
 
 /// Adds the corresponding elements of two 128-bit vectors of [2 x i64],
@@ -2147,17 +2093,15 @@ static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_add_si64(__m64 __a, __m64 __b) {
 ///    A 128-bit vector of [2 x i64].
 /// \returns A 128-bit vector of [2 x i64] containing the sums of both
 ///    parameters.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_add_epi64(__m128i __a, __m128i __b) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_add_epi64(__m128i __a,
+                                                           __m128i __b) {
   return (__m128i)((__v2du)__a + (__v2du)__b);
 }
 
 /// Adds, with saturation, the corresponding elements of two 128-bit
-///    signed [16 x i8] vectors, saving each sum in the corresponding element
-///    of a 128-bit result vector of [16 x i8].
-///
-///    Positive sums greater than 0x7F are saturated to 0x7F. Negative sums
-///    less than 0x80 are saturated to 0x80.
+///    signed [16 x i8] vectors, saving each sum in the corresponding element of
+///    a 128-bit result vector of [16 x i8]. Positive sums greater than 0x7F are
+///    saturated to 0x7F. Negative sums less than 0x80 are saturated to 0x80.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2175,11 +2119,10 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_adds_epi8(__m128i __a,
 }
 
 /// Adds, with saturation, the corresponding elements of two 128-bit
-///    signed [8 x i16] vectors, saving each sum in the corresponding element
-///    of a 128-bit result vector of [8 x i16].
-///
-///    Positive sums greater than 0x7FFF are saturated to 0x7FFF. Negative sums
-///    less than 0x8000 are saturated to 0x8000.
+///    signed [8 x i16] vectors, saving each sum in the corresponding element of
+///    a 128-bit result vector of [8 x i16]. Positive sums greater than 0x7FFF
+///    are saturated to 0x7FFF. Negative sums less than 0x8000 are saturated to
+///    0x8000.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2198,10 +2141,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_adds_epi16(__m128i __a,
 
 /// Adds, with saturation, the corresponding elements of two 128-bit
 ///    unsigned [16 x i8] vectors, saving each sum in the corresponding element
-///    of a 128-bit result vector of [16 x i8].
-///
-///    Positive sums greater than 0xFF are saturated to 0xFF. Negative sums are
-///    saturated to 0x00.
+///    of a 128-bit result vector of [16 x i8]. Positive sums greater than 0xFF
+///    are saturated to 0xFF. Negative sums are saturated to 0x00.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2220,10 +2161,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_adds_epu8(__m128i __a,
 
 /// Adds, with saturation, the corresponding elements of two 128-bit
 ///    unsigned [8 x i16] vectors, saving each sum in the corresponding element
-///    of a 128-bit result vector of [8 x i16].
-///
-///    Positive sums greater than 0xFFFF are saturated to 0xFFFF. Negative sums
-///    are saturated to 0x0000.
+///    of a 128-bit result vector of [8 x i16]. Positive sums greater than
+///    0xFFFF are saturated to 0xFFFF. Negative sums are saturated to 0x0000.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2449,9 +2388,9 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_mullo_epi16(__m128i __a,
 /// \param __b
 ///    A 64-bit integer containing one of the source operands.
 /// \returns A 64-bit integer vector containing the product of both operands.
-static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_mul_su32(__m64 __a, __m64 __b) {
-  return __trunc64(__builtin_ia32_pmuludq128((__v4si)__anyext128(__a),
-                                             (__v4si)__anyext128(__b)));
+static __inline__ __m64 __DEFAULT_FN_ATTRS_MMX _mm_mul_su32(__m64 __a,
+                                                            __m64 __b) {
+  return __builtin_ia32_pmuludq((__v2si)__a, (__v2si)__b);
 }
 
 /// Multiplies 32-bit unsigned integer values contained in the lower
@@ -2539,8 +2478,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_sub_epi16(__m128i __a,
 ///    A 128-bit integer vector containing the subtrahends.
 /// \returns A 128-bit integer vector containing the differences of the values
 ///    in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_sub_epi32(__m128i __a, __m128i __b) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_sub_epi32(__m128i __a,
+                                                           __m128i __b) {
   return (__m128i)((__v4su)__a - (__v4su)__b);
 }
 
@@ -2557,8 +2496,9 @@ _mm_sub_epi32(__m128i __a, __m128i __b) {
 ///    A 64-bit integer vector containing the subtrahend.
 /// \returns A 64-bit integer vector containing the difference of the values in
 ///    the operands.
-static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_sub_si64(__m64 __a, __m64 __b) {
-  return (__m64)((unsigned long long)__a - (unsigned long long)__b);
+static __inline__ __m64 __DEFAULT_FN_ATTRS_MMX _mm_sub_si64(__m64 __a,
+                                                            __m64 __b) {
+  return (__m64)__builtin_ia32_psubq((__v1di)__a, (__v1di)__b);
 }
 
 /// Subtracts the corresponding elements of two [2 x i64] vectors.
@@ -2573,17 +2513,15 @@ static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_sub_si64(__m64 __a, __m64 __b) {
 ///    A 128-bit integer vector containing the subtrahends.
 /// \returns A 128-bit integer vector containing the differences of the values
 ///    in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_sub_epi64(__m128i __a, __m128i __b) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_sub_epi64(__m128i __a,
+                                                           __m128i __b) {
   return (__m128i)((__v2du)__a - (__v2du)__b);
 }
 
-/// Subtracts, with saturation, corresponding 8-bit signed integer values in
-///    the input and returns the differences in the corresponding bytes in the
-///    destination.
-///
-///    Differences greater than 0x7F are saturated to 0x7F, and differences
-///    less than 0x80 are saturated to 0x80.
+/// Subtracts corresponding 8-bit signed integer values in the input and
+///    returns the differences in the corresponding bytes in the destination.
+///    Differences greater than 0x7F are saturated to 0x7F, and differences less
+///    than 0x80 are saturated to 0x80.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2600,10 +2538,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_subs_epi8(__m128i __a,
   return (__m128i)__builtin_elementwise_sub_sat((__v16qs)__a, (__v16qs)__b);
 }
 
-/// Subtracts, with saturation, corresponding 16-bit signed integer values in
-///    the input and returns the differences in the corresponding bytes in the
-///    destination.
-///
+/// Subtracts corresponding 16-bit signed integer values in the input and
+///    returns the differences in the corresponding bytes in the destination.
 ///    Differences greater than 0x7FFF are saturated to 0x7FFF, and values less
 ///    than 0x8000 are saturated to 0x8000.
 ///
@@ -2622,11 +2558,9 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_subs_epi16(__m128i __a,
   return (__m128i)__builtin_elementwise_sub_sat((__v8hi)__a, (__v8hi)__b);
 }
 
-/// Subtracts, with saturation, corresponding 8-bit unsigned integer values in
-///    the input and returns the differences in the corresponding bytes in the
-///    destination.
-///
-///    Differences less than 0x00 are saturated to 0x00.
+/// Subtracts corresponding 8-bit unsigned integer values in the input
+///    and returns the differences in the corresponding bytes in the
+///    destination. Differences less than 0x00 are saturated to 0x00.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -2643,11 +2577,9 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_subs_epu8(__m128i __a,
   return (__m128i)__builtin_elementwise_sub_sat((__v16qu)__a, (__v16qu)__b);
 }
 
-/// Subtracts, with saturation, corresponding 16-bit unsigned integer values in
-///    the input and returns the differences in the corresponding bytes in the
-///    destination.
-///
-///    Differences less than 0x0000 are saturated to 0x0000.
+/// Subtracts corresponding 16-bit unsigned integer values in the input
+///    and returns the differences in the corresponding bytes in the
+///    destination. Differences less than 0x0000 are saturated to 0x0000.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3076,9 +3008,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_srl_epi64(__m128i __a,
 }
 
 /// Compares each of the corresponding 8-bit values of the 128-bit
-///    integer vectors for equality.
-///
-///    Each comparison returns 0x0 for false, 0xFF for true.
+///    integer vectors for equality. Each comparison yields 0x0 for false, 0xFF
+///    for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3095,9 +3026,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpeq_epi8(__m128i __a,
 }
 
 /// Compares each of the corresponding 16-bit values of the 128-bit
-///    integer vectors for equality.
-///
-///    Each comparison returns 0x0 for false, 0xFFFF for true.
+///    integer vectors for equality. Each comparison yields 0x0 for false,
+///    0xFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3114,9 +3044,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpeq_epi16(__m128i __a,
 }
 
 /// Compares each of the corresponding 32-bit values of the 128-bit
-///    integer vectors for equality.
-///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFF for true.
+///    integer vectors for equality. Each comparison yields 0x0 for false,
+///    0xFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3134,9 +3063,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpeq_epi32(__m128i __a,
 
 /// Compares each of the corresponding signed 8-bit values of the 128-bit
 ///    integer vectors to determine if the values in the first operand are
-///    greater than those in the second operand.
-///
-///    Each comparison returns 0x0 for false, 0xFF for true.
+///    greater than those in the second operand. Each comparison yields 0x0 for
+///    false, 0xFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3158,7 +3086,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpgt_epi8(__m128i __a,
 ///    128-bit integer vectors to determine if the values in the first operand
 ///    are greater than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFF for true.
+///    Each comparison yields 0x0 for false, 0xFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3178,7 +3106,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpgt_epi16(__m128i __a,
 ///    128-bit integer vectors to determine if the values in the first operand
 ///    are greater than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFF for true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3198,7 +3126,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmpgt_epi32(__m128i __a,
 ///    integer vectors to determine if the values in the first operand are less
 ///    than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFF for true.
+///    Each comparison yields 0x0 for false, 0xFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3218,7 +3146,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmplt_epi8(__m128i __a,
 ///    128-bit integer vectors to determine if the values in the first operand
 ///    are less than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFF for true.
+///    Each comparison yields 0x0 for false, 0xFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3238,7 +3166,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmplt_epi16(__m128i __a,
 ///    128-bit integer vectors to determine if the values in the first operand
 ///    are less than those in the second operand.
 ///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFF for true.
+///    Each comparison yields 0x0 for false, 0xFFFFFFFF for true.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3272,18 +3200,14 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cmplt_epi32(__m128i __a,
 /// \returns A 128-bit vector of [2 x double] whose lower 64 bits contain the
 ///    converted value of the second operand. The upper 64 bits are copied from
 ///    the upper 64 bits of the first operand.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtsi64_sd(__m128d __a, long long __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_cvtsi64_sd(__m128d __a,
+                                                            long long __b) {
   __a[0] = __b;
   return __a;
 }
 
 /// Converts the first (lower) element of a vector of [2 x double] into a
-///    64-bit signed integer value.
-///
-///    If the converted value does not fit in a 64-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+///    64-bit signed integer value, according to the current rounding mode.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3298,11 +3222,7 @@ static __inline__ long long __DEFAULT_FN_ATTRS _mm_cvtsd_si64(__m128d __a) {
 }
 
 /// Converts the first (lower) element of a vector of [2 x double] into a
-///    64-bit signed truncated (rounded toward zero) integer value.
-///
-///    If a converted value does not fit in a 64-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+///    64-bit signed integer value, truncating the result when it is inexact.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3327,16 +3247,11 @@ static __inline__ long long __DEFAULT_FN_ATTRS _mm_cvttsd_si64(__m128d __a) {
 /// \param __a
 ///    A 128-bit integer vector.
 /// \returns A 128-bit vector of [4 x float] containing the converted values.
-static __inline__ __m128 __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_cvtepi32_ps(__m128i __a) {
+static __inline__ __m128 __DEFAULT_FN_ATTRS _mm_cvtepi32_ps(__m128i __a) {
   return (__m128) __builtin_convertvector((__v4si)__a, __v4sf);
 }
 
 /// Converts a vector of [4 x float] into a vector of [4 x i32].
-///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3350,12 +3265,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_cvtps_epi32(__m128 __a) {
   return (__m128i)__builtin_ia32_cvtps2dq((__v4sf)__a);
 }
 
-/// Converts a vector of [4 x float] into four signed truncated (rounded toward
-///    zero) 32-bit integers, returned in a vector of [4 x i32].
-///
-///    If a converted value does not fit in a 32-bit integer, raises a
-///    floating-point invalid exception. If the exception is masked, returns
-///    the most negative integer.
+/// Converts a vector of [4 x float] into a vector of [4 x i32],
+///    truncating the result when it is inexact.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -3512,8 +3423,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_undefined_si128(void) {
 ///    destination vector of [2 x i64].
 /// \returns An initialized 128-bit vector of [2 x i64] containing the values
 ///    provided in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_set_epi64x(long long __q1, long long __q0) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set_epi64x(long long __q1,
+                                                            long long __q0) {
   return __extension__(__m128i)(__v2di){__q0, __q1};
 }
 
@@ -3533,9 +3444,9 @@ _mm_set_epi64x(long long __q1, long long __q0) {
 ///    destination vector of [2 x i64].
 /// \returns An initialized 128-bit vector of [2 x i64] containing the values
 ///    provided in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_set_epi64(__m64 __q1, __m64 __q0) {
-  return _mm_set_epi64x((long long)__q1[0], (long long)__q0[0]);
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set_epi64(__m64 __q1,
+                                                           __m64 __q0) {
+  return _mm_set_epi64x((long long)__q1, (long long)__q0);
 }
 
 /// Initializes the 32-bit values in a 128-bit vector of [4 x i32] with
@@ -3560,10 +3471,8 @@ _mm_set_epi64(__m64 __q1, __m64 __q0) {
 ///    vector.
 /// \returns An initialized 128-bit vector of [4 x i32] containing the values
 ///    provided in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_epi32(int __i3,
-                                                                     int __i2,
-                                                                     int __i1,
-                                                                     int __i0) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set_epi32(int __i3, int __i2,
+                                                           int __i1, int __i0) {
   return __extension__(__m128i)(__v4si){__i0, __i1, __i2, __i3};
 }
 
@@ -3601,7 +3510,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set_epi32(int __i3,
 ///    vector.
 /// \returns An initialized 128-bit vector of [8 x i16] containing the values
 ///    provided in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
+static __inline__ __m128i __DEFAULT_FN_ATTRS
 _mm_set_epi16(short __w7, short __w6, short __w5, short __w4, short __w3,
               short __w2, short __w1, short __w0) {
   return __extension__(__m128i)(__v8hi){__w0, __w1, __w2, __w3,
@@ -3650,7 +3559,7 @@ _mm_set_epi16(short __w7, short __w6, short __w5, short __w4, short __w3,
 ///    Initializes bits [7:0] of the destination vector.
 /// \returns An initialized 128-bit vector of [16 x i8] containing the values
 ///    provided in the operands.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
+static __inline__ __m128i __DEFAULT_FN_ATTRS
 _mm_set_epi8(char __b15, char __b14, char __b13, char __b12, char __b11,
              char __b10, char __b9, char __b8, char __b7, char __b6, char __b5,
              char __b4, char __b3, char __b2, char __b1, char __b0) {
@@ -3672,8 +3581,7 @@ _mm_set_epi8(char __b15, char __b14, char __b13, char __b12, char __b11,
 ///    vector.
 /// \returns An initialized 128-bit integer vector of [2 x i64] with both
 ///    elements containing the value provided in the operand.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_set1_epi64x(long long __q) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set1_epi64x(long long __q) {
   return _mm_set_epi64x(__q, __q);
 }
 
@@ -3690,8 +3598,7 @@ _mm_set1_epi64x(long long __q) {
 ///    vector.
 /// \returns An initialized 128-bit vector of [2 x i64] with all elements
 ///    containing the value provided in the operand.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_set1_epi64(__m64 __q) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set1_epi64(__m64 __q) {
   return _mm_set_epi64(__q, __q);
 }
 
@@ -3708,7 +3615,7 @@ _mm_set1_epi64(__m64 __q) {
 ///    vector.
 /// \returns An initialized 128-bit vector of [4 x i32] with all elements
 ///    containing the value provided in the operand.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_epi32(int __i) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set1_epi32(int __i) {
   return _mm_set_epi32(__i, __i, __i, __i);
 }
 
@@ -3725,8 +3632,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_epi32(int __i) {
 ///    vector.
 /// \returns An initialized 128-bit vector of [8 x i16] with all elements
 ///    containing the value provided in the operand.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_set1_epi16(short __w) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set1_epi16(short __w) {
   return _mm_set_epi16(__w, __w, __w, __w, __w, __w, __w, __w);
 }
 
@@ -3743,7 +3649,7 @@ _mm_set1_epi16(short __w) {
 ///    vector.
 /// \returns An initialized 128-bit vector of [16 x i8] with all elements
 ///    containing the value provided in the operand.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_epi8(char __b) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_set1_epi8(char __b) {
   return _mm_set_epi8(__b, __b, __b, __b, __b, __b, __b, __b, __b, __b, __b,
                       __b, __b, __b, __b, __b);
 }
@@ -3762,8 +3668,8 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_set1_epi8(char __b) {
 ///    A 64-bit integral value used to initialize the upper 64 bits of the
 ///    result.
 /// \returns An initialized 128-bit integer vector.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_setr_epi64(__m64 __q0, __m64 __q1) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_setr_epi64(__m64 __q0,
+                                                            __m64 __q1) {
   return _mm_set_epi64(__q1, __q0);
 }
 
@@ -3784,8 +3690,9 @@ _mm_setr_epi64(__m64 __q0, __m64 __q1) {
 /// \param __i3
 ///    A 32-bit integral value used to initialize bits [127:96] of the result.
 /// \returns An initialized 128-bit integer vector.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_setr_epi32(int __i0, int __i1, int __i2, int __i3) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_setr_epi32(int __i0, int __i1,
+                                                            int __i2,
+                                                            int __i3) {
   return _mm_set_epi32(__i3, __i2, __i1, __i0);
 }
 
@@ -3814,7 +3721,7 @@ _mm_setr_epi32(int __i0, int __i1, int __i2, int __i3) {
 /// \param __w7
 ///    A 16-bit integral value used to initialize bits [127:112] of the result.
 /// \returns An initialized 128-bit integer vector.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
+static __inline__ __m128i __DEFAULT_FN_ATTRS
 _mm_setr_epi16(short __w0, short __w1, short __w2, short __w3, short __w4,
                short __w5, short __w6, short __w7) {
   return _mm_set_epi16(__w7, __w6, __w5, __w4, __w3, __w2, __w1, __w0);
@@ -3861,7 +3768,7 @@ _mm_setr_epi16(short __w0, short __w1, short __w2, short __w3, short __w4,
 /// \param __b15
 ///    An 8-bit integral value used to initialize bits [127:120] of the result.
 /// \returns An initialized 128-bit integer vector.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
+static __inline__ __m128i __DEFAULT_FN_ATTRS
 _mm_setr_epi8(char __b0, char __b1, char __b2, char __b3, char __b4, char __b5,
               char __b6, char __b7, char __b8, char __b9, char __b10,
               char __b11, char __b12, char __b13, char __b14, char __b15) {
@@ -3877,7 +3784,7 @@ _mm_setr_epi8(char __b0, char __b1, char __b2, char __b3, char __b4, char __b5,
 ///
 /// \returns An initialized 128-bit integer vector with all elements set to
 ///    zero.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR _mm_setzero_si128(void) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_setzero_si128(void) {
   return __extension__(__m128i)(__v2di){0LL, 0LL};
 }
 
@@ -4038,7 +3945,7 @@ static __inline__ void __DEFAULT_FN_ATTRS _mm_storel_epi64(__m128i_u *__p,
 ///    A pointer to the 128-bit aligned memory location used to store the value.
 /// \param __a
 ///    A vector of [2 x double] containing the 64-bit values to be stored.
-static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_pd(void *__p,
+static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_pd(double *__p,
                                                         __m128d __a) {
   __builtin_nontemporal_store((__v2df)__a, (__v2df *)__p);
 }
@@ -4056,7 +3963,7 @@ static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_pd(void *__p,
 ///    A pointer to the 128-bit aligned memory location used to store the value.
 /// \param __a
 ///    A 128-bit integer vector containing the values to be stored.
-static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_si128(void *__p,
+static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_si128(__m128i *__p,
                                                            __m128i __a) {
   __builtin_nontemporal_store((__v2di)__a, (__v2di *)__p);
 }
@@ -4076,8 +3983,8 @@ static __inline__ void __DEFAULT_FN_ATTRS _mm_stream_si128(void *__p,
 ///    A 32-bit integer containing the value to be stored.
 static __inline__ void
     __attribute__((__always_inline__, __nodebug__, __target__("sse2")))
-    _mm_stream_si32(void *__p, int __a) {
-  __builtin_ia32_movnti((int *)__p, __a);
+    _mm_stream_si32(int *__p, int __a) {
+  __builtin_ia32_movnti(__p, __a);
 }
 
 #ifdef __x86_64__
@@ -4096,8 +4003,8 @@ static __inline__ void
 ///    A 64-bit integer containing the value to be stored.
 static __inline__ void
     __attribute__((__always_inline__, __nodebug__, __target__("sse2")))
-    _mm_stream_si64(void *__p, long long __a) {
-  __builtin_ia32_movnti64((long long *)__p, __a);
+    _mm_stream_si64(long long *__p, long long __a) {
+  __builtin_ia32_movnti64(__p, __a);
 }
 #endif
 
@@ -4143,22 +4050,26 @@ void _mm_mfence(void);
 } // extern "C"
 #endif
 
-/// Converts, with saturation, 16-bit signed integers from both 128-bit integer
-///    vector operands into 8-bit signed integers, and packs the results into
-///    the destination.
-///
-///    Positive values greater than 0x7F are saturated to 0x7F. Negative values
-///    less than 0x80 are saturated to 0x80.
+/// Converts 16-bit signed integers from both 128-bit integer vector
+///    operands into 8-bit signed integers, and packs the results into the
+///    destination. Positive values greater than 0x7F are saturated to 0x7F.
+///    Negative values less than 0x80 are saturated to 0x80.
 ///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VPACKSSWB / PACKSSWB </c> instruction.
 ///
 /// \param __a
-///   A 128-bit integer vector of [8 x i16]. The converted [8 x i8] values are
+///   A 128-bit integer vector of [8 x i16]. Each 16-bit element is treated as
+///   a signed integer and is converted to a 8-bit signed integer with
+///   saturation. Values greater than 0x7F are saturated to 0x7F. Values less
+///   than 0x80 are saturated to 0x80. The converted [8 x i8] values are
 ///   written to the lower 64 bits of the result.
 /// \param __b
-///   A 128-bit integer vector of [8 x i16]. The converted [8 x i8] values are
+///   A 128-bit integer vector of [8 x i16]. Each 16-bit element is treated as
+///   a signed integer and is converted to a 8-bit signed integer with
+///   saturation. Values greater than 0x7F are saturated to 0x7F. Values less
+///   than 0x80 are saturated to 0x80. The converted [8 x i8] values are
 ///   written to the higher 64 bits of the result.
 /// \returns A 128-bit vector of [16 x i8] containing the converted values.
 static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_packs_epi16(__m128i __a,
@@ -4166,22 +4077,26 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_packs_epi16(__m128i __a,
   return (__m128i)__builtin_ia32_packsswb128((__v8hi)__a, (__v8hi)__b);
 }
 
-/// Converts, with saturation, 32-bit signed integers from both 128-bit integer
-///    vector operands into 16-bit signed integers, and packs the results into
-///    the destination.
-///
-///    Positive values greater than 0x7FFF are saturated to 0x7FFF. Negative
-///    values less than 0x8000 are saturated to 0x8000.
+/// Converts 32-bit signed integers from both 128-bit integer vector
+///    operands into 16-bit signed integers, and packs the results into the
+///    destination. Positive values greater than 0x7FFF are saturated to 0x7FFF.
+///    Negative values less than 0x8000 are saturated to 0x8000.
 ///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VPACKSSDW / PACKSSDW </c> instruction.
 ///
 /// \param __a
-///    A 128-bit integer vector of [4 x i32]. The converted [4 x i16] values
+///    A 128-bit integer vector of [4 x i32]. Each 32-bit element is treated as
+///    a signed integer and is converted to a 16-bit signed integer with
+///    saturation. Values greater than 0x7FFF are saturated to 0x7FFF. Values
+///    less than 0x8000 are saturated to 0x8000. The converted [4 x i16] values
 ///    are written to the lower 64 bits of the result.
 /// \param __b
-///    A 128-bit integer vector of [4 x i32]. The converted [4 x i16] values
+///    A 128-bit integer vector of [4 x i32]. Each 32-bit element is treated as
+///    a signed integer and is converted to a 16-bit signed integer with
+///    saturation. Values greater than 0x7FFF are saturated to 0x7FFF. Values
+///    less than 0x8000 are saturated to 0x8000. The converted [4 x i16] values
 ///    are written to the higher 64 bits of the result.
 /// \returns A 128-bit vector of [8 x i16] containing the converted values.
 static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_packs_epi32(__m128i __a,
@@ -4189,22 +4104,26 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_packs_epi32(__m128i __a,
   return (__m128i)__builtin_ia32_packssdw128((__v4si)__a, (__v4si)__b);
 }
 
-/// Converts, with saturation, 16-bit signed integers from both 128-bit integer
-///    vector operands into 8-bit unsigned integers, and packs the results into
-///    the destination.
-///
-///    Values greater than 0xFF are saturated to 0xFF. Values less than 0x00
-///    are saturated to 0x00.
+/// Converts 16-bit signed integers from both 128-bit integer vector
+///    operands into 8-bit unsigned integers, and packs the results into the
+///    destination. Values greater than 0xFF are saturated to 0xFF. Values less
+///    than 0x00 are saturated to 0x00.
 ///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VPACKUSWB / PACKUSWB </c> instruction.
 ///
 /// \param __a
-///    A 128-bit integer vector of [8 x i16]. The converted [8 x i8] values are
+///    A 128-bit integer vector of [8 x i16]. Each 16-bit element is treated as
+///    a signed integer and is converted to an 8-bit unsigned integer with
+///    saturation. Values greater than 0xFF are saturated to 0xFF. Values less
+///    than 0x00 are saturated to 0x00. The converted [8 x i8] values are
 ///    written to the lower 64 bits of the result.
 /// \param __b
-///    A 128-bit integer vector of [8 x i16]. The converted [8 x i8] values are
+///    A 128-bit integer vector of [8 x i16]. Each 16-bit element is treated as
+///    a signed integer and is converted to an 8-bit unsigned integer with
+///    saturation. Values greater than 0xFF are saturated to 0xFF. Values less
+///    than 0x00 are saturated to 0x00. The converted [8 x i8] values are
 ///    written to the higher 64 bits of the result.
 /// \returns A 128-bit vector of [16 x i8] containing the converted values.
 static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_packus_epi16(__m128i __a,
@@ -4610,8 +4529,7 @@ static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_unpacklo_epi64(__m128i __a,
 ///    A 128-bit integer vector operand. The lower 64 bits are moved to the
 ///    destination.
 /// \returns A 64-bit integer containing the lower 64 bits of the parameter.
-static __inline__ __m64 __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_movepi64_pi64(__m128i __a) {
+static __inline__ __m64 __DEFAULT_FN_ATTRS _mm_movepi64_pi64(__m128i __a) {
   return (__m64)__a[0];
 }
 
@@ -4626,9 +4544,8 @@ _mm_movepi64_pi64(__m128i __a) {
 ///    A 64-bit value.
 /// \returns A 128-bit integer vector. The lower 64 bits contain the value from
 ///    the operand. The upper 64 bits are assigned zeros.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_movpi64_epi64(__m64 __a) {
-  return __builtin_shufflevector((__v1di)__a, _mm_setzero_si64(), 0, 1);
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_movpi64_epi64(__m64 __a) {
+  return __extension__(__m128i)(__v2di){(long long)__a, 0};
 }
 
 /// Moves the lower 64 bits of a 128-bit integer vector to a 128-bit
@@ -4643,8 +4560,7 @@ _mm_movpi64_epi64(__m64 __a) {
 ///    destination.
 /// \returns A 128-bit integer vector. The lower 64 bits contain the value from
 ///    the operand. The upper 64 bits are assigned zeros.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_move_epi64(__m128i __a) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_move_epi64(__m128i __a) {
   return __builtin_shufflevector((__v2di)__a, _mm_setzero_si128(), 0, 2);
 }
 
@@ -4663,8 +4579,8 @@ _mm_move_epi64(__m128i __a) {
 ///    A 128-bit vector of [2 x double]. \n
 ///    Bits [127:64] are written to bits [127:64] of the destination.
 /// \returns A 128-bit vector of [2 x double] containing the interleaved values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_unpackhi_pd(__m128d __a, __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_unpackhi_pd(__m128d __a,
+                                                             __m128d __b) {
   return __builtin_shufflevector((__v2df)__a, (__v2df)__b, 1, 2 + 1);
 }
 
@@ -4683,8 +4599,8 @@ _mm_unpackhi_pd(__m128d __a, __m128d __b) {
 ///    A 128-bit vector of [2 x double]. \n
 ///    Bits [63:0] are written to bits [127:64] of the destination.
 /// \returns A 128-bit vector of [2 x double] containing the interleaved values.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_unpacklo_pd(__m128d __a, __m128d __b) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_unpacklo_pd(__m128d __a,
+                                                             __m128d __b) {
   return __builtin_shufflevector((__v2df)__a, (__v2df)__b, 0, 2 + 0);
 }
 
@@ -4747,8 +4663,7 @@ static __inline__ int __DEFAULT_FN_ATTRS _mm_movemask_pd(__m128d __a) {
 ///    A 128-bit floating-point vector of [2 x double].
 /// \returns A 128-bit floating-point vector of [4 x float] containing the same
 ///    bitwise pattern as the parameter.
-static __inline__ __m128 __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castpd_ps(__m128d __a) {
+static __inline__ __m128 __DEFAULT_FN_ATTRS _mm_castpd_ps(__m128d __a) {
   return (__m128)__a;
 }
 
@@ -4763,8 +4678,7 @@ _mm_castpd_ps(__m128d __a) {
 ///    A 128-bit floating-point vector of [2 x double].
 /// \returns A 128-bit integer vector containing the same bitwise pattern as the
 ///    parameter.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castpd_si128(__m128d __a) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_castpd_si128(__m128d __a) {
   return (__m128i)__a;
 }
 
@@ -4779,8 +4693,7 @@ _mm_castpd_si128(__m128d __a) {
 ///    A 128-bit floating-point vector of [4 x float].
 /// \returns A 128-bit floating-point vector of [2 x double] containing the same
 ///    bitwise pattern as the parameter.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castps_pd(__m128 __a) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_castps_pd(__m128 __a) {
   return (__m128d)__a;
 }
 
@@ -4795,8 +4708,7 @@ _mm_castps_pd(__m128 __a) {
 ///    A 128-bit floating-point vector of [4 x float].
 /// \returns A 128-bit integer vector containing the same bitwise pattern as the
 ///    parameter.
-static __inline__ __m128i __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castps_si128(__m128 __a) {
+static __inline__ __m128i __DEFAULT_FN_ATTRS _mm_castps_si128(__m128 __a) {
   return (__m128i)__a;
 }
 
@@ -4811,8 +4723,7 @@ _mm_castps_si128(__m128 __a) {
 ///    A 128-bit integer vector.
 /// \returns A 128-bit floating-point vector of [4 x float] containing the same
 ///    bitwise pattern as the parameter.
-static __inline__ __m128 __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castsi128_ps(__m128i __a) {
+static __inline__ __m128 __DEFAULT_FN_ATTRS _mm_castsi128_ps(__m128i __a) {
   return (__m128)__a;
 }
 
@@ -4827,82 +4738,9 @@ _mm_castsi128_ps(__m128i __a) {
 ///    A 128-bit integer vector.
 /// \returns A 128-bit floating-point vector of [2 x double] containing the same
 ///    bitwise pattern as the parameter.
-static __inline__ __m128d __DEFAULT_FN_ATTRS_CONSTEXPR
-_mm_castsi128_pd(__m128i __a) {
+static __inline__ __m128d __DEFAULT_FN_ATTRS _mm_castsi128_pd(__m128i __a) {
   return (__m128d)__a;
 }
-
-/// Compares each of the corresponding double-precision values of two
-///    128-bit vectors of [2 x double], using the operation specified by the
-///    immediate integer operand.
-///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, comparisons that are ordered
-///    return false, and comparisons that are unordered return true.
-///
-/// \headerfile <x86intrin.h>
-///
-/// \code
-/// __m128d _mm_cmp_pd(__m128d a, __m128d b, const int c);
-/// \endcode
-///
-/// This intrinsic corresponds to the <c> (V)CMPPD </c> instruction.
-///
-/// \param a
-///    A 128-bit vector of [2 x double].
-/// \param b
-///    A 128-bit vector of [2 x double].
-/// \param c
-///    An immediate integer operand, with bits [4:0] specifying which comparison
-///    operation to use: \n
-///    0x00: Equal (ordered, non-signaling) \n
-///    0x01: Less-than (ordered, signaling) \n
-///    0x02: Less-than-or-equal (ordered, signaling) \n
-///    0x03: Unordered (non-signaling) \n
-///    0x04: Not-equal (unordered, non-signaling) \n
-///    0x05: Not-less-than (unordered, signaling) \n
-///    0x06: Not-less-than-or-equal (unordered, signaling) \n
-///    0x07: Ordered (non-signaling) \n
-/// \returns A 128-bit vector of [2 x double] containing the comparison results.
-#define _mm_cmp_pd(a, b, c)                                                    \
-  ((__m128d)__builtin_ia32_cmppd((__v2df)(__m128d)(a), (__v2df)(__m128d)(b),   \
-                                 (c)))
-
-/// Compares each of the corresponding scalar double-precision values of
-///    two 128-bit vectors of [2 x double], using the operation specified by the
-///    immediate integer operand.
-///
-///    Each comparison returns 0x0 for false, 0xFFFFFFFFFFFFFFFF for true.
-///    If either value in a comparison is NaN, comparisons that are ordered
-///    return false, and comparisons that are unordered return true.
-///
-/// \headerfile <x86intrin.h>
-///
-/// \code
-/// __m128d _mm_cmp_sd(__m128d a, __m128d b, const int c);
-/// \endcode
-///
-/// This intrinsic corresponds to the <c> (V)CMPSD </c> instruction.
-///
-/// \param a
-///    A 128-bit vector of [2 x double].
-/// \param b
-///    A 128-bit vector of [2 x double].
-/// \param c
-///    An immediate integer operand, with bits [4:0] specifying which comparison
-///    operation to use: \n
-///    0x00: Equal (ordered, non-signaling) \n
-///    0x01: Less-than (ordered, signaling) \n
-///    0x02: Less-than-or-equal (ordered, signaling) \n
-///    0x03: Unordered (non-signaling) \n
-///    0x04: Not-equal (unordered, non-signaling) \n
-///    0x05: Not-less-than (unordered, signaling) \n
-///    0x06: Not-less-than-or-equal (unordered, signaling) \n
-///    0x07: Ordered (non-signaling) \n
-/// \returns A 128-bit vector of [2 x double] containing the comparison results.
-#define _mm_cmp_sd(a, b, c)                                                    \
-  ((__m128d)__builtin_ia32_cmpsd((__v2df)(__m128d)(a), (__v2df)(__m128d)(b),   \
-                                 (c)))
 
 #if defined(__cplusplus)
 extern "C" {
@@ -4920,11 +4758,8 @@ void _mm_pause(void);
 #if defined(__cplusplus)
 } // extern "C"
 #endif
-
-#undef __anyext128
-#undef __trunc64
 #undef __DEFAULT_FN_ATTRS
-#undef __DEFAULT_FN_ATTRS_CONSTEXPR
+#undef __DEFAULT_FN_ATTRS_MMX
 
 #define _MM_SHUFFLE2(x, y) (((x) << 1) | (y))
 

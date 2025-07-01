@@ -87,11 +87,6 @@ enum CleanupKind : unsigned {
 
   LifetimeMarker = 0x8,
   NormalEHLifetimeMarker = LifetimeMarker | NormalAndEHCleanup,
-
-  // FakeUse needs to be recognized as a special cleanup similar to lifetime
-  // markers chiefly to be ignored in most contexts.
-  FakeUse = 0x10,
-  NormalFakeUse = FakeUse | NormalCleanup,
 };
 
 /// A stack of scopes which respond to exceptions, including cleanups
@@ -171,10 +166,10 @@ public:
         F_IsEHCleanupKind = 0x4,
         F_HasExitSwitch = 0x8,
       };
-      unsigned flags = 0;
+      unsigned flags;
 
     public:
-      Flags() = default;
+      Flags() : flags(0) {}
 
       /// isForEH - true if the current emission is for an EH cleanup.
       bool isForEHCleanup() const { return flags & F_IsForEH; }
@@ -357,8 +352,8 @@ public:
   void popTerminate();
 
   // Returns true iff the current scope is either empty or contains only
-  // noop cleanups, i.e. lifetime markers and fake uses.
-  bool containsOnlyNoopCleanups(stable_iterator Old) const;
+  // lifetime markers, i.e. no real cleanup code
+  bool containsOnlyLifetimeMarkers(stable_iterator Old) const;
 
   /// Determines whether the exception-scopes stack is empty.
   bool empty() const { return StartOfData == EndOfBuffer; }

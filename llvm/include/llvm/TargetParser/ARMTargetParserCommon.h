@@ -41,12 +41,10 @@ struct ParsedBranchProtection {
   StringRef Scope;
   StringRef Key;
   bool BranchTargetEnforcement;
-  bool BranchProtectionPAuthLR;
-  bool GuardedControlStack;
 };
 
 bool parseBranchProtection(StringRef Spec, ParsedBranchProtection &PBP,
-                           StringRef &Err, bool EnablePAuthLR = false);
+                           StringRef &Err);
 
 } // namespace ARM
 } // namespace llvm

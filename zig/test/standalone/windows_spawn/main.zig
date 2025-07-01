@@ -3,7 +3,7 @@ const windows = std.os.windows;
 const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
 
 pub fn main() anyerror!void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() == .leak) @panic("found memory leaks");
     const allocator = gpa.allocator();
 
@@ -51,8 +51,6 @@ pub fn main() anyerror!void {
     try testExec(allocator, "HeLLo.exe", "hello from exe\n");
     // without extension should find the .exe (case insensitive)
     try testExec(allocator, "heLLo", "hello from exe\n");
-    // with invalid cwd
-    try std.testing.expectError(error.FileNotFound, testExecWithCwd(allocator, "hello.exe", "missing_dir", ""));
 
     // now add a .bat
     try tmp.dir.writeFile(.{ .sub_path = "hello.bat", .data = "@echo hello from bat" });
@@ -160,7 +158,7 @@ fn testExec(allocator: std.mem.Allocator, command: []const u8, expected_stdout: 
 }
 
 fn testExecWithCwd(allocator: std.mem.Allocator, command: []const u8, cwd: ?[]const u8, expected_stdout: []const u8) !void {
-    const result = try std.process.Child.run(.{
+    const result = try std.ChildProcess.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{command},
         .cwd = cwd,

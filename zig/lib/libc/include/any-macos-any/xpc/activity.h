@@ -33,8 +33,7 @@ __BEGIN_DECLS
  *   the interval before more aggressive scheduling occurs. The grace period
  *   does not increase the size of the interval.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_INTERVAL;
 
@@ -42,8 +41,7 @@ const char * const XPC_ACTIVITY_INTERVAL;
  * @constant XPC_ACTIVITY_REPEATING
  * A boolean property indicating whether this is a repeating activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_REPEATING;
 
@@ -52,8 +50,7 @@ const char * const XPC_ACTIVITY_REPEATING;
  * An integer property indicating the number of seconds to delay before
  * beginning the activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_DELAY;
 
@@ -62,54 +59,44 @@ const char * const XPC_ACTIVITY_DELAY;
  * An integer property indicating the number of seconds to allow as a grace
  * period before the scheduling of the activity becomes more aggressive.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_GRACE_PERIOD;
 
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_1_MIN;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_5_MIN;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_15_MIN;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_30_MIN;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_1_HOUR;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_4_HOURS;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_8_HOURS;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_1_DAY;
 
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const int64_t XPC_ACTIVITY_INTERVAL_7_DAYS;
 
@@ -117,8 +104,7 @@ const int64_t XPC_ACTIVITY_INTERVAL_7_DAYS;
  * @constant XPC_ACTIVITY_PRIORITY
  * A string property indicating the priority of the activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_PRIORITY;
 
@@ -135,8 +121,7 @@ const char * const XPC_ACTIVITY_PRIORITY;
  * permitted to run while the device is on battery, or plugged in and the
  * battery level is lower than 30%.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_PRIORITY_MAINTENANCE;
 
@@ -153,8 +138,7 @@ const char * const XPC_ACTIVITY_PRIORITY_MAINTENANCE;
  * are only permitted when they are close to their deadline (90% of their time
  * window has elapsed).
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_PRIORITY_UTILITY;
 
@@ -164,8 +148,7 @@ const char * const XPC_ACTIVITY_PRIORITY_UTILITY;
  * while the computer is on battery power. The default value is false for
  * maintenance priority activity and true for utility priority activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_ALLOW_BATTERY;
 
@@ -177,8 +160,7 @@ const char * const XPC_ACTIVITY_ALLOW_BATTERY;
  * idle despite the fact that the display itself is still powered.  Defaults to
  * false.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const char * const XPC_ACTIVITY_REQUIRE_SCREEN_SLEEP; // bool
 
@@ -192,8 +174,7 @@ const char * const XPC_ACTIVITY_REQUIRE_SCREEN_SLEEP; // bool
  * interrupted by system sleep should set this.
  * Setting this property can impact battery life.
  */
-API_AVAILABLE(macos(12.0))
-API_UNAVAILABLE(ios, watchos)
+__API_AVAILABLE(macos(12.0), ios(15.0), watchos(8.0))
 XPC_EXPORT
 const char * const XPC_ACTIVITY_PREVENT_DEVICE_SLEEP; // bool
 
@@ -224,8 +205,7 @@ const char * const XPC_ACTIVITY_REQUIRE_HDD_SPINNING; // bool
  * A type representing the XPC activity object.
  */
 #define XPC_TYPE_ACTIVITY (&_xpc_type_activity)
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 XPC_TYPE(_xpc_type_activity);
 
@@ -261,8 +241,7 @@ typedef void (^xpc_activity_handler_t)(xpc_activity_t activity);
  * activity using the same identifier (for example, an activity taken from a
  * launchd property list).
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT
 const xpc_object_t XPC_ACTIVITY_CHECK_IN;
 
@@ -301,8 +280,7 @@ const xpc_object_t XPC_ACTIVITY_CHECK_IN;
  * The handler block is never invoked reentrantly. It will be invoked on a
  * dispatch queue with an appropriate priority to perform the activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_NONNULL1 XPC_NONNULL2 XPC_NONNULL3
 void
 xpc_activity_register(const char *identifier, xpc_object_t criteria,
@@ -316,8 +294,7 @@ xpc_activity_register(const char *identifier, xpc_object_t criteria,
  * This will return NULL in cases where the activity has already completed, e.g.
  * when checking in to an event that finished and was not rescheduled.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_WARN_RESULT XPC_RETURNS_RETAINED XPC_NONNULL1
 xpc_object_t _Nullable
 xpc_activity_copy_criteria(xpc_activity_t activity);
@@ -328,8 +305,7 @@ xpc_activity_copy_criteria(xpc_activity_t activity);
  * @abstract
  * Modifies the execution criteria of an activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_NONNULL1 XPC_NONNULL2
 void
 xpc_activity_set_criteria(xpc_activity_t activity, xpc_object_t criteria);
@@ -410,8 +386,7 @@ typedef long xpc_activity_state_t;
  * @abstract
  * Returns the current state of an activity.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_WARN_RESULT XPC_NONNULL1
 xpc_activity_state_t
 xpc_activity_get_state(xpc_activity_t activity);
@@ -426,8 +401,7 @@ xpc_activity_get_state(xpc_activity_t activity);
  * Returns true if the state was successfully updated; otherwise, returns
  * false if the requested state transition is not valid.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_WARN_RESULT XPC_NONNULL1
 bool
 xpc_activity_set_state(xpc_activity_t activity, xpc_activity_state_t state);
@@ -450,8 +424,7 @@ xpc_activity_set_state(xpc_activity_t activity, xpc_activity_state_t state);
  * @return
  * Returns true if the activity should be deferred.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_WARN_RESULT XPC_NONNULL1
 bool
 xpc_activity_should_defer(xpc_activity_t activity);
@@ -474,8 +447,7 @@ xpc_activity_should_defer(xpc_activity_t activity);
  * @param identifier
  * The identifier of the activity to unregister.
  */
-API_AVAILABLE(macos(10.9))
-API_UNAVAILABLE(ios)
+__OSX_AVAILABLE_STARTING(__MAC_10_9, __IPHONE_7_0)
 XPC_EXPORT XPC_NONNULL1
 void
 xpc_activity_unregister(const char *identifier);

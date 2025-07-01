@@ -15,7 +15,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
-#include "clang/AST/DynamicRecursiveASTVisitor.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Analysis/CallGraph.h"
@@ -68,7 +68,7 @@ STATISTIC(MaxCFGSize, "The maximum number of basic blocks in a function.");
 namespace {
 
 class AnalysisConsumer : public AnalysisASTConsumer,
-                         public DynamicRecursiveASTVisitor {
+                         public RecursiveASTVisitor<AnalysisConsumer> {
   enum {
     AM_None = 0,
     AM_Syntax = 0x1,
@@ -87,7 +87,7 @@ public:
   ASTContext *Ctx;
   Preprocessor &PP;
   const std::string OutDir;
-  AnalyzerOptions &Opts;
+  AnalyzerOptionsRef Opts;
   ArrayRef<std::string> Plugins;
   CodeInjector *Injector;
   cross_tu::CrossTranslationUnitContext CTU;
@@ -121,15 +121,15 @@ public:
   FunctionSummariesTy FunctionSummaries;
 
   AnalysisConsumer(CompilerInstance &CI, const std::string &outdir,
-                   AnalyzerOptions &opts, ArrayRef<std::string> plugins,
+                   AnalyzerOptionsRef opts, ArrayRef<std::string> plugins,
                    CodeInjector *injector)
       : RecVisitorMode(0), RecVisitorBR(nullptr), Ctx(nullptr),
-        PP(CI.getPreprocessor()), OutDir(outdir), Opts(opts),
+        PP(CI.getPreprocessor()), OutDir(outdir), Opts(std::move(opts)),
         Plugins(plugins), Injector(injector), CTU(CI),
         MacroExpansions(CI.getLangOpts()) {
     DigestAnalyzerOptions();
-    if (Opts.AnalyzerDisplayProgress || Opts.PrintStats ||
-        Opts.ShouldSerializeStats) {
+    if (Opts->AnalyzerDisplayProgress || Opts->PrintStats ||
+        Opts->ShouldSerializeStats) {
       AnalyzerTimers = std::make_unique<llvm::TimerGroup>(
           "analyzer", "Analyzer timers");
       SyntaxCheckTimer = std::make_unique<llvm::Timer>(
@@ -141,30 +141,27 @@ public:
           *AnalyzerTimers);
     }
 
-    if (Opts.PrintStats || Opts.ShouldSerializeStats) {
+    if (Opts->PrintStats || Opts->ShouldSerializeStats) {
       llvm::EnableStatistics(/* DoPrintOnExit= */ false);
     }
 
-    if (Opts.ShouldDisplayMacroExpansions)
+    if (Opts->ShouldDisplayMacroExpansions)
       MacroExpansions.registerForPreprocessor(PP);
-
-    // Visitor options.
-    ShouldWalkTypesOfTypeLocs = false;
   }
 
   ~AnalysisConsumer() override {
-    if (Opts.PrintStats) {
+    if (Opts->PrintStats) {
       llvm::PrintStatistics();
     }
   }
 
   void DigestAnalyzerOptions() {
-    switch (Opts.AnalysisDiagOpt) {
+    switch (Opts->AnalysisDiagOpt) {
     case PD_NONE:
       break;
 #define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATEFN)                    \
   case PD_##NAME:                                                              \
-    CREATEFN(Opts.getDiagOpts(), PathConsumers, OutDir, PP, CTU,              \
+    CREATEFN(Opts->getDiagOpts(), PathConsumers, OutDir, PP, CTU,              \
              MacroExpansions);                                                 \
     break;
 #include "clang/StaticAnalyzer/Core/Analyses.def"
@@ -175,7 +172,7 @@ public:
     // Create the analyzer component creators.
     CreateStoreMgr = &CreateRegionStoreManager;
 
-    switch (Opts.AnalysisConstraintsOpt) {
+    switch (Opts->AnalysisConstraintsOpt) {
     default:
       llvm_unreachable("Unknown constraint manager.");
 #define ANALYSIS_CONSTRAINTS(NAME, CMDFLAG, DESC, CREATEFN)     \
@@ -185,7 +182,7 @@ public:
   }
 
   void DisplayTime(llvm::TimeRecord &Time) {
-    if (!Opts.AnalyzerDisplayProgress) {
+    if (!Opts->AnalyzerDisplayProgress) {
       return;
     }
     llvm::errs() << " : " << llvm::format("%1.1f", Time.getWallTime() * 1000)
@@ -194,7 +191,7 @@ public:
 
   void DisplayFunction(const Decl *D, AnalysisMode Mode,
                        ExprEngine::InliningModes IMode) {
-    if (!Opts.AnalyzerDisplayProgress)
+    if (!Opts->AnalyzerDisplayProgress)
       return;
 
     SourceManager &SM = Mgr->getASTContext().getSourceManager();
@@ -225,12 +222,12 @@ public:
 
   void Initialize(ASTContext &Context) override {
     Ctx = &Context;
-    checkerMgr = std::make_unique<CheckerManager>(*Ctx, Opts, PP, Plugins,
+    checkerMgr = std::make_unique<CheckerManager>(*Ctx, *Opts, PP, Plugins,
                                                   CheckerRegistrationFns);
 
     Mgr = std::make_unique<AnalysisManager>(*Ctx, PP, PathConsumers,
                                             CreateStoreMgr, CreateConstraintMgr,
-                                            checkerMgr.get(), Opts, Injector);
+                                            checkerMgr.get(), *Opts, Injector);
   }
 
   /// Store the top level decls in the set to be processed later on.
@@ -264,8 +261,11 @@ public:
                               ExprEngine::InliningModes IMode,
                               SetOfConstDecls *VisitedCallees);
 
+  /// Visitors for the RecursiveASTVisitor.
+  bool shouldWalkTypesOfTypeLocs() const { return false; }
+
   /// Handle callbacks for arbitrary Decls.
-  bool VisitDecl(Decl *D) override {
+  bool VisitDecl(Decl *D) {
     AnalysisMode Mode = getModeForDecl(D, RecVisitorMode);
     if (Mode & AM_Syntax) {
       if (SyntaxCheckTimer)
@@ -277,8 +277,8 @@ public:
     return true;
   }
 
-  bool VisitVarDecl(VarDecl *VD) override {
-    if (!Opts.IsNaiveCTUEnabled)
+  bool VisitVarDecl(VarDecl *VD) {
+    if (!Opts->IsNaiveCTUEnabled)
       return true;
 
     if (VD->hasExternalStorage() || VD->isStaticDataMember()) {
@@ -293,8 +293,8 @@ public:
       return true;
 
     llvm::Expected<const VarDecl *> CTUDeclOrError =
-      CTU.getCrossTUDefinition(VD, Opts.CTUDir, Opts.CTUIndexName,
-                               Opts.DisplayCTUProgress);
+      CTU.getCrossTUDefinition(VD, Opts->CTUDir, Opts->CTUIndexName,
+                               Opts->DisplayCTUProgress);
 
     if (!CTUDeclOrError) {
       handleAllErrors(CTUDeclOrError.takeError(),
@@ -306,9 +306,9 @@ public:
     return true;
   }
 
-  bool VisitFunctionDecl(FunctionDecl *FD) override {
+  bool VisitFunctionDecl(FunctionDecl *FD) {
     IdentifierInfo *II = FD->getIdentifier();
-    if (II && II->getName().starts_with("__inline"))
+    if (II && II->getName().startswith("__inline"))
       return true;
 
     // We skip function template definitions, as their semantics is
@@ -321,7 +321,7 @@ public:
     return true;
   }
 
-  bool VisitObjCMethodDecl(ObjCMethodDecl *MD) override {
+  bool VisitObjCMethodDecl(ObjCMethodDecl *MD) {
     if (MD->isThisDeclarationADefinition()) {
       assert(RecVisitorMode == AM_Syntax || Mgr->shouldInlineCall() == false);
       HandleCode(MD, RecVisitorMode);
@@ -329,7 +329,7 @@ public:
     return true;
   }
 
-  bool VisitBlockDecl(BlockDecl *BD) override {
+  bool VisitBlockDecl(BlockDecl *BD) {
     if (BD->hasBody()) {
       assert(RecVisitorMode == AM_Syntax || Mgr->shouldInlineCall() == false);
       // Since we skip function template definitions, we should skip blocks
@@ -356,7 +356,7 @@ private:
   AnalysisMode getModeForDecl(Decl *D, AnalysisMode Mode);
   void runAnalysisOnTranslationUnit(ASTContext &C);
 
-  /// Print \p S to stderr if \c Opts.AnalyzerDisplayProgress is set.
+  /// Print \p S to stderr if \c Opts->AnalyzerDisplayProgress is set.
   void reportAnalyzerProgress(StringRef S);
 }; // namespace
 } // end anonymous namespace
@@ -527,8 +527,7 @@ static void reportAnalyzerFunctionMisuse(const AnalyzerOptions &Opts,
 
 void AnalysisConsumer::runAnalysisOnTranslationUnit(ASTContext &C) {
   BugReporter BR(*Mgr);
-  const TranslationUnitDecl *TU = C.getTranslationUnitDecl();
-  BR.setAnalysisEntryPoint(TU);
+  TranslationUnitDecl *TU = C.getTranslationUnitDecl();
   if (SyntaxCheckTimer)
     SyntaxCheckTimer->startTimer();
   checkerMgr->runCheckersOnASTDecl(TU, *Mgr, BR);
@@ -568,12 +567,12 @@ void AnalysisConsumer::runAnalysisOnTranslationUnit(ASTContext &C) {
   // name correctly.
   // FIXME: The user might have analyzed the requested function in Syntax mode,
   // but we are unaware of that.
-  if (!Opts.AnalyzeSpecificFunction.empty() && NumFunctionsAnalyzed == 0)
-    reportAnalyzerFunctionMisuse(Opts, *Ctx);
+  if (!Opts->AnalyzeSpecificFunction.empty() && NumFunctionsAnalyzed == 0)
+    reportAnalyzerFunctionMisuse(*Opts, *Ctx);
 }
 
 void AnalysisConsumer::reportAnalyzerProgress(StringRef S) {
-  if (Opts.AnalyzerDisplayProgress)
+  if (Opts->AnalyzerDisplayProgress)
     llvm::errs() << S;
 }
 
@@ -590,13 +589,13 @@ void AnalysisConsumer::HandleTranslationUnit(ASTContext &C) {
   const auto DiagFlusherScopeExit =
       llvm::make_scope_exit([this] { Mgr.reset(); });
 
-  if (Opts.ShouldIgnoreBisonGeneratedFiles &&
+  if (Opts->ShouldIgnoreBisonGeneratedFiles &&
       fileContainsString("/* A Bison parser, made by", C)) {
     reportAnalyzerProgress("Skipping bison-generated file\n");
     return;
   }
 
-  if (Opts.ShouldIgnoreFlexGeneratedFiles &&
+  if (Opts->ShouldIgnoreFlexGeneratedFiles &&
       fileContainsString("/* A lexical scanner generated by flex", C)) {
     reportAnalyzerProgress("Skipping flex-generated file\n");
     return;
@@ -604,7 +603,7 @@ void AnalysisConsumer::HandleTranslationUnit(ASTContext &C) {
 
   // Don't analyze if the user explicitly asked for no checks to be performed
   // on this file.
-  if (Opts.DisableAllCheckers) {
+  if (Opts->DisableAllCheckers) {
     reportAnalyzerProgress("All checks are disabled using a supplied option\n");
     return;
   }
@@ -624,8 +623,8 @@ void AnalysisConsumer::HandleTranslationUnit(ASTContext &C) {
 
 AnalysisConsumer::AnalysisMode
 AnalysisConsumer::getModeForDecl(Decl *D, AnalysisMode Mode) {
-  if (!Opts.AnalyzeSpecificFunction.empty() &&
-      AnalysisDeclContext::getFunctionName(D) != Opts.AnalyzeSpecificFunction)
+  if (!Opts->AnalyzeSpecificFunction.empty() &&
+      AnalysisDeclContext::getFunctionName(D) != Opts->AnalyzeSpecificFunction)
     return AM_None;
 
   // Unless -analyze-all is specified, treat decls differently depending on
@@ -633,7 +632,7 @@ AnalysisConsumer::getModeForDecl(Decl *D, AnalysisMode Mode) {
   // - Main source file: run both path-sensitive and non-path-sensitive checks.
   // - Header files: run non-path-sensitive checks only.
   // - System headers: don't run any checks.
-  if (Opts.AnalyzeAll)
+  if (Opts->AnalyzeAll)
     return Mode;
 
   const SourceManager &SM = Ctx->getSourceManager();
@@ -676,7 +675,6 @@ void AnalysisConsumer::HandleCode(Decl *D, AnalysisMode Mode,
 
   DisplayFunction(D, Mode, IMode);
   BugReporter BR(*Mgr);
-  BR.setAnalysisEntryPoint(D);
 
   if (Mode & AM_Syntax) {
     llvm::TimeRecord CheckerStartTime;
@@ -759,8 +757,8 @@ ento::CreateAnalysisConsumer(CompilerInstance &CI) {
   // Disable the effects of '-Werror' when using the AnalysisConsumer.
   CI.getPreprocessor().getDiagnostics().setWarningsAsErrors(false);
 
-  AnalyzerOptions &analyzerOpts = CI.getAnalyzerOpts();
-  bool hasModelPath = analyzerOpts.Config.count("model-path") > 0;
+  AnalyzerOptionsRef analyzerOpts = CI.getAnalyzerOpts();
+  bool hasModelPath = analyzerOpts->Config.count("model-path") > 0;
 
   return std::make_unique<AnalysisConsumer>(
       CI, CI.getFrontendOpts().OutputFile, analyzerOpts,

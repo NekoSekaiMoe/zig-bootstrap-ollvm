@@ -14,6 +14,7 @@
 #define LLVM_DEBUGINFO_LOGICALVIEW_CORE_LVSUPPORT_H
 
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVStringPool.h"
 #include "llvm/Support/Debug.h"
@@ -110,7 +111,7 @@ inline std::string hexString(uint64_t Value, size_t Width = HEX_WIDTH) {
   std::string String;
   raw_string_ostream Stream(String);
   Stream << hexValue(Value, Width, false);
-  return String;
+  return Stream.str();
 }
 
 // Get a hexadecimal string representation for the given value.

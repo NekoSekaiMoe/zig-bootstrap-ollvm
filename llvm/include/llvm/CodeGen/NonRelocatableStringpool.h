@@ -27,9 +27,12 @@ public:
   /// order.
   using MapTy = StringMap<DwarfStringPoolEntry, BumpPtrAllocator>;
 
-  NonRelocatableStringpool(bool PutEmptyString = false) {
+  NonRelocatableStringpool(
+      std::function<StringRef(StringRef Input)> Translator = nullptr,
+      bool PutEmptyString = false)
+      : Translator(Translator) {
     if (PutEmptyString)
-      getEntry("");
+      EmptyString = getEntry("");
   }
 
   DwarfStringPoolEntryRef getEntry(StringRef S);
@@ -56,6 +59,8 @@ private:
   MapTy Strings;
   uint64_t CurrentEndOffset = 0;
   unsigned NumEntries = 0;
+  DwarfStringPoolEntryRef EmptyString;
+  std::function<StringRef(StringRef Input)> Translator;
 };
 
 /// Helper for making strong types.

@@ -24,9 +24,6 @@
 #define	_FTW_H
 
 #include <sys/stat.h>
-#include <_bounds.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 /*
  * Valid flags for the 3rd argument to the function that is passed as the

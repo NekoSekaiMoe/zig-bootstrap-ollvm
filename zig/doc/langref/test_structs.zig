@@ -6,13 +6,28 @@ const Point = struct {
     y: f32,
 };
 
+// Maybe we want to pass it to OpenGL so we want to be particular about
+// how the bytes are arranged.
+const Point2 = packed struct {
+    x: f32,
+    y: f32,
+};
+
 // Declare an instance of a struct.
-const p: Point = .{
+const p = Point{
     .x = 0.12,
     .y = 0.34,
 };
 
-// Functions in the struct's namespace can be called with dot syntax.
+// Maybe we're not ready to fill out some of the fields.
+var p2 = Point{
+    .x = 0.12,
+    .y = undefined,
+};
+
+// Structs can have methods
+// Struct methods are not special, they are only namespaced
+// functions that you can call with dot syntax.
 const Vec3 = struct {
     x: f32,
     y: f32,
@@ -31,6 +46,7 @@ const Vec3 = struct {
     }
 };
 
+const expect = @import("std").testing.expect;
 test "dot product" {
     const v1 = Vec3.init(1.0, 0.0, 0.0);
     const v2 = Vec3.init(0.0, 1.0, 0.0);
@@ -51,14 +67,14 @@ test "struct namespaced variable" {
     try expect(Empty.PI == 3.14);
     try expect(@sizeOf(Empty) == 0);
 
-    // Empty structs can be instantiated the same as usual.
-    const does_nothing: Empty = .{};
+    // you can still instantiate an empty struct
+    const does_nothing = Empty{};
 
     _ = does_nothing;
 }
 
-// Struct field order is determined by the compiler, however, a base pointer
-// can be computed from a field pointer:
+// struct field order is determined by the compiler for optimal performance.
+// however, you can still calculate a struct base pointer given a field pointer:
 fn setYBasedOnX(x: *f32, y: f32) void {
     const point: *Point = @fieldParentPtr("x", x);
     point.y = y;
@@ -72,7 +88,8 @@ test "field parent pointer" {
     try expect(point.y == 0.9);
 }
 
-// Structs can be returned from functions.
+// You can return a struct from a function. This is how we do generics
+// in Zig:
 fn LinkedList(comptime T: type) type {
     return struct {
         pub const Node = struct {
@@ -88,7 +105,8 @@ fn LinkedList(comptime T: type) type {
 }
 
 test "linked list" {
-    // Functions called at compile-time are memoized.
+    // Functions called at compile-time are memoized. This means you can
+    // do this:
     try expect(LinkedList(i32) == LinkedList(i32));
 
     const list = LinkedList(i32){
@@ -120,7 +138,5 @@ test "linked list" {
     try expect(list2.first.?.data == 1234);
     // instead of try expect(list2.first.?.*.data == 1234);
 }
-
-const expect = @import("std").testing.expect;
 
 // test

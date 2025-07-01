@@ -19,7 +19,9 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/Support/Alignment.h"
+#include "llvm/Support/Debug.h"
 
 using namespace llvm;
 

@@ -31,7 +31,11 @@ class DereferenceChecker
     : public Checker< check::Location,
                       check::Bind,
                       EventDispatcher<ImplicitNullDerefEvent> > {
-  enum DerefKind { NullPointer, UndefinedPointerValue, AddressOfLabel };
+  enum DerefKind { NullPointer, UndefinedPointerValue };
+
+  BugType BT_Null{this, "Dereference of null pointer", categories::LogicError};
+  BugType BT_Undef{this, "Dereference of undefined pointer value",
+                   categories::LogicError};
 
   void reportBug(DerefKind K, ProgramStateRef State, const Stmt *S,
                  CheckerContext &C) const;
@@ -50,12 +54,6 @@ public:
                              bool loadedFrom = false);
 
   bool SuppressAddressSpaces = false;
-
-  bool CheckNullDereference = false;
-
-  std::unique_ptr<BugType> BT_Null;
-  std::unique_ptr<BugType> BT_Undef;
-  std::unique_ptr<BugType> BT_Label;
 };
 } // end anonymous namespace
 
@@ -155,29 +153,19 @@ static bool isDeclRefExprToReference(const Expr *E) {
 
 void DereferenceChecker::reportBug(DerefKind K, ProgramStateRef State,
                                    const Stmt *S, CheckerContext &C) const {
-  if (!CheckNullDereference) {
-    C.addSink();
-    return;
-  }
-
   const BugType *BT = nullptr;
   llvm::StringRef DerefStr1;
   llvm::StringRef DerefStr2;
   switch (K) {
   case DerefKind::NullPointer:
-    BT = BT_Null.get();
+    BT = &BT_Null;
     DerefStr1 = " results in a null pointer dereference";
     DerefStr2 = " results in a dereference of a null pointer";
     break;
   case DerefKind::UndefinedPointerValue:
-    BT = BT_Undef.get();
+    BT = &BT_Undef;
     DerefStr1 = " results in an undefined pointer dereference";
     DerefStr2 = " results in a dereference of an undefined pointer value";
-    break;
-  case DerefKind::AddressOfLabel:
-    BT = BT_Label.get();
-    DerefStr1 = " results in an undefined pointer dereference";
-    DerefStr2 = " results in a dereference of an address of a label";
     break;
   };
 
@@ -200,9 +188,9 @@ void DereferenceChecker::reportBug(DerefKind K, ProgramStateRef State,
     os << DerefStr1;
     break;
   }
-  case Stmt::ArraySectionExprClass: {
+  case Stmt::OMPArraySectionExprClass: {
     os << "Array access";
-    const ArraySectionExpr *AE = cast<ArraySectionExpr>(S);
+    const OMPArraySectionExpr *AE = cast<OMPArraySectionExpr>(S);
     AddDerefSource(os, Ranges, AE->getBase()->IgnoreParenCasts(),
                    State.get(), N->getLocationContext());
     os << DerefStr1;
@@ -299,12 +287,6 @@ void DereferenceChecker::checkBind(SVal L, SVal V, const Stmt *S,
   if (V.isUndef())
     return;
 
-  // One should never write to label addresses.
-  if (auto Label = L.getAs<loc::GotoLabel>()) {
-    reportBug(DerefKind::AddressOfLabel, C.getState(), S, C);
-    return;
-  }
-
   const MemRegion *MR = L.getAsRegion();
   const TypedValueRegion *TVR = dyn_cast_or_null<TypedValueRegion>(MR);
   if (!TVR)
@@ -356,30 +338,12 @@ void DereferenceChecker::checkBind(SVal L, SVal V, const Stmt *S,
   C.addTransition(State, this);
 }
 
-void ento::registerDereferenceModeling(CheckerManager &Mgr) {
-  Mgr.registerChecker<DereferenceChecker>();
+void ento::registerDereferenceChecker(CheckerManager &mgr) {
+  auto *Chk = mgr.registerChecker<DereferenceChecker>();
+  Chk->SuppressAddressSpaces = mgr.getAnalyzerOptions().getCheckerBooleanOption(
+      mgr.getCurrentCheckerName(), "SuppressAddressSpaces");
 }
 
-bool ento::shouldRegisterDereferenceModeling(const CheckerManager &) {
-  return true;
-}
-
-void ento::registerNullDereferenceChecker(CheckerManager &Mgr) {
-  auto *Chk = Mgr.getChecker<DereferenceChecker>();
-  Chk->CheckNullDereference = true;
-  Chk->SuppressAddressSpaces = Mgr.getAnalyzerOptions().getCheckerBooleanOption(
-      Mgr.getCurrentCheckerName(), "SuppressAddressSpaces");
-  Chk->BT_Null.reset(new BugType(Mgr.getCurrentCheckerName(),
-                                 "Dereference of null pointer",
-                                 categories::LogicError));
-  Chk->BT_Undef.reset(new BugType(Mgr.getCurrentCheckerName(),
-                                  "Dereference of undefined pointer value",
-                                  categories::LogicError));
-  Chk->BT_Label.reset(new BugType(Mgr.getCurrentCheckerName(),
-                                  "Dereference of the address of a label",
-                                  categories::LogicError));
-}
-
-bool ento::shouldRegisterNullDereferenceChecker(const CheckerManager &) {
+bool ento::shouldRegisterDereferenceChecker(const CheckerManager &mgr) {
   return true;
 }

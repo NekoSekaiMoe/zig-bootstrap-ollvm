@@ -29,7 +29,8 @@ struct DeclOccurrence {
 
   DeclOccurrence(SymbolRoleSet R, unsigned Offset, const Decl *D,
                  ArrayRef<SymbolRelation> Relations)
-      : Roles(R), Offset(Offset), DeclOrMacro(D), Relations(Relations) {}
+      : Roles(R), Offset(Offset), DeclOrMacro(D),
+        Relations(Relations.begin(), Relations.end()) {}
   DeclOccurrence(SymbolRoleSet R, unsigned Offset, const IdentifierInfo *Name,
                  const MacroInfo *MI)
       : Roles(R), Offset(Offset), DeclOrMacro(MI), MacroName(Name) {}

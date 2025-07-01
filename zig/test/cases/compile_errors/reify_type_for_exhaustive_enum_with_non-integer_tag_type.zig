@@ -1,5 +1,5 @@
 const Tag = @Type(.{
-    .@"enum" = .{
+    .Enum = .{
         .tag_type = bool,
         .fields = &.{},
         .decls = &.{},

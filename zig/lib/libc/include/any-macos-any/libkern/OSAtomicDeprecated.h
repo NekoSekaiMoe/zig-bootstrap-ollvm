@@ -36,7 +36,6 @@
  */
 
 #include    <Availability.h>
-#include    <TargetConditionals.h>
 
 #if !(defined(OSATOMIC_USE_INLINED) && OSATOMIC_USE_INLINED)
 

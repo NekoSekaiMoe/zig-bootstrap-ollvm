@@ -6,5 +6,7 @@ comptime {
 }
 
 // error
+// backend=stage2
+// target=native
 //
-// :4:19: error: division by zero here causes illegal behavior
+// :4:19: error: division by zero here causes undefined behavior

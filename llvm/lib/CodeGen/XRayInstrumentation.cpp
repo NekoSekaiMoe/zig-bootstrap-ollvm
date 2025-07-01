@@ -24,7 +24,6 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Attributes.h"
-#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
@@ -53,8 +52,8 @@ struct XRayInstrumentation : public MachineFunctionPass {
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    AU.addPreserved<MachineLoopInfoWrapperPass>();
-    AU.addPreserved<MachineDominatorTreeWrapperPass>();
+    AU.addPreserved<MachineLoopInfo>();
+    AU.addPreserved<MachineDominatorTree>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
@@ -112,8 +111,8 @@ void XRayInstrumentation::replaceRetWithPatchableRet(
         for (auto &MO : T.operands())
           MIB.add(MO);
         Terminators.push_back(&T);
-        if (T.shouldUpdateAdditionalCallInfo())
-          MF.eraseAdditionalCallInfo(&T);
+        if (T.shouldUpdateCallSiteInfo())
+          MF.eraseCallSiteInfo(&T);
       }
     }
   }
@@ -171,21 +170,18 @@ bool XRayInstrumentation::runOnMachineFunction(MachineFunction &MF) {
 
     if (!IgnoreLoops) {
       // Get MachineDominatorTree or compute it on the fly if it's unavailable
-      auto *MDTWrapper =
-          getAnalysisIfAvailable<MachineDominatorTreeWrapperPass>();
-      auto *MDT = MDTWrapper ? &MDTWrapper->getDomTree() : nullptr;
+      auto *MDT = getAnalysisIfAvailable<MachineDominatorTree>();
       MachineDominatorTree ComputedMDT;
       if (!MDT) {
-        ComputedMDT.recalculate(MF);
+        ComputedMDT.getBase().recalculate(MF);
         MDT = &ComputedMDT;
       }
 
       // Get MachineLoopInfo or compute it on the fly if it's unavailable
-      auto *MLIWrapper = getAnalysisIfAvailable<MachineLoopInfoWrapperPass>();
-      auto *MLI = MLIWrapper ? &MLIWrapper->getLI() : nullptr;
+      auto *MLI = getAnalysisIfAvailable<MachineLoopInfo>();
       MachineLoopInfo ComputedMLI;
       if (!MLI) {
-        ComputedMLI.analyze(*MDT);
+        ComputedMLI.getBase().analyze(MDT->getBase());
         MLI = &ComputedMLI;
       }
 
@@ -212,12 +208,8 @@ bool XRayInstrumentation::runOnMachineFunction(MachineFunction &MF) {
   auto &FirstMI = *FirstMBB.begin();
 
   if (!MF.getSubtarget().isXRaySupported()) {
-
-    const Function &Fn = FirstMBB.getParent()->getFunction();
-    Fn.getContext().diagnose(DiagnosticInfoUnsupported(
-        Fn, "An attempt to perform XRay instrumentation for an"
-            " unsupported target."));
-
+    FirstMI.emitError("An attempt to perform XRay instrumentation for an"
+                      " unsupported target.");
     return false;
   }
 
@@ -238,19 +230,15 @@ bool XRayInstrumentation::runOnMachineFunction(MachineFunction &MF) {
     case Triple::ArchType::mips:
     case Triple::ArchType::mipsel:
     case Triple::ArchType::mips64:
-    case Triple::ArchType::mips64el:
-    case Triple::ArchType::riscv32:
-    case Triple::ArchType::riscv64: {
+    case Triple::ArchType::mips64el: {
       // For the architectures which don't have a single return instruction
       InstrumentationOptions op;
-      // RISC-V supports patching tail calls.
-      op.HandleTailcall = MF.getTarget().getTargetTriple().isRISCV();
+      op.HandleTailcall = false;
       op.HandleAllReturns = true;
       prependRetWithPatchableExit(MF, TII, op);
       break;
     }
-    case Triple::ArchType::ppc64le:
-    case Triple::ArchType::systemz: {
+    case Triple::ArchType::ppc64le: {
       // PPC has conditional returns. Turn them into branch and plain returns.
       InstrumentationOptions op;
       op.HandleTailcall = false;
@@ -276,6 +264,6 @@ char XRayInstrumentation::ID = 0;
 char &llvm::XRayInstrumentationID = XRayInstrumentation::ID;
 INITIALIZE_PASS_BEGIN(XRayInstrumentation, "xray-instrumentation",
                       "Insert XRay ops", false, false)
-INITIALIZE_PASS_DEPENDENCY(MachineLoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
 INITIALIZE_PASS_END(XRayInstrumentation, "xray-instrumentation",
                     "Insert XRay ops", false, false)

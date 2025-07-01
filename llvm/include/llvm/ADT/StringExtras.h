@@ -58,19 +58,10 @@ inline StringRef toStringRef(bool B) { return StringRef(B ? "true" : "false"); }
 inline StringRef toStringRef(ArrayRef<uint8_t> Input) {
   return StringRef(reinterpret_cast<const char *>(Input.begin()), Input.size());
 }
-inline StringRef toStringRef(ArrayRef<char> Input) {
-  return StringRef(Input.begin(), Input.size());
-}
 
 /// Construct a string ref from an array ref of unsigned chars.
-template <class CharT = uint8_t>
-inline ArrayRef<CharT> arrayRefFromStringRef(StringRef Input) {
-  static_assert(std::is_same<CharT, char>::value ||
-                    std::is_same<CharT, unsigned char>::value ||
-                    std::is_same<CharT, signed char>::value,
-                "Expected byte type");
-  return ArrayRef<CharT>(reinterpret_cast<const CharT *>(Input.data()),
-                         Input.size());
+inline ArrayRef<uint8_t> arrayRefFromStringRef(StringRef Input) {
+  return {Input.bytes_begin(), Input.bytes_end()};
 }
 
 /// Interpret the given character \p C as a hexadecimal digit and return its
@@ -107,14 +98,10 @@ inline bool isDigit(char C) { return C >= '0' && C <= '9'; }
 /// Checks if character \p C is a hexadecimal numeric character.
 inline bool isHexDigit(char C) { return hexDigitValue(C) != ~0U; }
 
-/// Checks if character \p C is a lowercase letter as classified by "C" locale.
-inline bool isLower(char C) { return 'a' <= C && C <= 'z'; }
-
-/// Checks if character \p C is a uppercase letter as classified by "C" locale.
-inline bool isUpper(char C) { return 'A' <= C && C <= 'Z'; }
-
 /// Checks if character \p C is a valid letter as classified by "C" locale.
-inline bool isAlpha(char C) { return isLower(C) || isUpper(C); }
+inline bool isAlpha(char C) {
+  return ('a' <= C && C <= 'z') || ('A' <= C && C <= 'Z');
+}
 
 /// Checks whether character \p C is either a decimal digit or an uppercase or
 /// lowercase letter as classified by "C" locale.
@@ -140,17 +127,6 @@ inline bool isPrint(char C) {
   return (0x20 <= UC) && (UC <= 0x7E);
 }
 
-/// Checks whether character \p C is a punctuation character.
-///
-/// Locale-independent version of the C standard library ispunct. The list of
-/// punctuation characters can be found in the documentation of std::ispunct:
-/// https://en.cppreference.com/w/cpp/string/byte/ispunct.
-inline bool isPunct(char C) {
-  static constexpr StringLiteral Punctuations =
-      R"(!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~)";
-  return Punctuations.contains(C);
-}
-
 /// Checks whether character \p C is whitespace in the "C" locale.
 ///
 /// Locale-independent version of the C standard library isspace.
@@ -161,14 +137,14 @@ inline bool isSpace(char C) {
 
 /// Returns the corresponding lowercase character if \p x is uppercase.
 inline char toLower(char x) {
-  if (isUpper(x))
+  if (x >= 'A' && x <= 'Z')
     return x - 'A' + 'a';
   return x;
 }
 
 /// Returns the corresponding uppercase character if \p x is lowercase.
 inline char toUpper(char x) {
-  if (isLower(x))
+  if (x >= 'a' && x <= 'z')
     return x - 'a' + 'A';
   return x;
 }
@@ -340,12 +316,10 @@ inline std::string itostr(int64_t X) {
 }
 
 inline std::string toString(const APInt &I, unsigned Radix, bool Signed,
-                            bool formatAsCLiteral = false,
-                            bool UpperCase = true,
-                            bool InsertSeparators = false) {
+                            bool formatAsCLiteral = false) {
   SmallString<40> S;
-  I.toString(S, Radix, Signed, formatAsCLiteral, UpperCase, InsertSeparators);
-  return std::string(S);
+  I.toString(S, Radix, Signed, formatAsCLiteral);
+  return std::string(S.str());
 }
 
 inline std::string toString(const APSInt &I, unsigned Radix) {
@@ -440,7 +414,7 @@ inline std::string join_impl(IteratorT Begin, IteratorT End,
 
   size_t Len = (std::distance(Begin, End) - 1) * Separator.size();
   for (IteratorT I = Begin; I != End; ++I)
-    Len += StringRef(*I).size();
+    Len += (*I).size();
   S.reserve(Len);
   size_t PrevCapacity = S.capacity();
   (void)PrevCapacity;

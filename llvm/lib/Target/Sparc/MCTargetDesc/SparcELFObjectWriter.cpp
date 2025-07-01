@@ -9,6 +9,7 @@
 #include "MCTargetDesc/SparcFixupKinds.h"
 #include "MCTargetDesc/SparcMCExpr.h"
 #include "MCTargetDesc/SparcMCTargetDesc.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCObjectWriter.h"
@@ -20,12 +21,10 @@ using namespace llvm;
 namespace {
   class SparcELFObjectWriter : public MCELFObjectTargetWriter {
   public:
-    SparcELFObjectWriter(bool Is64Bit, bool IsV8Plus, uint8_t OSABI)
-        : MCELFObjectTargetWriter(
-              Is64Bit, OSABI,
-              Is64Bit ? ELF::EM_SPARCV9
-                      : (IsV8Plus ? ELF::EM_SPARC32PLUS : ELF::EM_SPARC),
-              /*HasRelocationAddend*/ true) {}
+    SparcELFObjectWriter(bool Is64Bit, uint8_t OSABI)
+      : MCELFObjectTargetWriter(Is64Bit, OSABI,
+                                Is64Bit ?  ELF::EM_SPARCV9 : ELF::EM_SPARC,
+                                /*HasRelocationAddend*/ true) {}
 
     ~SparcELFObjectWriter() override = default;
 
@@ -33,8 +32,9 @@ namespace {
     unsigned getRelocType(MCContext &Ctx, const MCValue &Target,
                           const MCFixup &Fixup, bool IsPCRel) const override;
 
-    bool needsRelocateWithSymbol(const MCValue &Val, const MCSymbol &Sym,
+    bool needsRelocateWithSymbol(const MCSymbol &Sym,
                                  unsigned Type) const override;
+
   };
 }
 
@@ -124,9 +124,8 @@ unsigned SparcELFObjectWriter::getRelocType(MCContext &Ctx,
   return ELF::R_SPARC_NONE;
 }
 
-bool SparcELFObjectWriter::needsRelocateWithSymbol(const MCValue &,
-                                                   const MCSymbol &,
-                                                   unsigned Type) const {
+bool SparcELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
+                                                 unsigned Type) const {
   switch (Type) {
     default:
       return false;
@@ -147,6 +146,6 @@ bool SparcELFObjectWriter::needsRelocateWithSymbol(const MCValue &,
 }
 
 std::unique_ptr<MCObjectTargetWriter>
-llvm::createSparcELFObjectWriter(bool Is64Bit, bool IsV8Plus, uint8_t OSABI) {
-  return std::make_unique<SparcELFObjectWriter>(Is64Bit, IsV8Plus, OSABI);
+llvm::createSparcELFObjectWriter(bool Is64Bit, uint8_t OSABI) {
+  return std::make_unique<SparcELFObjectWriter>(Is64Bit, OSABI);
 }

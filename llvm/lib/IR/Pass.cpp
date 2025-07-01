@@ -139,13 +139,9 @@ LLVM_DUMP_METHOD void Pass::dump() const {
 #endif
 
 #ifdef EXPENSIVE_CHECKS
-uint64_t Pass::structuralHash(Module &M) const {
-  return StructuralHash(M, true);
-}
+uint64_t Pass::structuralHash(Module &M) const { return StructuralHash(M); }
 
-uint64_t Pass::structuralHash(Function &F) const {
-  return StructuralHash(F, true);
-}
+uint64_t Pass::structuralHash(Function &F) const { return StructuralHash(F); }
 #endif
 
 //===----------------------------------------------------------------------===//
@@ -202,6 +198,19 @@ Pass *Pass::createPass(AnalysisID ID) {
   if (!PI)
     return nullptr;
   return PI->createPass();
+}
+
+//===----------------------------------------------------------------------===//
+//                  Analysis Group Implementation Code
+//===----------------------------------------------------------------------===//
+
+// RegisterAGBase implementation
+
+RegisterAGBase::RegisterAGBase(StringRef Name, const void *InterfaceID,
+                               const void *PassID, bool isDefault)
+    : PassInfo(Name, InterfaceID) {
+  PassRegistry::getPassRegistry()->registerAnalysisGroup(InterfaceID, PassID,
+                                                         *this, isDefault);
 }
 
 //===----------------------------------------------------------------------===//

@@ -15,12 +15,12 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/InlineAdvisor.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/Transforms/IPO/Inliner.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -32,81 +32,91 @@ namespace {
 
 bool AlwaysInlineImpl(
     Module &M, bool InsertLifetime, ProfileSummaryInfo &PSI,
-    FunctionAnalysisManager *FAM,
     function_ref<AssumptionCache &(Function &)> GetAssumptionCache,
-    function_ref<AAResults &(Function &)> GetAAR) {
+    function_ref<AAResults &(Function &)> GetAAR,
+    function_ref<BlockFrequencyInfo &(Function &)> GetBFI) {
   SmallSetVector<CallBase *, 16> Calls;
   bool Changed = false;
-  SmallVector<Function *, 16> InlinedComdatFunctions;
-
-  for (Function &F : make_early_inc_range(M)) {
+  SmallVector<Function *, 16> InlinedFunctions;
+  for (Function &F : M) {
+    // When callee coroutine function is inlined into caller coroutine function
+    // before coro-split pass,
+    // coro-early pass can not handle this quiet well.
+    // So we won't inline the coroutine function if it have not been unsplited
     if (F.isPresplitCoroutine())
       continue;
 
-    if (F.isDeclaration() || !isInlineViable(F).isSuccess())
-      continue;
+    if (!F.isDeclaration() && isInlineViable(F).isSuccess()) {
+      Calls.clear();
 
-    Calls.clear();
+      for (User *U : F.users())
+        if (auto *CB = dyn_cast<CallBase>(U))
+          if (CB->getCalledFunction() == &F &&
+                CB->hasFnAttr(Attribute::AlwaysInline) &&
+                !CB->getAttributes().hasFnAttr(Attribute::NoInline))
+              Calls.insert(CB);
 
-    for (User *U : F.users())
-      if (auto *CB = dyn_cast<CallBase>(U))
-        if (CB->getCalledFunction() == &F &&
-            CB->hasFnAttr(Attribute::AlwaysInline) &&
-            !CB->getAttributes().hasFnAttr(Attribute::NoInline))
-          Calls.insert(CB);
+      for (CallBase *CB : Calls) {
+        Function *Caller = CB->getCaller();
+        OptimizationRemarkEmitter ORE(Caller);
+        DebugLoc DLoc = CB->getDebugLoc();
+        BasicBlock *Block = CB->getParent();
 
-    for (CallBase *CB : Calls) {
-      Function *Caller = CB->getCaller();
-      OptimizationRemarkEmitter ORE(Caller);
-      DebugLoc DLoc = CB->getDebugLoc();
-      BasicBlock *Block = CB->getParent();
+        InlineFunctionInfo IFI(GetAssumptionCache, &PSI,
+                               GetBFI ? &GetBFI(*Caller) : nullptr,
+                               GetBFI ? &GetBFI(F) : nullptr);
 
-      InlineFunctionInfo IFI(GetAssumptionCache, &PSI, nullptr, nullptr);
-      InlineResult Res = InlineFunction(*CB, IFI, /*MergeAttributes=*/true,
-                                        &GetAAR(F), InsertLifetime);
-      if (!Res.isSuccess()) {
-        ORE.emit([&]() {
-          return OptimizationRemarkMissed(DEBUG_TYPE, "NotInlined", DLoc, Block)
-                 << "'" << ore::NV("Callee", &F) << "' is not inlined into '"
-                 << ore::NV("Caller", Caller)
-                 << "': " << ore::NV("Reason", Res.getFailureReason());
-        });
-        continue;
+        InlineResult Res = InlineFunction(*CB, IFI, /*MergeAttributes=*/true,
+                                          &GetAAR(F), InsertLifetime);
+        if (!Res.isSuccess()) {
+          ORE.emit([&]() {
+            return OptimizationRemarkMissed(DEBUG_TYPE, "NotInlined", DLoc,
+                                            Block)
+                   << "'" << ore::NV("Callee", &F) << "' is not inlined into '"
+                   << ore::NV("Caller", Caller)
+                   << "': " << ore::NV("Reason", Res.getFailureReason());
+          });
+          continue;
+        }
+
+        emitInlinedIntoBasedOnCost(
+            ORE, DLoc, Block, F, *Caller,
+            InlineCost::getAlways("always inline attribute"),
+            /*ForProfileContext=*/false, DEBUG_TYPE);
+
+        Changed = true;
       }
 
-      emitInlinedIntoBasedOnCost(
-          ORE, DLoc, Block, F, *Caller,
-          InlineCost::getAlways("always inline attribute"),
-          /*ForProfileContext=*/false, DEBUG_TYPE);
-
-      Changed = true;
-      if (FAM)
-        FAM->invalidate(*Caller, PreservedAnalyses::none());
-    }
-
-    F.removeDeadConstantUsers();
-    if (F.hasFnAttribute(Attribute::AlwaysInline) && F.isDefTriviallyDead()) {
-      // Remember to try and delete this function afterward. This allows to call
-      // filterDeadComdatFunctions() only once.
-      if (F.hasComdat()) {
-        InlinedComdatFunctions.push_back(&F);
-      } else {
-        if (FAM)
-          FAM->clear(F, F.getName());
-        M.getFunctionList().erase(F);
-        Changed = true;
+      if (F.hasFnAttribute(Attribute::AlwaysInline)) {
+        // Remember to try and delete this function afterward. This both avoids
+        // re-walking the rest of the module and avoids dealing with any
+        // iterator invalidation issues while deleting functions.
+        InlinedFunctions.push_back(&F);
       }
     }
   }
 
-  if (!InlinedComdatFunctions.empty()) {
+  // Remove any live functions.
+  erase_if(InlinedFunctions, [&](Function *F) {
+    F->removeDeadConstantUsers();
+    return !F->isDefTriviallyDead();
+  });
+
+  // Delete the non-comdat ones from the module and also from our vector.
+  auto NonComdatBegin = partition(
+      InlinedFunctions, [&](Function *F) { return F->hasComdat(); });
+  for (Function *F : make_range(NonComdatBegin, InlinedFunctions.end())) {
+    M.getFunctionList().erase(F);
+    Changed = true;
+  }
+  InlinedFunctions.erase(NonComdatBegin, InlinedFunctions.end());
+
+  if (!InlinedFunctions.empty()) {
     // Now we just have the comdat functions. Filter out the ones whose comdats
     // are not actually dead.
-    filterDeadComdatFunctions(InlinedComdatFunctions);
+    filterDeadComdatFunctions(InlinedFunctions);
     // The remaining functions are actually dead.
-    for (Function *F : InlinedComdatFunctions) {
-      if (FAM)
-        FAM->clear(*F, F->getName());
+    for (Function *F : InlinedFunctions) {
       M.getFunctionList().erase(F);
       Changed = true;
     }
@@ -137,8 +147,8 @@ struct AlwaysInlinerLegacyPass : public ModulePass {
       return getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
     };
 
-    return AlwaysInlineImpl(M, InsertLifetime, PSI, /*FAM=*/nullptr,
-                            GetAssumptionCache, GetAAR);
+    return AlwaysInlineImpl(M, InsertLifetime, PSI, GetAssumptionCache, GetAAR,
+                            /*GetBFI*/ nullptr);
   }
 
   static char ID; // Pass identification, replacement for typeid
@@ -172,18 +182,16 @@ PreservedAnalyses AlwaysInlinerPass::run(Module &M,
   auto GetAssumptionCache = [&](Function &F) -> AssumptionCache & {
     return FAM.getResult<AssumptionAnalysis>(F);
   };
+  auto GetBFI = [&](Function &F) -> BlockFrequencyInfo & {
+    return FAM.getResult<BlockFrequencyAnalysis>(F);
+  };
   auto GetAAR = [&](Function &F) -> AAResults & {
     return FAM.getResult<AAManager>(F);
   };
   auto &PSI = MAM.getResult<ProfileSummaryAnalysis>(M);
 
-  bool Changed = AlwaysInlineImpl(M, InsertLifetime, PSI, &FAM,
-                                  GetAssumptionCache, GetAAR);
-  if (!Changed)
-    return PreservedAnalyses::all();
+  bool Changed = AlwaysInlineImpl(M, InsertLifetime, PSI, GetAssumptionCache,
+                                  GetAAR, GetBFI);
 
-  PreservedAnalyses PA;
-  // We have already invalidated all analyses on modified functions.
-  PA.preserveSet<AllAnalysesOn<Function>>();
-  return PA;
+  return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }

@@ -1,23 +1,23 @@
-export fn runtimeCall() callconv(.naked) void {
+export fn runtimeCall() callconv(.Naked) void {
     f();
 }
 
-export fn runtimeBuiltinCall() callconv(.naked) void {
+export fn runtimeBuiltinCall() callconv(.Naked) void {
     @call(.auto, f, .{});
 }
 
-export fn comptimeCall() callconv(.naked) void {
+export fn comptimeCall() callconv(.Naked) void {
     comptime f();
 }
 
-export fn comptimeBuiltinCall() callconv(.naked) void {
+export fn comptimeBuiltinCall() callconv(.Naked) void {
     @call(.compile_time, f, .{});
 }
 
 fn f() void {}
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:6: error: runtime call not allowed in naked function

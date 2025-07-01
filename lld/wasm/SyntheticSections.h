@@ -56,6 +56,7 @@ public:
 
   void finalizeContents() override {
     writeBody();
+    bodyOutputStream.flush();
     createHeader(body.size());
   }
 
@@ -228,7 +229,7 @@ class MemorySection : public SyntheticSection {
 public:
   MemorySection() : SyntheticSection(llvm::wasm::WASM_SEC_MEMORY) {}
 
-  bool isNeeded() const override { return !ctx.arg.memoryImport.has_value(); }
+  bool isNeeded() const override { return !config->memoryImport.has_value(); }
   void writeBody() override;
 
   uint64_t numMemoryPages = 0;
@@ -286,7 +287,7 @@ public:
   // transform a `global.get` to an `i32.const`.
   void addInternalGOTEntry(Symbol *sym);
   bool needsRelocations() {
-    if (ctx.arg.extendedConst)
+    if (config->extendedConst)
       return false;
     return llvm::any_of(internalGotSymbols,
                         [=](Symbol *sym) { return !sym->isTLS(); });
@@ -354,7 +355,7 @@ public:
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "linking"),
         initFunctions(initFunctions), dataSegments(dataSegments) {}
   bool isNeeded() const override {
-    return ctx.arg.relocatable || ctx.arg.emitRelocs;
+    return config->relocatable || config->emitRelocs;
   }
   void writeBody() override;
   void addToSymtab(Symbol *sym);
@@ -372,17 +373,9 @@ public:
   NameSection(ArrayRef<OutputSegment *> segments)
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "name"),
         segments(segments) {}
-  bool isNeeded() const override {
-    if (ctx.arg.stripAll && !ctx.arg.keepSections.count(name))
-      return false;
-    return numNames() > 0;
-  }
+  bool isNeeded() const override { return !config->stripAll && numNames() > 0; }
   void writeBody() override;
-  unsigned numNames() const {
-    // We always write at least one name which is the name of the
-    // module itself.
-    return 1 + numNamedGlobals() + numNamedFunctions();
-  }
+  unsigned numNames() const { return numNamedGlobals() + numNamedFunctions(); }
   unsigned numNamedGlobals() const;
   unsigned numNamedFunctions() const;
   unsigned numNamedDataSegments() const;
@@ -396,9 +389,7 @@ public:
   ProducersSection()
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "producers") {}
   bool isNeeded() const override {
-    if (ctx.arg.stripAll && !ctx.arg.keepSections.count(name))
-      return false;
-    return fieldCount() > 0;
+    return !config->stripAll && fieldCount() > 0;
   }
   void writeBody() override;
   void addInfo(const llvm::wasm::WasmProducerInfo &info);
@@ -417,9 +408,7 @@ public:
   TargetFeaturesSection()
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "target_features") {}
   bool isNeeded() const override {
-    if (ctx.arg.stripAll && !ctx.arg.keepSections.count(name))
-      return false;
-    return features.size() > 0;
+    return !config->stripAll && features.size() > 0;
   }
   void writeBody() override;
 
@@ -443,7 +432,7 @@ public:
   BuildIdSection();
   void writeBody() override;
   bool isNeeded() const override {
-    return ctx.arg.buildId != BuildIdKind::None;
+    return config->buildId != BuildIdKind::None;
   }
   void writeBuildId(llvm::ArrayRef<uint8_t> buf);
   void writeTo(uint8_t *buf) override {

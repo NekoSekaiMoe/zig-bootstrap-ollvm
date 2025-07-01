@@ -33,8 +33,7 @@ public:
   void emitEpilogue(MachineFunction &MF,
                     MachineBasicBlock &MBB) const override {}
 
-protected:
-  bool hasFPImpl(const MachineFunction &MF) const override { return false; }
+  bool hasFP(const MachineFunction &MF) const override { return false; }
 };
 } // namespace llvm
 #endif // LLVM_LIB_TARGET_SPIRV_SPIRVFRAMELOWERING_H

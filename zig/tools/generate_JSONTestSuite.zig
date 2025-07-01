@@ -3,7 +3,7 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
 
     var output = std.io.getStdOut().writer();

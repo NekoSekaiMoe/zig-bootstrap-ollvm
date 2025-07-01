@@ -19,8 +19,10 @@
 #include "TargetInfo/LanaiTargetInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetOptions.h"
 #include <optional>
 
@@ -35,7 +37,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeLanaiTarget() {
   RegisterTargetMachine<LanaiTargetMachine> registered_target(
       getTheLanaiTarget());
   PassRegistry &PR = *PassRegistry::getPassRegistry();
-  initializeLanaiDAGToDAGISelLegacyPass(PR);
+  initializeLanaiDAGToDAGISelPass(PR);
 }
 
 static std::string computeDataLayout() {
@@ -56,12 +58,12 @@ static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {
 LanaiTargetMachine::LanaiTargetMachine(
     const Target &T, const Triple &TT, StringRef Cpu, StringRef FeatureString,
     const TargetOptions &Options, std::optional<Reloc::Model> RM,
-    std::optional<CodeModel::Model> CodeModel, CodeGenOptLevel OptLevel,
+    std::optional<CodeModel::Model> CodeModel, CodeGenOpt::Level OptLevel,
     bool JIT)
-    : CodeGenTargetMachineImpl(
-          T, computeDataLayout(), TT, Cpu, FeatureString, Options,
-          getEffectiveRelocModel(RM),
-          getEffectiveCodeModel(CodeModel, CodeModel::Medium), OptLevel),
+    : LLVMTargetMachine(T, computeDataLayout(), TT, Cpu, FeatureString, Options,
+                        getEffectiveRelocModel(RM),
+                        getEffectiveCodeModel(CodeModel, CodeModel::Medium),
+                        OptLevel),
       Subtarget(TT, Cpu, FeatureString, *this, Options, getCodeModel(),
                 OptLevel),
       TLOF(new LanaiTargetObjectFile()) {
@@ -91,7 +93,6 @@ public:
     return getTM<LanaiTargetMachine>();
   }
 
-  void addIRPasses() override;
   bool addInstSelector() override;
   void addPreSched2() override;
   void addPreEmitPass() override;
@@ -101,12 +102,6 @@ public:
 TargetPassConfig *
 LanaiTargetMachine::createPassConfig(PassManagerBase &PassManager) {
   return new LanaiPassConfig(*this, &PassManager);
-}
-
-void LanaiPassConfig::addIRPasses() {
-  addPass(createAtomicExpandLegacyPass());
-
-  TargetPassConfig::addIRPasses();
 }
 
 // Install an instruction selector pass.

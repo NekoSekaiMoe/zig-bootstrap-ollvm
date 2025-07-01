@@ -28,7 +28,6 @@ class Module;
 class AttrBuilder;
 class Function;
 class Triple;
-class TargetMachine;
 
 namespace codegen {
 
@@ -45,9 +44,6 @@ ThreadModel::Model getThreadModel();
 
 CodeModel::Model getCodeModel();
 std::optional<CodeModel::Model> getExplicitCodeModel();
-
-uint64_t getLargeDataThreshold();
-std::optional<uint64_t> getExplicitLargeDataThreshold();
 
 llvm::ExceptionHandling getExceptionModel();
 
@@ -90,6 +86,8 @@ bool getDisableTailCalls();
 
 bool getStackSymbolOrdering();
 
+unsigned getOverrideStackAlignment();
+
 bool getStackRealign();
 
 std::string getTrapFuncName();
@@ -97,6 +95,8 @@ std::string getTrapFuncName();
 bool getUseCtors();
 
 bool getDisableIntegratedAS();
+
+bool getRelaxELFRelocations();
 
 bool getDataSections();
 std::optional<bool> getExplicitDataSections();
@@ -115,14 +115,9 @@ unsigned getTLSSize();
 bool getEmulatedTLS();
 std::optional<bool> getExplicitEmulatedTLS();
 
-bool getEnableTLSDESC();
-std::optional<bool> getExplicitEnableTLSDESC();
-
 bool getUniqueSectionNames();
 
 bool getUniqueBasicBlockSectionNames();
-
-bool getSeparateNamedSections();
 
 llvm::EABI getEABIVersion();
 
@@ -159,8 +154,6 @@ struct RegisterCodeGenFlags {
   RegisterCodeGenFlags();
 };
 
-bool getEnableBBAddrMap();
-
 llvm::BasicBlockSection getBBSectionsMode(llvm::TargetOptions &Options);
 
 /// Common utility function tightly tied to the options listed here. Initializes
@@ -190,14 +183,6 @@ void setFunctionAttributes(StringRef CPU, StringRef Features, Module &M);
 /// Should value-tracking variable locations / instruction referencing be
 /// enabled by default for this triple?
 bool getDefaultValueTrackingVariableLocations(const llvm::Triple &T);
-
-/// Creates a TargetMachine instance with the options defined on the command
-/// line. This can be used for tools that do not need further customization of
-/// the TargetOptions.
-Expected<std::unique_ptr<TargetMachine>> createTargetMachineForTriple(
-    StringRef TargetTriple,
-    CodeGenOptLevel OptLevel = CodeGenOptLevel::Default);
-
 } // namespace codegen
 } // namespace llvm
 

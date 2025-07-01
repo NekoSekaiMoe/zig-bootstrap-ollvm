@@ -54,29 +54,35 @@ enum class FileFormat { IFS, ELF, TBD };
 using namespace llvm::opt;
 enum ID {
   OPT_INVALID = 0, // This is not an option ID.
-#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  OPT_##ID,
 #include "Opts.inc"
 #undef OPTION
 };
 
-#define OPTTABLE_STR_TABLE_CODE
+#define PREFIX(NAME, VALUE)                                                    \
+  static constexpr StringLiteral NAME##_init[] = VALUE;                        \
+  static constexpr ArrayRef<StringLiteral> NAME(NAME##_init,                   \
+                                                std::size(NAME##_init) - 1);
 #include "Opts.inc"
-#undef OPTTABLE_STR_TABLE_CODE
-
-#define OPTTABLE_PREFIXES_TABLE_CODE
-#include "Opts.inc"
-#undef OPTTABLE_PREFIXES_TABLE_CODE
+#undef PREFIX
 
 static constexpr opt::OptTable::Info InfoTable[] = {
-#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  {                                                                            \
+      PREFIX,      NAME,      HELPTEXT,                                        \
+      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
+      PARAM,       FLAGS,     OPT_##GROUP,                                     \
+      OPT_##ALIAS, ALIASARGS, VALUES},
 #include "Opts.inc"
 #undef OPTION
 };
 
 class IFSOptTable : public opt::GenericOptTable {
 public:
-  IFSOptTable()
-      : opt::GenericOptTable(OptionStrTable, OptionPrefixesTable, InfoTable) {
+  IFSOptTable() : opt::GenericOptTable(InfoTable) {
     setGroupedShortOptions(true);
   }
 };
@@ -214,17 +220,17 @@ static int writeTbdStub(const Triple &T, const std::vector<IFSSymbol> &Symbols,
 
   for (const auto &Symbol : Symbols) {
     auto Name = Symbol.Name;
-    auto Kind = EncodeKind::GlobalSymbol;
+    auto Kind = SymbolKind::GlobalSymbol;
     switch (Symbol.Type) {
     default:
     case IFSSymbolType::NoType:
-      Kind = EncodeKind::GlobalSymbol;
+      Kind = SymbolKind::GlobalSymbol;
       break;
     case IFSSymbolType::Object:
-      Kind = EncodeKind::GlobalSymbol;
+      Kind = SymbolKind::GlobalSymbol;
       break;
     case IFSSymbolType::Func:
-      Kind = EncodeKind::GlobalSymbol;
+      Kind = SymbolKind::GlobalSymbol;
       break;
     }
     if (Symbol.Weak)
@@ -443,9 +449,12 @@ int llvm_ifs_main(int argc, char **argv, const llvm::ToolContext &) {
     }
 
     for (auto Symbol : TargetStub->Symbols) {
-      auto [SI, Inserted] = SymbolMap.try_emplace(Symbol.Name, Symbol);
-      if (Inserted)
+      auto SI = SymbolMap.find(Symbol.Name);
+      if (SI == SymbolMap.end()) {
+        SymbolMap.insert(
+            std::pair<std::string, IFSSymbol>(Symbol.Name, Symbol));
         continue;
+      }
 
       assert(Symbol.Name == SI->second.Name && "Symbol Names Must Match.");
 

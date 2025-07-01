@@ -13,7 +13,6 @@
 #include "CodeViewDebug.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TinyPtrVector.h"
@@ -27,7 +26,6 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
-#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/Config/llvm-config.h"
@@ -56,10 +54,12 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
@@ -69,6 +69,7 @@
 #include <cassert>
 #include <cctype>
 #include <cstddef>
+#include <iterator>
 #include <limits>
 
 using namespace llvm;
@@ -123,8 +124,6 @@ static CPUType mapArchToCVCPUType(Triple::ArchType Type) {
     return CPUType::ARMNT;
   case Triple::ArchType::aarch64:
     return CPUType::ARM64;
-  case Triple::ArchType::mipsel:
-    return CPUType::MIPS;
   default:
     report_fatal_error("target architecture doesn't map to a CodeView CPUType");
   }
@@ -142,7 +141,7 @@ StringRef CodeViewDebug::getFullFilepath(const DIFile *File) {
 
   // If this is a Unix-style path, just use it as is. Don't try to canonicalize
   // it textually because one of the path components could be a symlink.
-  if (Dir.starts_with("/") || Filename.starts_with("/")) {
+  if (Dir.startswith("/") || Filename.startswith("/")) {
     if (llvm::sys::path::is_absolute(Filename, llvm::sys::path::Style::posix))
       return Filename;
     Filepath = std::string(Dir);
@@ -249,10 +248,7 @@ CodeViewDebug::getInlineSite(const DILocation *InlinedAt,
         InlinedAt->getLine(), InlinedAt->getColumn(), SMLoc());
     Site->Inlinee = Inlinee;
     InlinedSubprograms.insert(Inlinee);
-    auto InlineeIdx = getFuncIdForSubprogram(Inlinee);
-
-    if (InlinedAt->getInlinedAt() == nullptr)
-      CurFn->Inlinees.insert(InlineeIdx);
+    getFuncIdForSubprogram(Inlinee);
   }
   return *Site;
 }
@@ -613,7 +609,7 @@ static SourceLanguage MapDWLangToCVLang(unsigned DWLang) {
 void CodeViewDebug::beginModule(Module *M) {
   // If module doesn't have named metadata anchors or COFF debug section
   // is not available, skip any debug info related stuff.
-  if (!Asm->hasDebugInfo() ||
+  if (!MMI->hasDebugInfo() ||
       !Asm->getObjFileLowering().getCOFFDebugSymbolsSection()) {
     Asm = nullptr;
     return;
@@ -636,7 +632,7 @@ void CodeViewDebug::beginModule(Module *M) {
 }
 
 void CodeViewDebug::endModule() {
-  if (!Asm || !Asm->hasDebugInfo())
+  if (!Asm || !MMI->hasDebugInfo())
     return;
 
   // The COFF .debug$S section consists of several subsections, each starting
@@ -893,6 +889,37 @@ static TypeIndex getStringIdTypeIdx(GlobalTypeTableBuilder &TypeTable,
   return TypeTable.writeLeafType(SIR);
 }
 
+static std::string flattenCommandLine(ArrayRef<std::string> Args,
+                                      StringRef MainFilename) {
+  std::string FlatCmdLine;
+  raw_string_ostream OS(FlatCmdLine);
+  bool PrintedOneArg = false;
+  if (!StringRef(Args[0]).contains("-cc1")) {
+    llvm::sys::printArg(OS, "-cc1", /*Quote=*/true);
+    PrintedOneArg = true;
+  }
+  for (unsigned i = 0; i < Args.size(); i++) {
+    StringRef Arg = Args[i];
+    if (Arg.empty())
+      continue;
+    if (Arg == "-main-file-name" || Arg == "-o") {
+      i++; // Skip this argument and next one.
+      continue;
+    }
+    if (Arg.startswith("-object-file-name") || Arg == MainFilename)
+      continue;
+    // Skip fmessage-length for reproduciability.
+    if (Arg.startswith("-fmessage-length"))
+      continue;
+    if (PrintedOneArg)
+      OS << " ";
+    llvm::sys::printArg(OS, Arg, /*Quote=*/true);
+    PrintedOneArg = true;
+  }
+  OS.flush();
+  return FlatCmdLine;
+}
+
 void CodeViewDebug::emitBuildInfo() {
   // First, make LF_BUILDINFO. It's a sequence of strings with various bits of
   // build info. The known prefix is:
@@ -916,11 +943,13 @@ void CodeViewDebug::emitBuildInfo() {
   // FIXME: PDB is intentionally blank unless we implement /Zi type servers.
   BuildInfoArgs[BuildInfoRecord::TypeServerPDB] =
       getStringIdTypeIdx(TypeTable, "");
-  BuildInfoArgs[BuildInfoRecord::BuildTool] =
-      getStringIdTypeIdx(TypeTable, Asm->TM.Options.MCOptions.Argv0);
-  BuildInfoArgs[BuildInfoRecord::CommandLine] = getStringIdTypeIdx(
-      TypeTable, Asm->TM.Options.MCOptions.CommandlineArgs);
-
+  if (Asm->TM.Options.MCOptions.Argv0 != nullptr) {
+    BuildInfoArgs[BuildInfoRecord::BuildTool] =
+        getStringIdTypeIdx(TypeTable, Asm->TM.Options.MCOptions.Argv0);
+    BuildInfoArgs[BuildInfoRecord::CommandLine] = getStringIdTypeIdx(
+        TypeTable, flattenCommandLine(Asm->TM.Options.MCOptions.CommandLineArgs,
+                                      MainSourceFile->getFilename()));
+  }
   BuildInfoRecord BIR(BuildInfoArgs);
   TypeIndex BuildInfoIndex = TypeTable.writeLeafType(BIR);
 
@@ -1163,7 +1192,6 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.emitInt32(uint32_t(FI.FrameProcOpts));
     endSymbolRecord(FrameProcEnd);
 
-    emitInlinees(FI.Inlinees);
     emitLocalVariableList(FI, FI.Locals);
     emitGlobalVariableList(FI.Globals);
     emitLexicalBlockList(FI.ChildBlocks, FI);
@@ -1214,8 +1242,6 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
 
     if (SP != nullptr)
       emitDebugInfoForUDTs(LocalUDTs);
-
-    emitDebugInfoForJumpTables(FI);
 
     // We're done with this function.
     emitEndSymbolRecord(SymbolKind::S_PROC_ID_END);
@@ -1364,12 +1390,6 @@ void CodeViewDebug::calculateRanges(
     if (Location->Register == 0 || Location->LoadChain.size() > 1)
       continue;
 
-    // Codeview can only express byte-aligned offsets, ensure that we have a
-    // byte-boundaried location.
-    if (Location->FragmentInfo)
-      if (Location->FragmentInfo->OffsetInBits % 8)
-        continue;
-
     LocalVarDef DR;
     DR.CVRegister = TRI->getCodeViewRegNum(Location->Register);
     DR.InMemory = !Location->LoadChain.empty();
@@ -1513,8 +1533,8 @@ void CodeViewDebug::beginFunctionImpl(const MachineFunction *MF) {
   }
   FPO |= FrameProcedureOptions(uint32_t(CurFn->EncodedLocalFramePtrReg) << 14U);
   FPO |= FrameProcedureOptions(uint32_t(CurFn->EncodedParamFramePtrReg) << 16U);
-  if (Asm->TM.getOptLevel() != CodeGenOptLevel::None && !GV.hasOptSize() &&
-      !GV.hasOptNone())
+  if (Asm->TM.getOptLevel() != CodeGenOpt::None &&
+      !GV.hasOptSize() && !GV.hasOptNone())
     FPO |= FrameProcedureOptions::OptimizedForSpeed;
   if (GV.hasProfileData()) {
     FPO |= FrameProcedureOptions::ValidProfileCounts;
@@ -1558,11 +1578,6 @@ void CodeViewDebug::beginFunctionImpl(const MachineFunction *MF) {
       }
     }
   }
-
-  // Mark branches that may potentially be using jump tables with labels.
-  bool isThumb = Triple(MMI->getModule()->getTargetTriple()).getArch() ==
-                 llvm::Triple::ArchType::thumb;
-  discoverJumpTableBranches(MF, isThumb);
 }
 
 static bool shouldEmitUdt(const DIType *T) {
@@ -2042,7 +2057,7 @@ TypeIndex CodeViewDebug::lowerTypeFunction(const DISubroutineType *Ty) {
     ReturnAndArgTypeIndices.back() = TypeIndex::None();
   }
   TypeIndex ReturnTypeIndex = TypeIndex::Void();
-  ArrayRef<TypeIndex> ArgTypeIndices = {};
+  ArrayRef<TypeIndex> ArgTypeIndices = std::nullopt;
   if (!ReturnAndArgTypeIndices.empty()) {
     auto ReturnAndArgTypesRef = ArrayRef(ReturnAndArgTypeIndices);
     ReturnTypeIndex = ReturnAndArgTypesRef.front();
@@ -2556,7 +2571,7 @@ CodeViewDebug::lowerRecordFieldList(const DICompositeType *Ty) {
 
     // Virtual function pointer member.
     if ((Member->getFlags() & DINode::FlagArtificial) &&
-        Member->getName().starts_with("_vptr$")) {
+        Member->getName().startswith("_vptr$")) {
       VFPtrRecord VFPR(getTypeIndex(Member->getBaseType()));
       ContinuationBuilder.writeMemberType(VFPR);
       MemberCount++;
@@ -3009,7 +3024,7 @@ void CodeViewDebug::collectLexicalBlockInfo(
   if (!BlockInsertion.second)
     return;
 
-  // Create a lexical block containing the variables and collect the
+  // Create a lexical block containing the variables and collect the the
   // lexical block information for the children.
   const InsnRange &Range = Ranges.front();
   assert(Range.first && Range.second);
@@ -3067,10 +3082,6 @@ void CodeViewDebug::endFunctionImpl(const MachineFunction *MF) {
       }
     }
   }
-
-  bool isThumb = Triple(MMI->getModule()->getTargetTriple()).getArch() ==
-                 llvm::Triple::ArchType::thumb;
-  collectDebugInfoForJumpTables(MF, isThumb);
 
   CurFn->Annotations = MF->getCodeViewAnnotations();
 
@@ -3325,7 +3336,7 @@ void CodeViewDebug::emitConstantSymbolRecord(const DIType *DTy, APSInt &Value,
 
   // Encoded integers shouldn't need more than 10 bytes.
   uint8_t Data[10];
-  BinaryStreamWriter Writer(Data, llvm::endianness::little);
+  BinaryStreamWriter Writer(Data, llvm::support::endianness::little);
   CodeViewRecordIO IO(Writer);
   cantFail(IO.mapEncodedInteger(Value));
   StringRef SRef((char *)Data, Writer.getOffset());
@@ -3406,8 +3417,10 @@ void CodeViewDebug::emitDebugInfoForGlobal(const CVGlobalVariable &CVGV) {
     OS.emitInt32(getCompleteTypeIndex(DIGV->getType()).getIndex());
     OS.AddComment("DataOffset");
 
-    // Use the offset seen while collecting info on globals.
-    uint64_t Offset = CVGlobalVariableOffsets.lookup(DIGV);
+    uint64_t Offset = 0;
+    if (CVGlobalVariableOffsets.contains(DIGV))
+      // Use the offset seen while collecting info on globals.
+      Offset = CVGlobalVariableOffsets[DIGV];
     OS.emitCOFFSecRel32(GVSym, Offset);
 
     OS.AddComment("Segment");
@@ -3427,166 +3440,5 @@ void CodeViewDebug::emitDebugInfoForGlobal(const CVGlobalVariable &CVGV) {
                           : DebugHandlerBase::isUnsignedDIType(DIGV->getType());
     APSInt Value(APInt(/*BitWidth=*/64, DIE->getElement(1)), isUnsigned);
     emitConstantSymbolRecord(DIGV->getType(), Value, QualifiedName);
-  }
-}
-
-void forEachJumpTableBranch(
-    const MachineFunction *MF, bool isThumb,
-    const std::function<void(const MachineJumpTableInfo &, const MachineInstr &,
-                             int64_t)> &Callback) {
-  auto JTI = MF->getJumpTableInfo();
-  if (JTI && !JTI->isEmpty()) {
-#ifndef NDEBUG
-    auto UsedJTs = llvm::SmallBitVector(JTI->getJumpTables().size());
-#endif
-    for (const auto &MBB : *MF) {
-      // Search for indirect branches...
-      const auto LastMI = MBB.getFirstTerminator();
-      if (LastMI != MBB.end() && LastMI->isIndirectBranch()) {
-        if (isThumb) {
-          // ... that directly use jump table operands.
-          // NOTE: ARM uses pattern matching to lower its BR_JT SDNode to
-          // machine instructions, hence inserting a JUMP_TABLE_DEBUG_INFO node
-          // interferes with this process *but* the resulting pseudo-instruction
-          // uses a Jump Table operand, so extract the jump table index directly
-          // from that.
-          for (const auto &MO : LastMI->operands()) {
-            if (MO.isJTI()) {
-              unsigned Index = MO.getIndex();
-#ifndef NDEBUG
-              UsedJTs.set(Index);
-#endif
-              Callback(*JTI, *LastMI, Index);
-              break;
-            }
-          }
-        } else {
-          // ... that have jump table debug info.
-          // NOTE: The debug info is inserted as a JUMP_TABLE_DEBUG_INFO node
-          // when lowering the BR_JT SDNode to an indirect branch.
-          for (auto I = MBB.instr_rbegin(), E = MBB.instr_rend(); I != E; ++I) {
-            if (I->isJumpTableDebugInfo()) {
-              unsigned Index = I->getOperand(0).getImm();
-#ifndef NDEBUG
-              UsedJTs.set(Index);
-#endif
-              Callback(*JTI, *LastMI, Index);
-              break;
-            }
-          }
-        }
-      }
-    }
-#ifndef NDEBUG
-    assert(UsedJTs.all() &&
-           "Some of jump tables were not used in a debug info instruction");
-#endif
-  }
-}
-
-void CodeViewDebug::discoverJumpTableBranches(const MachineFunction *MF,
-                                              bool isThumb) {
-  forEachJumpTableBranch(
-      MF, isThumb,
-      [this](const MachineJumpTableInfo &, const MachineInstr &BranchMI,
-             int64_t) { requestLabelBeforeInsn(&BranchMI); });
-}
-
-void CodeViewDebug::collectDebugInfoForJumpTables(const MachineFunction *MF,
-                                                  bool isThumb) {
-  forEachJumpTableBranch(
-      MF, isThumb,
-      [this, MF](const MachineJumpTableInfo &JTI, const MachineInstr &BranchMI,
-                 int64_t JumpTableIndex) {
-        // For label-difference jump tables, find the base expression.
-        // Otherwise the jump table uses an absolute address (so no base
-        // is required).
-        const MCSymbol *Base;
-        uint64_t BaseOffset = 0;
-        const MCSymbol *Branch = getLabelBeforeInsn(&BranchMI);
-        JumpTableEntrySize EntrySize;
-        switch (JTI.getEntryKind()) {
-        case MachineJumpTableInfo::EK_Custom32:
-        case MachineJumpTableInfo::EK_GPRel32BlockAddress:
-        case MachineJumpTableInfo::EK_GPRel64BlockAddress:
-          llvm_unreachable(
-              "EK_Custom32, EK_GPRel32BlockAddress, and "
-              "EK_GPRel64BlockAddress should never be emitted for COFF");
-        case MachineJumpTableInfo::EK_BlockAddress:
-          // Each entry is an absolute address.
-          EntrySize = JumpTableEntrySize::Pointer;
-          Base = nullptr;
-          break;
-        case MachineJumpTableInfo::EK_Inline:
-        case MachineJumpTableInfo::EK_LabelDifference32:
-        case MachineJumpTableInfo::EK_LabelDifference64:
-          // Ask the AsmPrinter.
-          std::tie(Base, BaseOffset, Branch, EntrySize) =
-              Asm->getCodeViewJumpTableInfo(JumpTableIndex, &BranchMI, Branch);
-          break;
-        }
-
-        CurFn->JumpTables.push_back(
-            {EntrySize, Base, BaseOffset, Branch,
-             MF->getJTISymbol(JumpTableIndex, MMI->getContext()),
-             JTI.getJumpTables()[JumpTableIndex].MBBs.size()});
-      });
-}
-
-void CodeViewDebug::emitDebugInfoForJumpTables(const FunctionInfo &FI) {
-  for (auto JumpTable : FI.JumpTables) {
-    MCSymbol *JumpTableEnd = beginSymbolRecord(SymbolKind::S_ARMSWITCHTABLE);
-    if (JumpTable.Base) {
-      OS.AddComment("Base offset");
-      OS.emitCOFFSecRel32(JumpTable.Base, JumpTable.BaseOffset);
-      OS.AddComment("Base section index");
-      OS.emitCOFFSectionIndex(JumpTable.Base);
-    } else {
-      OS.AddComment("Base offset");
-      OS.emitInt32(0);
-      OS.AddComment("Base section index");
-      OS.emitInt16(0);
-    }
-    OS.AddComment("Switch type");
-    OS.emitInt16(static_cast<uint16_t>(JumpTable.EntrySize));
-    OS.AddComment("Branch offset");
-    OS.emitCOFFSecRel32(JumpTable.Branch, /*Offset=*/0);
-    OS.AddComment("Table offset");
-    OS.emitCOFFSecRel32(JumpTable.Table, /*Offset=*/0);
-    OS.AddComment("Branch section index");
-    OS.emitCOFFSectionIndex(JumpTable.Branch);
-    OS.AddComment("Table section index");
-    OS.emitCOFFSectionIndex(JumpTable.Table);
-    OS.AddComment("Entries count");
-    OS.emitInt32(JumpTable.TableSize);
-    endSymbolRecord(JumpTableEnd);
-  }
-}
-
-void CodeViewDebug::emitInlinees(
-    const SmallSet<codeview::TypeIndex, 1> &Inlinees) {
-  // Divide the list of inlinees into chunks such that each chunk fits within
-  // one record.
-  constexpr size_t ChunkSize =
-      (MaxRecordLength - sizeof(SymbolKind) - sizeof(uint32_t)) /
-      sizeof(uint32_t);
-
-  SmallVector<TypeIndex> SortedInlinees{Inlinees.begin(), Inlinees.end()};
-  llvm::sort(SortedInlinees);
-
-  size_t CurrentIndex = 0;
-  while (CurrentIndex < SortedInlinees.size()) {
-    auto Symbol = beginSymbolRecord(SymbolKind::S_INLINEES);
-    auto CurrentChunkSize =
-        std::min(ChunkSize, SortedInlinees.size() - CurrentIndex);
-    OS.AddComment("Count");
-    OS.emitInt32(CurrentChunkSize);
-
-    const size_t CurrentChunkEnd = CurrentIndex + CurrentChunkSize;
-    for (; CurrentIndex < CurrentChunkEnd; ++CurrentIndex) {
-      OS.AddComment("Inlinee");
-      OS.emitInt32(SortedInlinees[CurrentIndex].getIndex());
-    }
-    endSymbolRecord(Symbol);
   }
 }

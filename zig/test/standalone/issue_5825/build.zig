@@ -16,25 +16,20 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.OptimizeMode = .Debug;
     const obj = b.addObject(.{
         .name = "issue_5825",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("main.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("main.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const exe = b.addExecutable(.{
         .name = "issue_5825",
-        .root_module = b.createModule(.{
-            .root_source_file = null,
-            .optimize = optimize,
-            .target = target,
-        }),
+        .optimize = optimize,
+        .target = target,
     });
     exe.subsystem = .Console;
-    exe.root_module.linkSystemLibrary("kernel32", .{});
-    exe.root_module.linkSystemLibrary("ntdll", .{});
-    exe.root_module.addObject(obj);
+    exe.linkSystemLibrary("kernel32");
+    exe.linkSystemLibrary("ntdll");
+    exe.addObject(obj);
 
     // TODO: actually check the output
     _ = exe.getEmittedBin();

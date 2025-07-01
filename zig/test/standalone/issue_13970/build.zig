@@ -5,24 +5,15 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const test1 = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test_root/empty.zig"),
-            .target = b.graph.host,
-        }),
+        .root_source_file = b.path("test_root/empty.zig"),
         .test_runner = "src/main.zig",
     });
     const test2 = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/empty.zig"),
-            .target = b.graph.host,
-        }),
+        .root_source_file = b.path("src/empty.zig"),
         .test_runner = "src/main.zig",
     });
     const test3 = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("empty.zig"),
-            .target = b.graph.host,
-        }),
+        .root_source_file = b.path("empty.zig"),
         .test_runner = "src/main.zig",
     });
 

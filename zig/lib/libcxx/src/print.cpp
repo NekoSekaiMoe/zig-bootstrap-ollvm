@@ -7,27 +7,23 @@
 //===----------------------------------------------------------------------===//
 
 #include <__config>
-
 #include <cstdlib>
 #include <print>
-
-#include <__system_error/system_error.h>
-
-#include "filesystem/error.h"
 
 #if defined(_LIBCPP_WIN32API)
 #  define WIN32_LEAN_AND_MEAN
 #  define NOMINMAX
 #  include <io.h>
 #  include <windows.h>
-#elif __has_include(<unistd.h>)
-#  include <unistd.h>
+
+#  include <__system_error/system_error.h>
+
+#  include "filesystem/error.h"
 #endif
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-#if defined(_LIBCPP_WIN32API)
-
+#ifdef _WIN32
 _LIBCPP_EXPORTED_FROM_ABI bool __is_windows_terminal(FILE* __stream) {
   // Note the Standard does this in one call, but it's unclear whether
   // an invalid handle is allowed when calling GetConsoleMode.
@@ -42,7 +38,7 @@ _LIBCPP_EXPORTED_FROM_ABI bool __is_windows_terminal(FILE* __stream) {
   return GetConsoleMode(reinterpret_cast<void*>(__handle), &__mode);
 }
 
-#  if _LIBCPP_HAS_WIDE_CHARACTERS
+#  ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
 _LIBCPP_EXPORTED_FROM_ABI void
 __write_to_windows_console([[maybe_unused]] FILE* __stream, [[maybe_unused]] wstring_view __view) {
   // https://learn.microsoft.com/en-us/windows/console/writeconsole
@@ -51,14 +47,16 @@ __write_to_windows_console([[maybe_unused]] FILE* __stream, [[maybe_unused]] wst
                     __view.size(),
                     nullptr,
                     nullptr) == 0) {
-    __throw_system_error(filesystem::detail::get_last_error(), "failed to write formatted output");
+#    ifndef _LIBCPP_HAS_NO_EXCEPTIONS
+    // There is no __throw_system_error overload that takes an error code.
+    throw system_error{filesystem::detail::make_windows_error(GetLastError()), "failed to write formatted output"};
+#    else  // _LIBCPP_HAS_NO_EXCEPTIONS
+    std::abort();
+#    endif // _LIBCPP_HAS_NO_EXCEPTIONS
   }
 }
-#  endif // _LIBCPP_HAS_WIDE_CHARACTERS
+#  endif // _LIBCPP_HAS_NO_WIDE_CHARACTERS
 
-#elif __has_include(<unistd.h>) // !_LIBCPP_WIN32API
-
-_LIBCPP_EXPORTED_FROM_ABI bool __is_posix_terminal(FILE* __stream) { return isatty(fileno(__stream)); }
-#endif
+#endif // _WIN32
 
 _LIBCPP_END_NAMESPACE_STD

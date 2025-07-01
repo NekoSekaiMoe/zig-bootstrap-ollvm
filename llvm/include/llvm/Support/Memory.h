@@ -15,7 +15,6 @@
 
 #include "llvm/Support/DataTypes.h"
 #include <system_error>
-#include <utility>
 
 namespace llvm {
 
@@ -138,7 +137,7 @@ namespace sys {
   class OwningMemoryBlock {
   public:
     OwningMemoryBlock() = default;
-    explicit OwningMemoryBlock(MemoryBlock M) : M(std::move(M)) {}
+    explicit OwningMemoryBlock(MemoryBlock M) : M(M) {}
     OwningMemoryBlock(OwningMemoryBlock &&Other) {
       M = Other.M;
       Other.M = MemoryBlock();

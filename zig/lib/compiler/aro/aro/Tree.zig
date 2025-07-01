@@ -137,14 +137,8 @@ pub const Node = struct {
     tag: Tag,
     ty: Type = .{ .specifier = .void },
     data: Data,
-    loc: Loc = .none,
 
     pub const Range = struct { start: u32, end: u32 };
-
-    pub const Loc = enum(u32) {
-        none = std.math.maxInt(u32),
-        _,
-    };
 
     pub const Data = union {
         decl: struct {
@@ -152,7 +146,6 @@ pub const Node = struct {
             node: NodeIndex = .none,
         },
         decl_ref: TokenIndex,
-        two: [2]NodeIndex,
         range: Range,
         if3: struct {
             cond: NodeIndex,
@@ -284,8 +277,7 @@ pub const Tag = enum(u8) {
 
     // ====== Decl ======
 
-    /// _Static_assert
-    /// loc is token index of _Static_assert
+    // _Static_assert
     static_assert,
 
     // function prototype
@@ -311,18 +303,17 @@ pub const Tag = enum(u8) {
     threadlocal_static_var,
 
     /// __asm__("...") at file scope
-    /// loc is token index of __asm__ keyword
     file_scope_asm,
 
     // typedef declaration
     typedef,
 
     // container declarations
-    /// { two[0]; two[1]; }
+    /// { lhs; rhs; }
     struct_decl_two,
-    /// { two[0]; two[1]; }
+    /// { lhs; rhs; }
     union_decl_two,
-    /// { two[0], two[1], }
+    /// { lhs, rhs, }
     enum_decl_two,
     /// { range }
     struct_decl,
@@ -348,7 +339,7 @@ pub const Tag = enum(u8) {
     // ====== Stmt ======
 
     labeled_stmt,
-    /// { two[0]; two[1]; } first and second may be null
+    /// { first; second; } first and second may be null
     compound_stmt_two,
     /// { data }
     compound_stmt,
@@ -485,7 +476,7 @@ pub const Tag = enum(u8) {
     real_expr,
     /// lhs[rhs]  lhs is pointer/array type, rhs is integer type
     array_access_expr,
-    /// two[0](two[1]) two[1] may be 0
+    /// first(second) second may be 0
     call_expr_one,
     /// data[0](data[1..])
     call_expr,
@@ -524,7 +515,7 @@ pub const Tag = enum(u8) {
     sizeof_expr,
     /// _Alignof(un?)
     alignof_expr,
-    /// _Generic(controlling two[0], chosen two[1])
+    /// _Generic(controlling lhs, chosen rhs)
     generic_expr_one,
     /// _Generic(controlling range[0], chosen range[1], rest range[2..])
     generic_expr,
@@ -543,34 +534,28 @@ pub const Tag = enum(u8) {
 
     // ====== Initializer expressions ======
 
-    /// { two[0], two[1] }
+    /// { lhs, rhs }
     array_init_expr_two,
     /// { range }
     array_init_expr,
-    /// { two[0], two[1] }
+    /// { lhs, rhs }
     struct_init_expr_two,
     /// { range }
     struct_init_expr,
     /// { union_init }
     union_init_expr,
-
     /// (ty){ un }
-    /// loc is token index of l_paren
     compound_literal_expr,
     /// (static ty){ un }
-    /// loc is token index of l_paren
     static_compound_literal_expr,
     /// (thread_local ty){ un }
-    /// loc is token index of l_paren
     thread_local_compound_literal_expr,
     /// (static thread_local ty){ un }
-    /// loc is token index of l_paren
     static_thread_local_compound_literal_expr,
 
     /// Inserted at the end of a function body if no return stmt is found.
     /// ty is the functions return type
     /// data is return_zero which is true if the function is called "main" and ty is compatible with int
-    /// loc is token index of closing r_brace of function
     implicit_return,
 
     /// Inserted in array_init_expr to represent unspecified elements.
@@ -621,57 +606,6 @@ pub fn bitfieldWidth(tree: *const Tree, node: NodeIndex, inspect_lval: bool) ?u3
         },
         else => return null,
     }
-}
-
-const CallableResultUsage = struct {
-    /// name token of the thing being called, for diagnostics
-    tok: TokenIndex,
-    /// true if `nodiscard` attribute present
-    nodiscard: bool,
-    /// true if `warn_unused_result` attribute present
-    warn_unused_result: bool,
-};
-
-pub fn callableResultUsage(tree: *const Tree, node: NodeIndex) ?CallableResultUsage {
-    const data = tree.nodes.items(.data);
-
-    var cur_node = node;
-    while (true) switch (tree.nodes.items(.tag)[@intFromEnum(cur_node)]) {
-        .decl_ref_expr => {
-            const tok = data[@intFromEnum(cur_node)].decl_ref;
-            const fn_ty = tree.nodes.items(.ty)[@intFromEnum(node)].elemType();
-            return .{
-                .tok = tok,
-                .nodiscard = fn_ty.hasAttribute(.nodiscard),
-                .warn_unused_result = fn_ty.hasAttribute(.warn_unused_result),
-            };
-        },
-        .paren_expr => cur_node = data[@intFromEnum(cur_node)].un,
-        .comma_expr => cur_node = data[@intFromEnum(cur_node)].bin.rhs,
-
-        .explicit_cast, .implicit_cast => cur_node = data[@intFromEnum(cur_node)].cast.operand,
-        .addr_of_expr, .deref_expr => cur_node = data[@intFromEnum(cur_node)].un,
-        .call_expr_one => cur_node = data[@intFromEnum(cur_node)].two[0],
-        .call_expr => cur_node = tree.data[data[@intFromEnum(cur_node)].range.start],
-        .member_access_expr, .member_access_ptr_expr => {
-            const member = data[@intFromEnum(cur_node)].member;
-            var ty = tree.nodes.items(.ty)[@intFromEnum(member.lhs)];
-            if (ty.isPtr()) ty = ty.elemType();
-            const record = ty.getRecord().?;
-            const field = record.fields[member.index];
-            const attributes = if (record.field_attributes) |attrs| attrs[member.index] else &.{};
-            return .{
-                .tok = field.name_tok,
-                .nodiscard = for (attributes) |attr| {
-                    if (attr.tag == .nodiscard) break true;
-                } else false,
-                .warn_unused_result = for (attributes) |attr| {
-                    if (attr.tag == .warn_unused_result) break true;
-                } else false,
-            };
-        },
-        else => return null,
-    };
 }
 
 pub fn isLval(tree: *const Tree, node: NodeIndex) bool {
@@ -738,66 +672,17 @@ pub fn isLvalExtra(tree: *const Tree, node: NodeIndex, is_const: *bool) bool {
     }
 }
 
-/// This should only be used for node tags that represent AST nodes which have an arbitrary number of children
-/// It particular it should *not* be used for nodes with .un or .bin data types
-///
-/// For call expressions, child_nodes[0] is the function pointer being called and child_nodes[1..]
-/// are the arguments
-///
-/// For generic selection expressions, child_nodes[0] is the controlling expression,
-/// child_nodes[1] is the chosen expression (it is a syntax error for there to be no chosen expression),
-/// and child_nodes[2..] are the remaining expressions.
-pub fn childNodes(tree: *const Tree, node: NodeIndex) []const NodeIndex {
-    const tags = tree.nodes.items(.tag);
-    const data = tree.nodes.items(.data);
-    switch (tags[@intFromEnum(node)]) {
-        .compound_stmt_two,
-        .array_init_expr_two,
-        .struct_init_expr_two,
-        .enum_decl_two,
-        .struct_decl_two,
-        .union_decl_two,
-        .call_expr_one,
-        .generic_expr_one,
-        => {
-            const index: u32 = @intFromEnum(node);
-            const end = std.mem.indexOfScalar(NodeIndex, &data[index].two, .none) orelse 2;
-            return data[index].two[0..end];
-        },
-        .compound_stmt,
-        .array_init_expr,
-        .struct_init_expr,
-        .enum_decl,
-        .struct_decl,
-        .union_decl,
-        .call_expr,
-        .generic_expr,
-        => {
-            const range = data[@intFromEnum(node)].range;
-            return tree.data[range.start..range.end];
-        },
-        else => unreachable,
-    }
-}
-
 pub fn tokSlice(tree: *const Tree, tok_i: TokenIndex) []const u8 {
     if (tree.tokens.items(.id)[tok_i].lexeme()) |some| return some;
     const loc = tree.tokens.items(.loc)[tok_i];
-    return tree.comp.locSlice(loc);
-}
-
-pub fn nodeTok(tree: *const Tree, node: NodeIndex) ?TokenIndex {
-    std.debug.assert(node != .none);
-    const loc = tree.nodes.items(.loc)[@intFromEnum(node)];
-    return switch (loc) {
-        .none => null,
-        else => |tok_i| @intFromEnum(tok_i),
+    var tmp_tokenizer = Tokenizer{
+        .buf = tree.comp.getSource(loc.id).buf,
+        .langopts = tree.comp.langopts,
+        .index = loc.byte_offset,
+        .source = .generated,
     };
-}
-
-pub fn nodeLoc(tree: *const Tree, node: NodeIndex) ?Source.Location {
-    const tok_i = tree.nodeTok(node) orelse return null;
-    return tree.tokens.items(.loc)[@intFromEnum(tok_i)];
+    const tok = tmp_tokenizer.next();
+    return tmp_tokenizer.buf[tok.start..tok.end];
 }
 
 pub fn dump(tree: *const Tree, config: std.io.tty.Config, writer: anytype) !void {
@@ -822,7 +707,7 @@ fn dumpAttribute(tree: *const Tree, attr: Attribute, writer: anytype) !void {
     switch (attr.tag) {
         inline else => |tag| {
             const args = @field(attr.args, @tagName(tag));
-            const fields = @typeInfo(@TypeOf(args)).@"struct".fields;
+            const fields = @typeInfo(@TypeOf(args)).Struct.fields;
             if (fields.len == 0) {
                 try writer.writeByte('\n');
                 return;
@@ -839,7 +724,7 @@ fn dumpAttribute(tree: *const Tree, attr: Attribute, writer: anytype) !void {
                     Interner.Ref => try writer.print("\"{s}\"", .{tree.interner.get(@field(args, f.name)).bytes}),
                     ?Interner.Ref => try writer.print("\"{?s}\"", .{if (@field(args, f.name)) |str| tree.interner.get(str).bytes else null}),
                     else => switch (@typeInfo(f.type)) {
-                        .@"enum" => try writer.writeAll(@tagName(@field(args, f.name))),
+                        .Enum => try writer.writeAll(@tagName(@field(args, f.name))),
                         else => try writer.print("{any}", .{@field(args, f.name)}),
                     },
                 }
@@ -881,10 +766,6 @@ fn dumpNode(
     }
     try config.setColor(w, TYPE);
     try w.writeByte('\'');
-    const name = ty.getName();
-    if (name != .empty) {
-        try w.print("{s}': '", .{mapper.lookup(name)});
-    }
     try ty.dump(mapper, tree.comp.langopts, w);
     try w.writeByte('\'');
 
@@ -913,9 +794,7 @@ fn dumpNode(
 
     if (ty.specifier == .attributed) {
         try config.setColor(w, ATTRIBUTE);
-        var it = Attribute.Iterator.initType(ty);
-        while (it.next()) |item| {
-            const attr, _ = item;
+        for (ty.data.attributed.attributes) |attr| {
             try w.writeByteNTimes(' ', level + half);
             try w.print("attr: {s}", .{@tagName(attr.tag)});
             try tree.dumpAttribute(attr, w);
@@ -1021,16 +900,9 @@ fn dumpNode(
         .enum_decl,
         .struct_decl,
         .union_decl,
-        .compound_stmt_two,
-        .array_init_expr_two,
-        .struct_init_expr_two,
-        .enum_decl_two,
-        .struct_decl_two,
-        .union_decl_two,
         => {
-            const child_nodes = tree.childNodes(node);
             const maybe_field_attributes = if (ty.getRecord()) |record| record.field_attributes else null;
-            for (child_nodes, 0..) |stmt, i| {
+            for (tree.data[data.range.start..data.range.end], 0..) |stmt, i| {
                 if (i != 0) try w.writeByte('\n');
                 try tree.dumpNode(stmt, level + delta, mapper, config, w);
                 if (maybe_field_attributes) |field_attributes| {
@@ -1038,6 +910,33 @@ fn dumpNode(
 
                     try config.setColor(w, ATTRIBUTE);
                     try tree.dumpFieldAttributes(field_attributes[i], level + delta + half, w);
+                    try config.setColor(w, .reset);
+                }
+            }
+        },
+        .compound_stmt_two,
+        .array_init_expr_two,
+        .struct_init_expr_two,
+        .enum_decl_two,
+        .struct_decl_two,
+        .union_decl_two,
+        => {
+            var attr_array = [2][]const Attribute{ &.{}, &.{} };
+            const empty: [][]const Attribute = &attr_array;
+            const field_attributes = if (ty.getRecord()) |record| (record.field_attributes orelse empty.ptr) else empty.ptr;
+            if (data.bin.lhs != .none) {
+                try tree.dumpNode(data.bin.lhs, level + delta, mapper, config, w);
+                if (field_attributes[0].len > 0) {
+                    try config.setColor(w, ATTRIBUTE);
+                    try tree.dumpFieldAttributes(field_attributes[0], level + delta + half, w);
+                    try config.setColor(w, .reset);
+                }
+            }
+            if (data.bin.rhs != .none) {
+                try tree.dumpNode(data.bin.rhs, level + delta, mapper, config, w);
+                if (field_attributes[1].len > 0) {
+                    try config.setColor(w, ATTRIBUTE);
+                    try tree.dumpFieldAttributes(field_attributes[1], level + delta + half, w);
                     try config.setColor(w, .reset);
                 }
             }
@@ -1231,21 +1130,23 @@ fn dumpNode(
                 try tree.dumpNode(data.un, level + delta, mapper, config, w);
             }
         },
-        .call_expr, .call_expr_one => {
-            const child_nodes = tree.childNodes(node);
-            const fn_ptr = child_nodes[0];
-            const args = child_nodes[1..];
-
+        .call_expr => {
             try w.writeByteNTimes(' ', level + half);
             try w.writeAll("lhs:\n");
-            try tree.dumpNode(fn_ptr, level + delta, mapper, config, w);
+            try tree.dumpNode(tree.data[data.range.start], level + delta, mapper, config, w);
 
-            if (args.len > 0) {
+            try w.writeByteNTimes(' ', level + half);
+            try w.writeAll("args:\n");
+            for (tree.data[data.range.start + 1 .. data.range.end]) |arg| try tree.dumpNode(arg, level + delta, mapper, config, w);
+        },
+        .call_expr_one => {
+            try w.writeByteNTimes(' ', level + half);
+            try w.writeAll("lhs:\n");
+            try tree.dumpNode(data.bin.lhs, level + delta, mapper, config, w);
+            if (data.bin.rhs != .none) {
                 try w.writeByteNTimes(' ', level + half);
-                try w.writeAll("args:\n");
-                for (args) |arg| {
-                    try tree.dumpNode(arg, level + delta, mapper, config, w);
-                }
+                try w.writeAll("arg:\n");
+                try tree.dumpNode(data.bin.rhs, level + delta, mapper, config, w);
             }
         },
         .builtin_call_expr => {
@@ -1394,25 +1295,28 @@ fn dumpNode(
                 try tree.dumpNode(data.un, level + delta, mapper, config, w);
             }
         },
-        .generic_expr, .generic_expr_one => {
-            const child_nodes = tree.childNodes(node);
-            const controlling = child_nodes[0];
-            const chosen = child_nodes[1];
-            const rest = child_nodes[2..];
-
+        .generic_expr_one => {
             try w.writeByteNTimes(' ', level + 1);
             try w.writeAll("controlling:\n");
-            try tree.dumpNode(controlling, level + delta, mapper, config, w);
+            try tree.dumpNode(data.bin.lhs, level + delta, mapper, config, w);
+            try w.writeByteNTimes(' ', level + 1);
+            if (data.bin.rhs != .none) {
+                try w.writeAll("chosen:\n");
+                try tree.dumpNode(data.bin.rhs, level + delta, mapper, config, w);
+            }
+        },
+        .generic_expr => {
+            const nodes = tree.data[data.range.start..data.range.end];
+            try w.writeByteNTimes(' ', level + 1);
+            try w.writeAll("controlling:\n");
+            try tree.dumpNode(nodes[0], level + delta, mapper, config, w);
             try w.writeByteNTimes(' ', level + 1);
             try w.writeAll("chosen:\n");
-            try tree.dumpNode(chosen, level + delta, mapper, config, w);
-
-            if (rest.len > 0) {
-                try w.writeByteNTimes(' ', level + 1);
-                try w.writeAll("rest:\n");
-                for (rest) |expr| {
-                    try tree.dumpNode(expr, level + delta, mapper, config, w);
-                }
+            try tree.dumpNode(nodes[1], level + delta, mapper, config, w);
+            try w.writeByteNTimes(' ', level + 1);
+            try w.writeAll("rest:\n");
+            for (nodes[2..]) |expr| {
+                try tree.dumpNode(expr, level + delta, mapper, config, w);
             }
         },
         .generic_association_expr, .generic_default_expr, .stmt_expr, .imaginary_literal => {

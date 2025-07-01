@@ -1,13 +1,13 @@
 const Writer = struct {
     pub fn printValue(self: *Writer, value: anytype) !void {
         switch (@typeInfo(@TypeOf(value))) {
-            .int => {
+            .Int => {
                 return self.writeInt(value);
             },
-            .float => {
+            .Float => {
                 return self.writeFloat(value);
             },
-            .pointer => {
+            .Pointer => {
                 return self.write(value);
             },
             else => {

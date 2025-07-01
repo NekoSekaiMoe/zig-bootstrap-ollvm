@@ -20,10 +20,19 @@
 #include <tchar.h>
 #include <sect_attribs.h>
 #include <locale.h>
-#include <corecrt_startup.h>
 
 #if defined(__SEH__) && (!defined(__clang__) || __clang_major__ >= 7)
 #define SEH_INLINE_ASM
+#endif
+
+#ifndef __winitenv
+extern wchar_t *** __MINGW_IMP_SYMBOL(__winitenv);
+#define __winitenv (* __MINGW_IMP_SYMBOL(__winitenv))
+#endif
+
+#if !defined(__initenv)
+extern char *** __MINGW_IMP_SYMBOL(__initenv);
+#define __initenv (* __MINGW_IMP_SYMBOL(__initenv))
 #endif
 
 extern IMAGE_DOS_HEADER __ImageBase;
@@ -34,7 +43,6 @@ int *__cdecl __p__commode(void);
 
 #undef _fmode
 extern int _fmode;
-#undef _commode
 extern int _commode;
 extern int _dowildcard;
 
@@ -58,9 +66,11 @@ extern void __main(void);
 static _TCHAR **argv;
 static _TCHAR **envp;
 
+static int argret;
 static int mainret=0;
 static int managedapp;
 static int has_cctor = 0;
+static _startupinfo startinfo;
 extern LPTOP_LEVEL_EXCEPTION_FILTER __mingw_oldexcpt_handler;
 
 extern void _pei386_runtime_relocator (void);
@@ -95,7 +105,6 @@ __mingw_invalidParameterHandler (const wchar_t * __UNUSED_PARAM_1(expression),
 static int __cdecl
 pre_c_init (void)
 {
-  int ret;
   managedapp = check_managed_app ();
   if (__mingw_app_type)
     __set_app_type(_GUI_APP);
@@ -106,12 +115,10 @@ pre_c_init (void)
   * __p__commode() = _commode;
 
 #ifdef _UNICODE
-  ret = _wsetargv();
+  _wsetargv();
 #else
-  ret = _setargv();
+  _setargv();
 #endif
-  if (ret < 0)
-    _amsg_exit(8); /* _RT_SPACEARG */
   if (_MINGW_INSTALL_DEBUG_MATHERR == 1)
     {
       __setusermatherr (_matherr);
@@ -126,9 +133,6 @@ pre_c_init (void)
 static void __cdecl
 pre_cpp_init (void)
 {
-  _startupinfo startinfo;
-  int argret;
-
   startinfo.newmode = _newmode;
 
 #ifdef _UNICODE
@@ -136,8 +140,6 @@ pre_cpp_init (void)
 #else
   argret = __getmainargs(&argc,&argv,&envp,_dowildcard,&startinfo);
 #endif
-  if (argret < 0)
-    _amsg_exit(8); /* _RT_SPACEARG */
 }
 
 static int __tmainCRTStartup (void);
@@ -203,7 +205,7 @@ int mainCRTStartup (void)
 static
 #if defined(__i386__) || defined(_X86_)
 /* We need to make sure that we align the stack to 16 bytes for the sake of SSE
-   opts in main or in functions called from main.  */
+   opts in main or in functions called main.  */
 __attribute__((force_align_arg_pointer))
 #endif
 __declspec(noinline) int
@@ -229,8 +231,7 @@ __tmainCRTStartup (void)
     else if (__native_startup_state == __uninitialized)
       {
 	__native_startup_state = __initializing;
-	if (_initterm_e (__xi_a, __xi_z) != 0)
-	  return 255;
+	_initterm ((_PVFV *)(void *)__xi_a, (_PVFV *)(void *) __xi_z);
       }
     else
       has_cctor = 1;
@@ -333,12 +334,7 @@ static void duplicate_ppstrings (int ac, _TCHAR ***av)
 
 int __cdecl atexit (_PVFV func)
 {
-    /*
-     * msvcrt def file renames the real atexit() function to _crt_atexit().
-     * UCRT provides atexit() function only under name _crt_atexit().
-     * So redirect call to _crt_atexit() function.
-     */
-    return _crt_atexit(func);
+    return _onexit((_onexit_t)func) ? 0 : -1;
 }
 
 char __mingw_module_is_dll = 0;

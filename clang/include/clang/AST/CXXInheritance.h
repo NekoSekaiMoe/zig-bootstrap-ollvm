@@ -20,6 +20,7 @@
 #include "clang/AST/TypeOrdering.h"
 #include "clang/Basic/Specifiers.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -130,7 +131,6 @@ class CXXBasePaths {
   /// class subobjects for that class type. The key of the map is
   /// the cv-unqualified canonical type of the base class subobject.
   struct IsVirtBaseAndNumberNonVirtBases {
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IsVirtBase : 1;
     unsigned NumberOfNonVirtBases : 31;
   };

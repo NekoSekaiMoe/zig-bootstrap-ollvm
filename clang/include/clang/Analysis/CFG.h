@@ -14,11 +14,10 @@
 #ifndef LLVM_CLANG_ANALYSIS_CFG_H
 #define LLVM_CLANG_ANALYSIS_CFG_H
 
-#include "clang/AST/Attr.h"
+#include "clang/Analysis/Support/BumpVector.h"
+#include "clang/Analysis/ConstructionContext.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
-#include "clang/Analysis/ConstructionContext.h"
-#include "clang/Analysis/Support/BumpVector.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/GraphTraits.h"
@@ -75,8 +74,7 @@ public:
     MemberDtor,
     TemporaryDtor,
     DTOR_BEGIN = AutomaticObjectDtor,
-    DTOR_END = TemporaryDtor,
-    CleanupFunction,
+    DTOR_END = TemporaryDtor
   };
 
 protected:
@@ -382,32 +380,6 @@ private:
   static bool isKind(const CFGElement &E) {
     Kind kind = E.getKind();
     return kind >= DTOR_BEGIN && kind <= DTOR_END;
-  }
-};
-
-class CFGCleanupFunction final : public CFGElement {
-public:
-  CFGCleanupFunction() = default;
-  CFGCleanupFunction(const VarDecl *VD)
-      : CFGElement(Kind::CleanupFunction, VD) {
-    assert(VD->hasAttr<CleanupAttr>());
-  }
-
-  const VarDecl *getVarDecl() const {
-    return static_cast<VarDecl *>(Data1.getPointer());
-  }
-
-  /// Returns the function to be called when cleaning up the var decl.
-  const FunctionDecl *getFunctionDecl() const {
-    const CleanupAttr *A = getVarDecl()->getAttr<CleanupAttr>();
-    return A->getFunctionDecl();
-  }
-
-private:
-  friend class CFGElement;
-
-  static bool isKind(const CFGElement E) {
-    return E.getKind() == Kind::CleanupFunction;
   }
 };
 
@@ -879,7 +851,6 @@ private:
   ///
   /// Optimization Note: This bit could be profitably folded with Terminator's
   /// storage if the memory usage of CFGBlock becomes an issue.
-  LLVM_PREFERRED_TYPE(bool)
   unsigned HasNoReturnElement : 1;
 
   /// The parent CFG that owns this CFGBlock.
@@ -1008,9 +979,7 @@ public:
 
   class FilterOptions {
   public:
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IgnoreNullPredecessors : 1;
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IgnoreDefaultsWithCoveredEnums : 1;
 
     FilterOptions()
@@ -1173,10 +1142,6 @@ public:
     Elements.push_back(CFGAutomaticObjDtor(VD, S), C);
   }
 
-  void appendCleanupFunction(const VarDecl *VD, BumpVectorContext &C) {
-    Elements.push_back(CFGCleanupFunction(VD), C);
-  }
-
   void appendLifetimeEnds(VarDecl *VD, Stmt *S, BumpVectorContext &C) {
     Elements.push_back(CFGLifetimeEnds(VD, S), C);
   }
@@ -1197,7 +1162,6 @@ public:
   CFGCallback() = default;
   virtual ~CFGCallback() = default;
 
-  virtual void logicAlwaysTrue(const BinaryOperator *B, bool isAlwaysTrue) {}
   virtual void compareAlwaysTrue(const BinaryOperator *B, bool isAlwaysTrue) {}
   virtual void compareBitwiseEquality(const BinaryOperator *B,
                                       bool isAlwaysTrue) {}
@@ -1218,9 +1182,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   class BuildOptions {
-    // Stmt::lastStmtConstant has the same value as the last Stmt kind,
-    // so make sure we add one to account for this!
-    std::bitset<Stmt::lastStmtConstant + 1> alwaysAddMask;
+    std::bitset<Stmt::lastStmtConstant> alwaysAddMask;
 
   public:
     using ForcedBlkExprs = llvm::DenseMap<const Stmt *, const CFGBlock *>;

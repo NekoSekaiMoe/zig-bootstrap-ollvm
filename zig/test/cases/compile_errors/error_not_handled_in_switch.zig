@@ -13,7 +13,7 @@ fn foo(x: i32) !void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:26: error: switch must handle all possibilities

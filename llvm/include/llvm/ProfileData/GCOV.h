@@ -249,7 +249,7 @@ public:
     return make_range(blocks.begin(), blocks.end());
   }
 
-  void propagateCounts(const GCOVBlock &v, GCOVArc *pred);
+  uint64_t propagateCounts(const GCOVBlock &v, GCOVArc *pred);
   void print(raw_ostream &OS) const;
   void dump() const;
 

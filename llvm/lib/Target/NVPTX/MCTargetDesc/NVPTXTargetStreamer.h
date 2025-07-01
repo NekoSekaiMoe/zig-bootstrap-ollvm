@@ -43,13 +43,11 @@ public:
   /// functions.
   void emitDwarfFileDirective(StringRef Directive) override;
   void changeSection(const MCSection *CurSection, MCSection *Section,
-                     uint32_t SubSection, raw_ostream &OS) override;
+                     const MCExpr *SubSection, raw_ostream &OS) override;
   /// Emit the bytes in \p Data into the output.
   ///
   /// This is used to emit bytes in \p Data as sequence of .byte directives.
   void emitRawBytes(StringRef Data) override;
-  /// Makes sure that labels are mangled the same way as the actual symbols.
-  void emitValue(const MCExpr *Value) override;
 };
 
 class NVPTXAsmTargetStreamer : public NVPTXTargetStreamer {

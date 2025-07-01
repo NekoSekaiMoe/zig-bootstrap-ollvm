@@ -80,6 +80,12 @@ char    *optarg;		/* argument associated with option */
 #define	BADARG		((*options == ':') ? (int)':' : (int)'?')
 #define	INORDER 	(int)1
 
+#ifndef __CYGWIN__
+#define __progname __argv[0]
+#else
+extern char __declspec(dllimport) *__progname;
+#endif
+
 #ifdef __CYGWIN__
 static char EMSG[] = "";
 #else
@@ -108,20 +114,20 @@ static const char illoptchar[] = "unknown option -- %c";
 static const char illoptstring[] = "unknown option -- %s";
 
 static void
-_vwarnx(const char *argv0,const char *fmt,va_list ap)
+_vwarnx(const char *fmt,va_list ap)
 {
-  (void)fprintf(stderr,"%s: ",argv0);
+  (void)fprintf(stderr,"%s: ",__progname);
   if (fmt != NULL)
     (void)vfprintf(stderr,fmt,ap);
   (void)fprintf(stderr,"\n");
 }
 
 static void
-warnx(const char *argv0,const char *fmt,...)
+warnx(const char *fmt,...)
 {
   va_list ap;
   va_start(ap,fmt);
-  _vwarnx(argv0,fmt,ap);
+  _vwarnx(fmt,ap);
   va_end(ap);
 }
 
@@ -238,7 +244,7 @@ parse_long_options(char * const *nargv, const char *options,
 	if (ambiguous) {
 		/* ambiguous abbreviation */
 		if (PRINT_ERROR)
-			warnx(nargv[0], ambig, (int)current_argv_len,
+			warnx(ambig, (int)current_argv_len,
 			     current_argv);
 		optopt = 0;
 		return (BADCH);
@@ -247,7 +253,7 @@ parse_long_options(char * const *nargv, const char *options,
 		if (long_options[match].has_arg == no_argument
 		    && has_equal) {
 			if (PRINT_ERROR)
-				warnx(nargv[0], noarg, (int)current_argv_len,
+				warnx(noarg, (int)current_argv_len,
 				     current_argv);
 			/*
 			 * XXX: GNU sets optopt to val regardless of flag
@@ -277,7 +283,7 @@ parse_long_options(char * const *nargv, const char *options,
 			 * should be generated.
 			 */
 			if (PRINT_ERROR)
-				warnx(nargv[0], recargstring,
+				warnx(recargstring,
 				    current_argv);
 			/*
 			 * XXX: GNU sets optopt to val regardless of flag
@@ -295,7 +301,7 @@ parse_long_options(char * const *nargv, const char *options,
 			return (-1);
 		}
 		if (PRINT_ERROR)
-			warnx(nargv[0], illoptstring, current_argv);
+			warnx(illoptstring, current_argv);
 		optopt = 0;
 		return (BADCH);
 	}
@@ -461,7 +467,7 @@ start:
 		if (!*place)
 			++optind;
 		if (PRINT_ERROR)
-			warnx(nargv[0], illoptchar, optchar);
+			warnx(illoptchar, optchar);
 		optopt = optchar;
 		return (BADCH);
 	}
@@ -472,7 +478,7 @@ start:
 		else if (++optind >= nargc) {	/* no arg */
 			place = EMSG;
 			if (PRINT_ERROR)
-				warnx(nargv[0], recargchar, optchar);
+				warnx(recargchar, optchar);
 			optopt = optchar;
 			return (BADARG);
 		} else				/* white space */
@@ -493,7 +499,7 @@ start:
 			if (++optind >= nargc) {	/* no arg */
 				place = EMSG;
 				if (PRINT_ERROR)
-					warnx(nargv[0], recargchar, optchar);
+					warnx(recargchar, optchar);
 				optopt = optchar;
 				return (BADARG);
 			} else

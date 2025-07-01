@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target = b.graph.host;
+    const target = b.host;
 
     if (builtin.os.tag == .windows) {
         // https://github.com/ziglang/zig/issues/12419
@@ -15,11 +15,9 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "zigtest",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
     });
     b.installArtifact(exe);
 
@@ -27,21 +25,21 @@ pub fn build(b: *std.Build) void {
         "test.c",
     };
 
-    exe.root_module.addCSourceFiles(.{ .files = &c_sources });
-    exe.root_module.link_libc = true;
+    exe.addCSourceFiles(.{ .files = &c_sources });
+    exe.linkLibC();
 
     var i: i32 = 0;
     while (i < 1000) : (i += 1) {
-        exe.root_module.addCMacro("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        exe.defineCMacro("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     }
 
-    exe.root_module.addCMacro("FOO", "42");
-    exe.root_module.addCMacro("BAR", "\"BAR\"");
-    exe.root_module.addCMacro("BAZ",
+    exe.defineCMacro("FOO", "42");
+    exe.defineCMacro("BAR", "\"BAR\"");
+    exe.defineCMacro("BAZ",
         \\"\"BAZ\""
     );
-    exe.root_module.addCMacro("QUX", "\"Q\" \"UX\"");
-    exe.root_module.addCMacro("QUUX", "\"QU\\\"UX\"");
+    exe.defineCMacro("QUX", "\"Q\" \"UX\"");
+    exe.defineCMacro("QUUX", "\"QU\\\"UX\"");
 
     b.default_step.dependOn(&exe.step);
 

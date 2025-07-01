@@ -16,22 +16,21 @@
 #define LLVM_LIB_TARGET_WEBASSEMBLY_WEBASSEMBLYTARGETMACHINE_H
 
 #include "WebAssemblySubtarget.h"
-#include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
+#include "llvm/Target/TargetMachine.h"
 #include <optional>
 
 namespace llvm {
 
-class WebAssemblyTargetMachine final : public CodeGenTargetMachineImpl {
+class WebAssemblyTargetMachine final : public LLVMTargetMachine {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
   mutable StringMap<std::unique_ptr<WebAssemblySubtarget>> SubtargetMap;
-  bool UsesMultivalueABI = false;
 
 public:
   WebAssemblyTargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                            StringRef FS, const TargetOptions &Options,
                            std::optional<Reloc::Model> RM,
                            std::optional<CodeModel::Model> CM,
-                           CodeGenOptLevel OL, bool JIT);
+                           CodeGenOpt::Level OL, bool JIT);
 
   ~WebAssemblyTargetMachine() override;
 
@@ -63,8 +62,6 @@ public:
                                 PerFunctionMIParsingState &PFS,
                                 SMDiagnostic &Error,
                                 SMRange &SourceRange) const override;
-
-  bool usesMultivalueABI() const { return UsesMultivalueABI; }
 };
 
 } // end namespace llvm

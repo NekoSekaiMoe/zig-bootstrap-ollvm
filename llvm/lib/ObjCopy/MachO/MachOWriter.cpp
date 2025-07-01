@@ -11,6 +11,7 @@
 #include "MachOObject.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SHA256.h"
@@ -125,7 +126,7 @@ size_t MachOWriter::totalSize() const {
     }
 
   if (!Ends.empty())
-    return *llvm::max_element(Ends);
+    return *std::max_element(Ends.begin(), Ends.end());
 
   // Otherwise, we have only Mach header and load commands.
   return headerSize() + loadCommandsSize();

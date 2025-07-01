@@ -11,7 +11,7 @@ fn foo() ?OtherError!i32 {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :5:34: error: expected type '?error{NextError}!i32', found '?error{OutOfMemory}!i32'

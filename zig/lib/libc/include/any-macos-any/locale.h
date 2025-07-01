@@ -37,10 +37,7 @@
 #ifndef _LOCALE_H_
 #define _LOCALE_H_
 
-#include <_bounds.h>
 #include <_locale.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 #define	LC_ALL		0
 #define	LC_COLLATE	1
@@ -53,7 +50,7 @@ _LIBC_SINGLE_BY_DEFAULT()
 #define	_LC_LAST	7		/* marks end */
 
 __BEGIN_DECLS
-char *_LIBC_CSTR	setlocale(int, const char *);
+char		*setlocale(int, const char *);
 __END_DECLS
 
 #endif /* _LOCALE_H_ */

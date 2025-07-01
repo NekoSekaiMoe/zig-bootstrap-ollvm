@@ -1,13 +1,13 @@
-fn runtimeSafetyDefault() callconv(.naked) void {
+fn runtimeSafetyDefault() callconv(.Naked) void {
     unreachable;
 }
 
-fn runtimeSafetyOn() callconv(.naked) void {
+fn runtimeSafetyOn() callconv(.Naked) void {
     @setRuntimeSafety(true);
     unreachable;
 }
 
-fn runtimeSafetyOff() callconv(.naked) void {
+fn runtimeSafetyOff() callconv(.Naked) void {
     @setRuntimeSafety(false);
     unreachable;
 }
@@ -19,7 +19,7 @@ comptime {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:5: error: runtime safety check not allowed in naked function

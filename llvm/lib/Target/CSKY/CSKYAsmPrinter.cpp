@@ -145,10 +145,8 @@ void CSKYAsmPrinter::emitInstruction(const MachineInstr *MI) {
                                        getSubtargetInfo().getFeatureBits());
 
   // Do any auto-generated pseudo lowerings.
-  if (MCInst OutInst; lowerPseudoInstExpansion(MI, OutInst)) {
-    EmitToStreamer(*OutStreamer, OutInst);
+  if (emitPseudoExpansionLowering(*OutStreamer, MI))
     return;
-  }
 
   // If we just ended a constant pool, mark it as such.
   if (InConstantPool && MI->getOpcode() != CSKY::CONSTPOOL_ENTRY) {

@@ -344,9 +344,12 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
   // this lowers the common case's overhead to O(Blocks) instead of O(Edges).
   SmallSetVector<BasicBlock *, 16> Targets;
   for (auto &BB : F) {
-    if (isa<IndirectBrInst>(BB.getTerminator()))
-      for (BasicBlock *Succ : successors(&BB))
-        Targets.insert(Succ);
+    auto *IBI = dyn_cast<IndirectBrInst>(BB.getTerminator());
+    if (!IBI)
+      continue;
+
+    for (unsigned Succ = 0, E = IBI->getNumSuccessors(); Succ != E; ++Succ)
+      Targets.insert(IBI->getSuccessor(Succ));
   }
 
   if (Targets.empty())
@@ -366,8 +369,8 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
       continue;
 
     // Don't even think about ehpads/landingpads.
-    auto FirstNonPHIIt = Target->getFirstNonPHIIt();
-    if (FirstNonPHIIt->isEHPad() || Target->isLandingPad())
+    Instruction *FirstNonPHI = Target->getFirstNonPHI();
+    if (FirstNonPHI->isEHPad() || Target->isLandingPad())
       continue;
 
     // Remember edge probabilities if needed.
@@ -380,11 +383,11 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
       BPI->eraseBlock(Target);
     }
 
-    BasicBlock *BodyBlock = Target->splitBasicBlock(FirstNonPHIIt, ".split");
+    BasicBlock *BodyBlock = Target->splitBasicBlock(FirstNonPHI, ".split");
     if (ShouldUpdateAnalysis) {
       // Copy the BFI/BPI from Target to BodyBlock.
       BPI->setEdgeProbability(BodyBlock, EdgeProbabilities);
-      BFI->setBlockFreq(BodyBlock, BFI->getBlockFreq(Target));
+      BFI->setBlockFreq(BodyBlock, BFI->getBlockFreq(Target).getFrequency());
     }
     // It's possible Target was its own successor through an indirectbr.
     // In this case, the indirectbr now comes from BodyBlock.
@@ -408,10 +411,10 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
             BPI->getEdgeProbability(Src, DirectSucc);
     }
     if (ShouldUpdateAnalysis) {
-      BFI->setBlockFreq(DirectSucc, BlockFreqForDirectSucc);
+      BFI->setBlockFreq(DirectSucc, BlockFreqForDirectSucc.getFrequency());
       BlockFrequency NewBlockFreqForTarget =
           BFI->getBlockFreq(Target) - BlockFreqForDirectSucc;
-      BFI->setBlockFreq(Target, NewBlockFreqForTarget);
+      BFI->setBlockFreq(Target, NewBlockFreqForTarget.getFrequency());
     }
 
     // Ok, now fix up the PHIs. We know the two blocks only have PHIs, and that
@@ -420,7 +423,7 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
     // (b) Leave that as the only edge in the "Indirect" PHI.
     // (c) Merge the two in the body block.
     BasicBlock::iterator Indirect = Target->begin(),
-                         End = Target->getFirstNonPHIIt();
+                         End = Target->getFirstNonPHI()->getIterator();
     BasicBlock::iterator Direct = DirectSucc->begin();
     BasicBlock::iterator MergeInsert = BodyBlock->getFirstInsertionPt();
 
@@ -430,7 +433,6 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
     while (Indirect != End) {
       PHINode *DirPHI = cast<PHINode>(Direct);
       PHINode *IndPHI = cast<PHINode>(Indirect);
-      BasicBlock::iterator InsertPt = Indirect;
 
       // Now, clean up - the direct block shouldn't get the indirect value,
       // and vice versa.
@@ -441,14 +443,14 @@ bool llvm::SplitIndirectBrCriticalEdges(Function &F,
       // PHI is erased.
       Indirect++;
 
-      PHINode *NewIndPHI = PHINode::Create(IndPHI->getType(), 1, "ind", InsertPt);
+      PHINode *NewIndPHI = PHINode::Create(IndPHI->getType(), 1, "ind", IndPHI);
       NewIndPHI->addIncoming(IndPHI->getIncomingValueForBlock(IBRPred),
                              IBRPred);
 
       // Create a PHI in the body block, to merge the direct and indirect
       // predecessors.
-      PHINode *MergePHI = PHINode::Create(IndPHI->getType(), 2, "merge");
-      MergePHI->insertBefore(MergeInsert);
+      PHINode *MergePHI =
+          PHINode::Create(IndPHI->getType(), 2, "merge", &*MergeInsert);
       MergePHI->addIncoming(NewIndPHI, Target);
       MergePHI->addIncoming(DirPHI, DirectSucc);
 

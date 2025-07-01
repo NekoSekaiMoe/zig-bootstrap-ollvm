@@ -9,6 +9,7 @@
 #include "llvm/DebugInfo/DWARF/DWARFDebugAbbrev.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <cinttypes>
 #include <cstdint>
 
@@ -104,9 +105,9 @@ std::string DWARFAbbreviationDeclarationSet::getCodeRange() const {
 DWARFDebugAbbrev::DWARFDebugAbbrev(DataExtractor Data)
     : AbbrDeclSets(), PrevAbbrOffsetPos(AbbrDeclSets.end()), Data(Data) {}
 
-Error DWARFDebugAbbrev::parse() const {
+void DWARFDebugAbbrev::parse() const {
   if (!Data)
-    return Error::success();
+    return;
   uint64_t Offset = 0;
   auto I = AbbrDeclSets.begin();
   while (Data->isValidOffset(Offset)) {
@@ -115,19 +116,17 @@ Error DWARFDebugAbbrev::parse() const {
     uint64_t CUAbbrOffset = Offset;
     DWARFAbbreviationDeclarationSet AbbrDecls;
     if (Error Err = AbbrDecls.extract(*Data, &Offset)) {
-      Data = std::nullopt;
-      return Err;
+      // FIXME: We should propagate the error upwards.
+      consumeError(std::move(Err));
+      break;
     }
     AbbrDeclSets.insert(I, std::make_pair(CUAbbrOffset, std::move(AbbrDecls)));
   }
   Data = std::nullopt;
-  return Error::success();
 }
 
 void DWARFDebugAbbrev::dump(raw_ostream &OS) const {
-  if (Error Err = parse())
-    // FIXME: We should propagate this error or otherwise display it.
-    llvm::consumeError(std::move(Err));
+  parse();
 
   if (AbbrDeclSets.empty()) {
     OS << "< EMPTY >\n";

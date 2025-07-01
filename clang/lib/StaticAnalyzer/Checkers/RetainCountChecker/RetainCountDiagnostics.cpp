@@ -411,11 +411,11 @@ annotateConsumedSummaryMismatch(const ExplodedNode *N,
     }
   }
 
-  if (sbuf.empty())
+  if (os.str().empty())
     return nullptr;
 
   PathDiagnosticLocation L = PathDiagnosticLocation::create(CallExitLoc, SM);
-  return std::make_shared<PathDiagnosticEventPiece>(L, sbuf);
+  return std::make_shared<PathDiagnosticEventPiece>(L, os.str());
 }
 
 /// Annotate the parameter at the analysis entry point.
@@ -446,7 +446,7 @@ annotateStartParameter(const ExplodedNode *N, SymbolRef Sym,
     assert(CurrT->getCount() == 0);
     os << "0";
   }
-  return std::make_shared<PathDiagnosticEventPiece>(L, s);
+  return std::make_shared<PathDiagnosticEventPiece>(L, os.str());
 }
 
 PathDiagnosticPieceRef
@@ -493,7 +493,7 @@ RefCountReportVisitor::VisitNode(const ExplodedNode *N, BugReporterContext &BRC,
   if (PrevT && IsFreeUnowned && CurrV.isNotOwned() && PrevT->isOwned()) {
     os << "Object is now not exclusively owned";
     auto Pos = PathDiagnosticLocation::create(N->getLocation(), SM);
-    return std::make_shared<PathDiagnosticEventPiece>(Pos, sbuf);
+    return std::make_shared<PathDiagnosticEventPiece>(Pos, os.str());
   }
 
   // This is the allocation site since the previous node had no bindings
@@ -535,7 +535,7 @@ RefCountReportVisitor::VisitNode(const ExplodedNode *N, BugReporterContext &BRC,
     }
 
     PathDiagnosticLocation Pos(S, SM, N->getLocationContext());
-    return std::make_shared<PathDiagnosticEventPiece>(Pos, sbuf);
+    return std::make_shared<PathDiagnosticEventPiece>(Pos, os.str());
   }
 
   // Gather up the effects that were performed on the object at this
@@ -582,13 +582,13 @@ RefCountReportVisitor::VisitNode(const ExplodedNode *N, BugReporterContext &BRC,
   if (!shouldGenerateNote(os, PrevT, CurrV, DeallocSent))
     return nullptr;
 
-  if (sbuf.empty())
+  if (os.str().empty())
     return nullptr; // We have nothing to say!
 
   const Stmt *S = N->getLocation().castAs<StmtPoint>().getStmt();
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                                 N->getLocationContext());
-  auto P = std::make_shared<PathDiagnosticEventPiece>(Pos, sbuf);
+  auto P = std::make_shared<PathDiagnosticEventPiece>(Pos, os.str());
 
   // Add the range by scanning the children of the statement for any bindings
   // to Sym.
@@ -635,9 +635,8 @@ public:
 };
 } // namespace
 
-static Bindings getAllVarBindingsForSymbol(ProgramStateManager &Manager,
-                                           const ExplodedNode *Node,
-                                           SymbolRef Sym) {
+Bindings getAllVarBindingsForSymbol(ProgramStateManager &Manager,
+                                    const ExplodedNode *Node, SymbolRef Sym) {
   Bindings Result;
   VarBindingsCollector Collector{Sym, Result};
   while (Result.empty() && Node) {
@@ -787,6 +786,9 @@ RefLeakReportVisitor::getEndPath(BugReporterContext &BRC,
   assert(RV);
 
   if (RV->getKind() == RefVal::ErrorLeakReturned) {
+    // FIXME: Per comments in rdar://6320065, "create" only applies to CF
+    // objects.  Only "copy", "alloc", "retain" and "new" transfer ownership
+    // to the caller for NS objects.
     const Decl *D = &EndN->getCodeDecl();
 
     os << (isa<ObjCMethodDecl>(D) ? " is returned from a method "
@@ -832,7 +834,7 @@ RefLeakReportVisitor::getEndPath(BugReporterContext &BRC,
        << RV->getCount();
   }
 
-  return std::make_shared<PathDiagnosticEventPiece>(L, sbuf);
+  return std::make_shared<PathDiagnosticEventPiece>(L, os.str());
 }
 
 RefCountReport::RefCountReport(const RefCountBug &D, const LangOptions &LOpts,
@@ -978,7 +980,7 @@ void RefLeakReport::findBindingToReport(CheckerContext &Ctx,
     //       something like derived regions if we want to construct SVal from
     //       Sym. Instead, we take the value that is definitely stored in that
     //       region, thus guaranteeing that trackStoredValue will work.
-    bugreporter::trackStoredValue(AllVarBindings[0].second,
+    bugreporter::trackStoredValue(AllVarBindings[0].second.castAs<KnownSVal>(),
                                   AllocBindingToReport, *this);
   } else {
     AllocBindingToReport = AllocFirstBinding;

@@ -87,39 +87,13 @@ enum EdgeKind_x86_64 : Edge::Kind {
   /// Delta from the fixup to the target.
   ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - Fixup + Addend : int64
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
   ///     an out-of-range error will be returned.
   ///
   Delta32,
-
-  /// A 16-bit delta.
-  ///
-  /// Delta from the fixup to the target.
-  ///
-  /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int16
-  ///
-  /// Errors:
-  ///   - The result of the fixup expression must fit into an int16, otherwise
-  ///     an out-of-range error will be returned.
-  ///
-  Delta16,
-
-  /// An 8-bit delta.
-  ///
-  /// Delta from the fixup to the target.
-  ///
-  /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int8
-  ///
-  /// Errors:
-  ///   - The result of the fixup expression must fit into an int8, otherwise
-  ///     an out-of-range error will be returned.
-  ///
-  Delta8,
 
   /// A 64-bit negative delta.
   ///
@@ -141,24 +115,6 @@ enum EdgeKind_x86_64 : Edge::Kind {
   ///   - The result of the fixup expression must fit into an int32, otherwise
   ///     an out-of-range error will be returned.
   NegDelta32,
-
-  /// A 64-bit size relocation.
-  ///
-  /// Fixup expression:
-  ///   Fixup <- Size + Addend : uint64
-  ///
-  Size64,
-
-  /// A 32-bit size relocation.
-  ///
-  /// Fixup expression:
-  ///   Fixup <- Size + Addend : uint32
-  ///
-  /// Errors:
-  ///   - The result of the fixup expression must fit into an uint32, otherwise
-  ///     an out-of-range error will be returned.
-  ///
-  Size32,
 
   /// A 64-bit GOT delta.
   ///
@@ -517,24 +473,6 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E,
     break;
   }
 
-  case Delta16: {
-    int64_t Value = E.getTarget().getAddress() - FixupAddress + E.getAddend();
-    if (LLVM_LIKELY(isInt<16>(Value)))
-      *(little16_t *)FixupPtr = Value;
-    else
-      return makeTargetOutOfRangeError(G, B, E);
-    break;
-  }
-
-  case Delta8: {
-    int64_t Value = E.getTarget().getAddress() - FixupAddress + E.getAddend();
-    if (LLVM_LIKELY(isInt<8>(Value)))
-      *FixupPtr = Value;
-    else
-      return makeTargetOutOfRangeError(G, B, E);
-    break;
-  }
-
   case NegDelta64: {
     int64_t Value = FixupAddress - E.getTarget().getAddress() + E.getAddend();
     *(little64_t *)FixupPtr = Value;
@@ -549,22 +487,6 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E,
       return makeTargetOutOfRangeError(G, B, E);
     break;
   }
-
-  case Size64: {
-    uint64_t Value = E.getTarget().getSize() + E.getAddend();
-    *(ulittle64_t *)FixupPtr = Value;
-    break;
-  }
-
-  case Size32: {
-    uint64_t Value = E.getTarget().getSize() + E.getAddend();
-    if (LLVM_LIKELY(isUInt<32>(Value)))
-      *(ulittle32_t *)FixupPtr = Value;
-    else
-      return makeTargetOutOfRangeError(G, B, E);
-    break;
-  }
-
   case Delta64FromGOT: {
     assert(GOTSymbol && "No GOT section symbol");
     int64_t Value =
@@ -625,7 +547,7 @@ inline Block &createPointerJumpStubBlock(LinkGraph &G, Section &StubSection,
                                          Symbol &PointerSymbol) {
   auto &B = G.createContentBlock(StubSection, PointerJumpStubContent,
                                  orc::ExecutorAddr(~uint64_t(5)), 1, 0);
-  B.addEdge(BranchPCRel32, 2, PointerSymbol, 0);
+  B.addEdge(Delta32, 2, PointerSymbol, -4);
   return B;
 }
 
@@ -641,40 +563,10 @@ inline Symbol &createAnonymousPointerJumpStub(LinkGraph &G,
       false);
 }
 
-/// x86-64 reentry trampoline.
-///
-/// Contains the instruction sequence for a trampoline that stores its return
-/// address on the stack and calls <reentry-symbol>:
-///   call  <reentry-symbol>
-extern const char ReentryTrampolineContent[5];
-
-/// Create a block of N reentry trampolines.
-inline Block &createReentryTrampolineBlock(LinkGraph &G,
-                                           Section &TrampolineSection,
-                                           Symbol &ReentrySymbol) {
-  auto &B = G.createContentBlock(TrampolineSection, ReentryTrampolineContent,
-                                 orc::ExecutorAddr(~uint64_t(7)), 1, 0);
-  B.addEdge(BranchPCRel32, 1, ReentrySymbol, 0);
-  return B;
-}
-
-inline Symbol &createAnonymousReentryTrampoline(LinkGraph &G,
-                                                Section &TrampolineSection,
-                                                Symbol &ReentrySymbol) {
-  return G.addAnonymousSymbol(
-      createReentryTrampolineBlock(G, TrampolineSection, ReentrySymbol), 0,
-      sizeof(ReentryTrampolineContent), true, false);
-}
-
 /// Global Offset Table Builder.
 class GOTTableManager : public TableManager<GOTTableManager> {
 public:
   static StringRef getSectionName() { return "$__GOT"; }
-
-  GOTTableManager(LinkGraph &G) {
-    if ((GOTSection = G.findSectionByName(getSectionName())))
-      registerExistingEntries();
-  }
 
   bool visitEdge(LinkGraph &G, Block *B, Edge &E) {
     Edge::Kind KindToSet = Edge::Invalid;
@@ -726,20 +618,15 @@ private:
     return *GOTSection;
   }
 
-  void registerExistingEntries();
-
   Section *GOTSection = nullptr;
 };
 
 /// Procedure Linkage Table Builder.
 class PLTTableManager : public TableManager<PLTTableManager> {
 public:
-  static StringRef getSectionName() { return "$__STUBS"; }
+  PLTTableManager(GOTTableManager &GOT) : GOT(GOT) {}
 
-  PLTTableManager(LinkGraph &G, GOTTableManager &GOT) : GOT(GOT) {
-    if ((StubsSection = G.findSectionByName(getSectionName())))
-      registerExistingEntries();
-  }
+  static StringRef getSectionName() { return "$__STUBS"; }
 
   bool visitEdge(LinkGraph &G, Block *B, Edge &E) {
     if (E.getKind() == x86_64::BranchPCRel32 && !E.getTarget().isDefined()) {
@@ -764,16 +651,14 @@ public:
 
 public:
   Section &getStubsSection(LinkGraph &G) {
-    if (!StubsSection)
-      StubsSection = &G.createSection(getSectionName(),
-                                      orc::MemProt::Read | orc::MemProt::Exec);
-    return *StubsSection;
+    if (!PLTSection)
+      PLTSection = &G.createSection(getSectionName(),
+                                    orc::MemProt::Read | orc::MemProt::Exec);
+    return *PLTSection;
   }
 
-  void registerExistingEntries();
-
   GOTTableManager &GOT;
-  Section *StubsSection = nullptr;
+  Section *PLTSection = nullptr;
 };
 
 /// Optimize the GOT and Stub relocations if the edge target address is in range

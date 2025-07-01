@@ -1,10 +1,10 @@
 comptime {
-    @Type(.{ .@"struct" = .{
+    @Type(.{ .Struct = .{
         .layout = .auto,
         .fields = &.{.{
             .name = "foo",
             .type = u32,
-            .default_value_ptr = null,
+            .default_value = null,
             .is_comptime = false,
             .alignment = 4,
         }},
@@ -13,12 +13,12 @@ comptime {
     } });
 }
 comptime {
-    @Type(.{ .@"struct" = .{
+    @Type(.{ .Struct = .{
         .layout = .auto,
         .fields = &.{.{
             .name = "3",
             .type = u32,
-            .default_value_ptr = null,
+            .default_value = null,
             .is_comptime = false,
             .alignment = 4,
         }},
@@ -27,12 +27,12 @@ comptime {
     } });
 }
 comptime {
-    @Type(.{ .@"struct" = .{
+    @Type(.{ .Struct = .{
         .layout = .auto,
         .fields = &.{.{
             .name = "0",
             .type = u32,
-            .default_value_ptr = null,
+            .default_value = null,
             .is_comptime = true,
             .alignment = 4,
         }},
@@ -41,12 +41,12 @@ comptime {
     } });
 }
 comptime {
-    @Type(.{ .@"struct" = .{
+    @Type(.{ .Struct = .{
         .layout = .@"extern",
         .fields = &.{.{
             .name = "0",
             .type = u32,
-            .default_value_ptr = null,
+            .default_value = null,
             .is_comptime = true,
             .alignment = 4,
         }},
@@ -55,12 +55,12 @@ comptime {
     } });
 }
 comptime {
-    @Type(.{ .@"struct" = .{
+    @Type(.{ .Struct = .{
         .layout = .@"packed",
         .fields = &.{.{
             .name = "0",
             .type = u32,
-            .default_value_ptr = null,
+            .default_value = null,
             .is_comptime = true,
             .alignment = 4,
         }},
@@ -70,6 +70,8 @@ comptime {
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :2:5: error: tuple cannot have non-numeric field 'foo'
 // :16:5: error: tuple field name '3' does not match field index 0

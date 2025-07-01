@@ -6,7 +6,7 @@ fn amain() void {
     _ = ptr();
     _ = &ptr;
 }
-fn afunc() callconv(.@"async") void {}
+fn afunc() callconv(.Async) void {}
 
 // error
 // backend=stage1

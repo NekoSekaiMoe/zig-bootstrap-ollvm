@@ -18,10 +18,8 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/AST/DeclCXX.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Timer.h"
@@ -285,13 +283,12 @@ public:
     ScopedIncrement ScopedDepth(&CurrentDepth);
 
     for (unsigned I = 0, N = Node->capture_size(); I != N; ++I) {
-      const LambdaCapture *C = Node->capture_begin() + I;
+      const auto *C = Node->capture_begin() + I;
       if (!C->isExplicit())
         continue;
       if (Node->isInitCapture(C) && !match(*C->getCapturedVar()))
         return false;
-      const Expr *CIE = Node->capture_init_begin()[I];
-      if (CIE != nullptr && !match(*CIE))
+      if (!match(*Node->capture_init_begin()[I]))
         return false;
     }
 
@@ -654,20 +651,11 @@ public:
                           BoundNodesTreeBuilder *Builder,
                           bool Directly) override;
 
-private:
-  bool
-  classIsDerivedFromImpl(const CXXRecordDecl *Declaration,
-                         const Matcher<NamedDecl> &Base,
-                         BoundNodesTreeBuilder *Builder, bool Directly,
-                         llvm::SmallPtrSetImpl<const CXXRecordDecl *> &Visited);
-
-public:
   bool objcClassIsDerivedFrom(const ObjCInterfaceDecl *Declaration,
                               const Matcher<NamedDecl> &Base,
                               BoundNodesTreeBuilder *Builder,
                               bool Directly) override;
 
-public:
   // Implements ASTMatchFinder::matchesChildOf.
   bool matchesChildOf(const DynTypedNode &Node, ASTContext &Ctx,
                       const DynTypedMatcher &Matcher,
@@ -991,7 +979,7 @@ private:
 
   class TimeBucketRegion {
   public:
-    TimeBucketRegion() = default;
+    TimeBucketRegion() : Bucket(nullptr) {}
     ~TimeBucketRegion() { setBucket(nullptr); }
 
     /// Start timing for \p NewBucket.
@@ -1014,7 +1002,7 @@ private:
     }
 
   private:
-    llvm::TimeRecord *Bucket = nullptr;
+    llvm::TimeRecord *Bucket;
   };
 
   /// Runs all the \p Matchers on \p Node.
@@ -1373,17 +1361,7 @@ bool MatchASTVisitor::classIsDerivedFrom(const CXXRecordDecl *Declaration,
                                          const Matcher<NamedDecl> &Base,
                                          BoundNodesTreeBuilder *Builder,
                                          bool Directly) {
-  llvm::SmallPtrSet<const CXXRecordDecl *, 8> Visited;
-  return classIsDerivedFromImpl(Declaration, Base, Builder, Directly, Visited);
-}
-
-bool MatchASTVisitor::classIsDerivedFromImpl(
-    const CXXRecordDecl *Declaration, const Matcher<NamedDecl> &Base,
-    BoundNodesTreeBuilder *Builder, bool Directly,
-    llvm::SmallPtrSetImpl<const CXXRecordDecl *> &Visited) {
   if (!Declaration->hasDefinition())
-    return false;
-  if (!Visited.insert(Declaration).second)
     return false;
   for (const auto &It : Declaration->bases()) {
     const Type *TypeNode = It.getType().getTypePtr();
@@ -1406,8 +1384,7 @@ bool MatchASTVisitor::classIsDerivedFromImpl(
       *Builder = std::move(Result);
       return true;
     }
-    if (!Directly &&
-        classIsDerivedFromImpl(ClassDecl, Base, Builder, Directly, Visited))
+    if (!Directly && classIsDerivedFrom(ClassDecl, Base, Builder, Directly))
       return true;
   }
   return false;

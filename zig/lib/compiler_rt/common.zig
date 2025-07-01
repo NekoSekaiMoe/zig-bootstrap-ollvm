@@ -1,37 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
-const ofmt_c = builtin.object_format == .c;
 
-/// For now, we prefer weak linkage because some of the routines we implement here may also be
-/// provided by system/dynamic libc. Eventually we should be more disciplined about this on a
-/// per-symbol, per-target basis: https://github.com/ziglang/zig/issues/11883
-pub const linkage: std.builtin.GlobalLinkage = if (builtin.is_test)
-    .internal
-else if (ofmt_c)
-    .strong
-else
-    .weak;
-
+pub const linkage: std.builtin.GlobalLinkage = if (builtin.is_test) .internal else .weak;
 /// Determines the symbol's visibility to other objects.
 /// For WebAssembly this allows the symbol to be resolved to other modules, but will not
 /// export it to the host runtime.
-pub const visibility: std.builtin.SymbolVisibility = if (linkage != .internal)
-    .hidden
-else
-    .default;
-
-pub const PreferredLoadStoreElement = element: {
-    if (std.simd.suggestVectorLength(u8)) |vec_size| {
-        const Vec = @Vector(vec_size, u8);
-
-        if (@sizeOf(Vec) == vec_size and std.math.isPowerOfTwo(vec_size)) {
-            break :element Vec;
-        }
-    }
-    break :element usize;
-};
-
+pub const visibility: std.builtin.SymbolVisibility =
+    if (builtin.target.isWasm() and linkage != .internal) .hidden else .default;
 pub const want_aeabi = switch (builtin.abi) {
     .eabi,
     .eabihf,
@@ -40,30 +16,17 @@ pub const want_aeabi = switch (builtin.abi) {
     .gnueabi,
     .gnueabihf,
     .android,
-    .androideabi,
     => switch (builtin.cpu.arch) {
         .arm, .armeb, .thumb, .thumbeb => true,
         else => false,
     },
     else => false,
 };
-
-/// These functions are provided by libc when targeting MSVC, but not MinGW.
-// Temporarily used for thumb-uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
-pub const want_windows_arm_abi = builtin.cpu.arch.isArm() and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.abi.isGnu() or !builtin.link_libc);
-
-pub const want_windows_msvc_or_itanium_abi = switch (builtin.abi) {
-    .none, .msvc, .itanium => builtin.os.tag == .windows,
-    else => false,
-};
-
-pub const want_ppc_abi = builtin.cpu.arch.isPowerPC();
-
-pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
+pub const want_ppc_abi = builtin.cpu.arch.isPPC() or builtin.cpu.arch.isPPC64();
 
 // Libcalls that involve u128 on Windows x86-64 are expected by LLVM to use the
 // calling convention of @Vector(2, u64), rather than what's standard.
-pub const want_windows_v2u64_abi = builtin.os.tag == .windows and builtin.cpu.arch == .x86_64 and !ofmt_c;
+pub const want_windows_v2u64_abi = builtin.os.tag == .windows and builtin.cpu.arch == .x86_64 and @import("builtin").object_format != .c;
 
 /// This governs whether to use these symbol names for f16/f32 conversions
 /// rather than the standard names:
@@ -102,30 +65,34 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
 
 pub const want_sparc_abi = builtin.cpu.arch.isSPARC();
 
-// Avoid dragging in the runtime safety mechanisms into this .o file, unless
-// we're trying to test compiler-rt.
-pub const panic = if (builtin.is_test) std.debug.FullPanic(std.debug.defaultPanic) else std.debug.no_panic;
+// Avoid dragging in the runtime safety mechanisms into this .o file,
+// unless we're trying to test compiler-rt.
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    _ = error_return_trace;
+    if (builtin.is_test) {
+        @setCold(true);
+        std.debug.panic("{s}", .{msg});
+    } else {
+        unreachable;
+    }
+}
 
-/// This seems to mostly correspond to `clang::TargetInfo::HasFloat16`.
+/// AArch64 is the only ABI (at the moment) to support f16 arguments without the
+/// need for extending them to wider fp types.
+/// TODO remove this; do this type selection in the language rather than
+/// here in compiler-rt.
 pub fn F16T(comptime OtherType: type) type {
     return switch (builtin.cpu.arch) {
-        .amdgcn,
-        .arm,
-        .armeb,
-        .thumb,
-        .thumbeb,
-        .aarch64,
-        .aarch64_be,
-        .nvptx,
-        .nvptx64,
-        .riscv32,
-        .riscv64,
-        .spirv,
-        .spirv32,
-        .spirv64,
-        => f16,
-        .hexagon => if (builtin.target.cpu.has(.hexagon, .v68)) f16 else u16,
-        .x86, .x86_64 => if (builtin.target.os.tag.isDarwin()) switch (OtherType) {
+        .arm, .armeb, .thumb, .thumbeb => if (std.Target.arm.featureSetHas(builtin.cpu.features, .has_v8))
+            switch (builtin.abi.floatAbi()) {
+                .soft => u16,
+                .hard => f16,
+            }
+        else
+            u16,
+        .aarch64, .aarch64_be, .aarch64_32 => f16,
+        .riscv64 => if (builtin.zig_backend == .stage1) u16 else f16,
+        .x86, .x86_64 => if (builtin.target.isDarwin()) switch (OtherType) {
             // Starting with LLVM 16, Darwin uses different abi for f16
             // depending on the type of the other return/argument..???
             f32, f64 => u16,
@@ -250,8 +217,8 @@ pub fn wideMultiply(comptime Z: type, a: Z, b: Z, hi: *Z, lo: *Z) void {
     }
 }
 
-pub fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).float.bits)) i32 {
-    const Z = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
+pub fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).Float.bits)) i32 {
+    const Z = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
     const integerBit = @as(Z, 1) << std.math.floatFractionalBits(T);
 
     const shift = @clz(significand.*) - @clz(integerBit);
@@ -261,8 +228,8 @@ pub fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeIn
 
 pub inline fn fneg(a: anytype) @TypeOf(a) {
     const F = @TypeOf(a);
-    const bits = @typeInfo(F).float.bits;
-    const U = @Type(.{ .int = .{
+    const bits = @typeInfo(F).Float.bits;
+    const U = @Type(.{ .Int = .{
         .signedness = .unsigned,
         .bits = bits,
     } });
@@ -275,7 +242,7 @@ pub inline fn fneg(a: anytype) @TypeOf(a) {
 /// signed or unsigned integers.
 pub fn HalveInt(comptime T: type, comptime signed_half: bool) type {
     return extern union {
-        pub const bits = @divExact(@typeInfo(T).int.bits, 2);
+        pub const bits = @divExact(@typeInfo(T).Int.bits, 2);
         pub const HalfTU = std.meta.Int(.unsigned, bits);
         pub const HalfTS = std.meta.Int(.signed, bits);
         pub const HalfT = if (signed_half) HalfTS else HalfTU;

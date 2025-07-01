@@ -22,7 +22,6 @@
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 
 #include <future>
-#include <list>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -41,16 +40,18 @@ public:
   /// Try to create a COFFPlatform instance, adding the ORC runtime to the
   /// given JITDylib.
   static Expected<std::unique_ptr<COFFPlatform>>
-  Create(ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
+  Create(ExecutionSession &ES, ObjectLinkingLayer &ObjLinkingLayer,
+         JITDylib &PlatformJD,
          std::unique_ptr<MemoryBuffer> OrcRuntimeArchiveBuffer,
          LoadDynamicLibrary LoadDynLibrary, bool StaticVCRuntime = false,
          const char *VCRuntimePath = nullptr,
          std::optional<SymbolAliasMap> RuntimeAliases = std::nullopt);
 
   static Expected<std::unique_ptr<COFFPlatform>>
-  Create(ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
-         const char *OrcRuntimePath, LoadDynamicLibrary LoadDynLibrary,
-         bool StaticVCRuntime = false, const char *VCRuntimePath = nullptr,
+  Create(ExecutionSession &ES, ObjectLinkingLayer &ObjLinkingLayer,
+         JITDylib &PlatformJD, const char *OrcRuntimePath,
+         LoadDynamicLibrary LoadDynLibrary, bool StaticVCRuntime = false,
+         const char *VCRuntimePath = nullptr,
          std::optional<SymbolAliasMap> RuntimeAliases = std::nullopt);
 
   ExecutionSession &getExecutionSession() const { return ES; }
@@ -98,6 +99,9 @@ private:
                           jitlink::LinkGraph &G,
                           jitlink::PassConfiguration &Config) override;
 
+    SyntheticSymbolDependenciesMap
+    getSyntheticSymbolDependencies(MaterializationResponsibility &MR) override;
+
     // FIXME: We should be tentatively tracking scraped sections and discarding
     // if the MR fails.
     Error notifyFailed(MaterializationResponsibility &MR) override {
@@ -112,6 +116,9 @@ private:
                                      ResourceKey SrcKey) override {}
 
   private:
+    using InitSymbolDepMap =
+        DenseMap<MaterializationResponsibility *, JITLinkSymbolSet>;
+
     Error associateJITDylibHeaderSymbol(jitlink::LinkGraph &G,
                                         MaterializationResponsibility &MR,
                                         bool Bootstrap);
@@ -124,6 +131,7 @@ private:
 
     std::mutex PluginMutex;
     COFFPlatform &CP;
+    InitSymbolDepMap InitSymbolDeps;
   };
 
   struct JDBootstrapState {
@@ -137,7 +145,8 @@ private:
   static bool supportedTarget(const Triple &TT);
 
   COFFPlatform(
-      ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
+      ExecutionSession &ES, ObjectLinkingLayer &ObjLinkingLayer,
+      JITDylib &PlatformJD,
       std::unique_ptr<StaticLibraryDefinitionGenerator> OrcRuntimeGenerator,
       std::unique_ptr<MemoryBuffer> OrcRuntimeArchiveBuffer,
       std::unique_ptr<object::Archive> OrcRuntimeArchive,

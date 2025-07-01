@@ -8,7 +8,7 @@ export fn foo() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :4:5: error: asm cannot output to const local 'f'

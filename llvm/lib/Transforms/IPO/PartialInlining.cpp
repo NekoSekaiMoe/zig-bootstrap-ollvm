@@ -161,7 +161,7 @@ struct FunctionOutliningInfo {
   // The dominating block of the region to be outlined.
   BasicBlock *NonReturnBlock = nullptr;
 
-  // The set of blocks in Entries that are predecessors to ReturnBlock
+  // The set of blocks in Entries that that are predecessors to ReturnBlock
   SmallVector<BasicBlock *, 4> ReturnBlockPreds;
 };
 
@@ -170,10 +170,11 @@ struct FunctionOutliningMultiRegionInfo {
 
   // Container for outline regions
   struct OutlineRegionInfo {
-    OutlineRegionInfo(ArrayRef<BasicBlock *> Region, BasicBlock *EntryBlock,
-                      BasicBlock *ExitBlock, BasicBlock *ReturnBlock)
-        : Region(Region), EntryBlock(EntryBlock), ExitBlock(ExitBlock),
-          ReturnBlock(ReturnBlock) {}
+    OutlineRegionInfo(ArrayRef<BasicBlock *> Region,
+                      BasicBlock *EntryBlock, BasicBlock *ExitBlock,
+                      BasicBlock *ReturnBlock)
+        : Region(Region.begin(), Region.end()), EntryBlock(EntryBlock),
+          ExitBlock(ExitBlock), ReturnBlock(ReturnBlock) {}
     SmallVector<BasicBlock *, 8> Region;
     BasicBlock *EntryBlock;
     BasicBlock *ExitBlock;
@@ -763,10 +764,10 @@ bool PartialInlinerImpl::shouldPartialInline(
     });
     return false;
   }
-  const DataLayout &DL = Caller->getDataLayout();
+  const DataLayout &DL = Caller->getParent()->getDataLayout();
 
   // The savings of eliminating the call:
-  int NonWeightedSavings = getCallsiteCost(CalleeTTI, CB, DL);
+  int NonWeightedSavings = getCallsiteCost(CB, DL);
   BlockFrequency NormWeightedSavings(NonWeightedSavings);
 
   // Weighted saving is smaller than weighted cost, return false
@@ -803,7 +804,7 @@ InstructionCost
 PartialInlinerImpl::computeBBInlineCost(BasicBlock *BB,
                                         TargetTransformInfo *TTI) {
   InstructionCost InlineCost = 0;
-  const DataLayout &DL = BB->getDataLayout();
+  const DataLayout &DL = BB->getParent()->getParent()->getDataLayout();
   int InstrCost = InlineConstants::getInstrCost();
   for (Instruction &I : BB->instructionsWithoutDebug()) {
     // Skip free instructions.
@@ -841,12 +842,12 @@ PartialInlinerImpl::computeBBInlineCost(BasicBlock *BB,
     }
 
     if (CallInst *CI = dyn_cast<CallInst>(&I)) {
-      InlineCost += getCallsiteCost(*TTI, *CI, DL);
+      InlineCost += getCallsiteCost(*CI, DL);
       continue;
     }
 
     if (InvokeInst *II = dyn_cast<InvokeInst>(&I)) {
-      InlineCost += getCallsiteCost(*TTI, *II, DL);
+      InlineCost += getCallsiteCost(*II, DL);
       continue;
     }
 
@@ -1039,9 +1040,9 @@ void PartialInlinerImpl::FunctionCloner::normalizeReturnBlock() const {
   };
 
   ClonedOI->ReturnBlock = ClonedOI->ReturnBlock->splitBasicBlock(
-      ClonedOI->ReturnBlock->getFirstNonPHIIt());
+      ClonedOI->ReturnBlock->getFirstNonPHI()->getIterator());
   BasicBlock::iterator I = PreReturn->begin();
-  BasicBlock::iterator Ins = ClonedOI->ReturnBlock->begin();
+  Instruction *Ins = &ClonedOI->ReturnBlock->front();
   SmallVector<Instruction *, 4> DeadPhis;
   while (I != PreReturn->end()) {
     PHINode *OldPhi = dyn_cast<PHINode>(I);
@@ -1049,10 +1050,9 @@ void PartialInlinerImpl::FunctionCloner::normalizeReturnBlock() const {
       break;
 
     PHINode *RetPhi =
-        PHINode::Create(OldPhi->getType(), NumPredsFromEntries + 1, "");
-    RetPhi->insertBefore(Ins);
+        PHINode::Create(OldPhi->getType(), NumPredsFromEntries + 1, "", Ins);
     OldPhi->replaceAllUsesWith(RetPhi);
-    Ins = ClonedOI->ReturnBlock->getFirstNonPHIIt();
+    Ins = ClonedOI->ReturnBlock->getFirstNonPHI();
 
     RetPhi->addIncoming(&*I, PreReturn);
     for (BasicBlock *E : ClonedOI->ReturnBlockPreds) {

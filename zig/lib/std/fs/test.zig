@@ -43,7 +43,7 @@ const PathType = enum {
                 fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // The final path may not actually exist which would cause realpath to fail.
                     // So instead, we get the path of the dir and join it with the relative path.
-                    var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
+                    var fd_path_buf: [fs.MAX_PATH_BYTES]u8 = undefined;
                     const dir_path = try std.os.getFdPath(dir.fd, &fd_path_buf);
                     return fs.path.joinZ(allocator, &.{ dir_path, relative_path });
                 }
@@ -52,7 +52,7 @@ const PathType = enum {
                 fn transform(allocator: mem.Allocator, dir: Dir, relative_path: [:0]const u8) TransformError![:0]const u8 {
                     // Any drive absolute path (C:\foo) can be converted into a UNC path by
                     // using '127.0.0.1' as the server name and '<drive letter>$' as the share name.
-                    var fd_path_buf: [fs.max_path_bytes]u8 = undefined;
+                    var fd_path_buf: [fs.MAX_PATH_BYTES]u8 = undefined;
                     const dir_path = try std.os.getFdPath(dir.fd, &fd_path_buf);
                     const windows_path_type = windows.getUnprefixedPathType(u8, dir_path);
                     switch (windows_path_type) {
@@ -206,13 +206,13 @@ test "Dir.readLink" {
 }
 
 fn testReadLink(dir: Dir, target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
+    var buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
     const actual = try dir.readLink(symlink_path, buffer[0..]);
     try testing.expectEqualStrings(target_path, actual);
 }
 
 fn testReadLinkAbsolute(target_path: []const u8, symlink_path: []const u8) !void {
-    var buffer: [fs.max_path_bytes]u8 = undefined;
+    var buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
     const given = try fs.readLinkAbsolute(symlink_path, buffer[0..]);
     try testing.expectEqualStrings(target_path, given);
 }
@@ -262,7 +262,7 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
                         &io,
                         null,
                         windows.FILE_ATTRIBUTE_NORMAL,
-                        windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
+                        windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE,
                         windows.FILE_OPEN,
                         // FILE_OPEN_REPARSE_POINT is the important thing here
                         windows.FILE_OPEN_REPARSE_POINT | windows.FILE_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT | windows.FILE_OPEN_FOR_BACKUP_INTENT,
@@ -320,8 +320,14 @@ test "accessAbsolute" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const base_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(base_path);
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const base_path = blk: {
+        const relative_path = try fs.path.join(allocator, &.{ "zig-cache", "tmp", tmp.sub_path[0..] });
+        break :blk try fs.realpathAlloc(allocator, relative_path);
+    };
 
     try fs.accessAbsolute(base_path, .{});
 }
@@ -332,62 +338,32 @@ test "openDirAbsolute" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_ino = (try tmp.dir.stat()).inode;
-
     try tmp.dir.makeDir("subdir");
-    const sub_path = try tmp.dir.realpathAlloc(testing.allocator, "subdir");
-    defer testing.allocator.free(sub_path);
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-    // Can open sub_path
-    var tmp_sub = try fs.openDirAbsolute(sub_path, .{});
-    defer tmp_sub.close();
-
-    const sub_ino = (try tmp_sub.stat()).inode;
+    const base_path = blk: {
+        const relative_path = try fs.path.join(allocator, &.{ "zig-cache", "tmp", tmp.sub_path[0..], "subdir" });
+        break :blk try fs.realpathAlloc(allocator, relative_path);
+    };
 
     {
-        // Can open sub_path + ".."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".." });
-        defer testing.allocator.free(dir_path);
-
-        var dir = try fs.openDirAbsolute(dir_path, .{});
+        var dir = try fs.openDirAbsolute(base_path, .{});
         defer dir.close();
-
-        const ino = (try dir.stat()).inode;
-        try testing.expectEqual(tmp_ino, ino);
     }
 
-    {
-        // Can open sub_path + "."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, "." });
-        defer testing.allocator.free(dir_path);
-
+    for ([_][]const u8{ ".", ".." }) |sub_path| {
+        const dir_path = try fs.path.join(allocator, &.{ base_path, sub_path });
         var dir = try fs.openDirAbsolute(dir_path, .{});
         defer dir.close();
-
-        const ino = (try dir.stat()).inode;
-        try testing.expectEqual(sub_ino, ino);
-    }
-
-    {
-        // Can open subdir + "..", with some extra "."
-        const dir_path = try fs.path.join(testing.allocator, &.{ sub_path, ".", "..", "." });
-        defer testing.allocator.free(dir_path);
-
-        var dir = try fs.openDirAbsolute(dir_path, .{});
-        defer dir.close();
-
-        const ino = (try dir.stat()).inode;
-        try testing.expectEqual(tmp_ino, ino);
     }
 }
 
 test "openDir cwd parent '..'" {
-    var dir = fs.cwd().openDir("..", .{}) catch |err| {
-        if (native_os == .wasi and err == error.PermissionDenied) {
-            return; // This is okay. WASI disallows escaping from the fs sandbox
-        }
-        return err;
-    };
+    if (native_os == .wasi) return error.SkipZigTest;
+
+    var dir = try fs.cwd().openDir("..", .{});
     defer dir.close();
 }
 
@@ -430,7 +406,10 @@ test "readLinkAbsolute" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const base_path = blk: {
+        const relative_path = try fs.path.join(allocator, &.{ "zig-cache", "tmp", tmp.sub_path[0..] });
+        break :blk try fs.realpathAlloc(allocator, relative_path);
+    };
 
     {
         const target_path = try fs.path.join(allocator, &.{ base_path, "file.txt" });
@@ -632,7 +611,7 @@ test "Dir.realpath smoke test" {
             const allocator = ctx.arena.allocator();
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
-            var buf: [fs.max_path_bytes]u8 = undefined;
+            var buf: [fs.MAX_PATH_BYTES]u8 = undefined;
 
             // FileNotFound if the path doesn't exist
             try testing.expectError(error.FileNotFound, ctx.dir.realpathAlloc(allocator, test_file_path));
@@ -776,30 +755,18 @@ test "file operations on directories" {
             try testing.expectError(error.IsDir, ctx.dir.createFile(test_dir_name, .{}));
             try testing.expectError(error.IsDir, ctx.dir.deleteFile(test_dir_name));
             switch (native_os) {
-                .dragonfly, .netbsd => {
-                    // no error when reading a directory. See https://github.com/ziglang/zig/issues/5732
-                    const buf = try ctx.dir.readFileAlloc(testing.allocator, test_dir_name, std.math.maxInt(usize));
-                    testing.allocator.free(buf);
-                },
-                .wasi => {
-                    // WASI return EBADF, which gets mapped to NotOpenForReading.
-                    // See https://github.com/bytecodealliance/wasmtime/issues/1935
-                    try testing.expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(testing.allocator, test_dir_name, std.math.maxInt(usize)));
-                },
+                // no error when reading a directory.
+                .dragonfly, .netbsd => {},
+                // Currently, WASI will return error.Unexpected (via ENOTCAPABLE) when attempting fd_read on a directory handle.
+                // TODO: Re-enable on WASI once https://github.com/bytecodealliance/wasmtime/issues/1935 is resolved.
+                .wasi => {},
                 else => {
                     try testing.expectError(error.IsDir, ctx.dir.readFileAlloc(testing.allocator, test_dir_name, std.math.maxInt(usize)));
                 },
             }
-
-            if (native_os == .wasi and builtin.link_libc) {
-                // wasmtime unexpectedly succeeds here, see https://github.com/ziglang/zig/issues/20747
-                const handle = try ctx.dir.openFile(test_dir_name, .{ .mode = .read_write });
-                handle.close();
-            } else {
-                // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
-                // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
-                try testing.expectError(error.IsDir, ctx.dir.openFile(test_dir_name, .{ .mode = .read_write }));
-            }
+            // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
+            // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
+            try testing.expectError(error.IsDir, ctx.dir.openFile(test_dir_name, .{ .mode = .read_write }));
 
             if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
                 try testing.expectError(error.IsDir, fs.createFileAbsolute(test_dir_name, .{}));
@@ -1022,7 +989,10 @@ test "renameAbsolute" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
+    const base_path = blk: {
+        const relative_path = try fs.path.join(allocator, &.{ "zig-cache", "tmp", tmp_dir.sub_path[0..] });
+        break :blk try fs.realpathAlloc(allocator, relative_path);
+    };
 
     try testing.expectError(error.FileNotFound, fs.renameAbsolute(
         try fs.path.join(allocator, &.{ base_path, "missing_file_name" }),
@@ -1071,7 +1041,7 @@ test "openSelfExe" {
 test "selfExePath" {
     if (native_os == .wasi) return error.SkipZigTest;
 
-    var buf: [fs.max_path_bytes]u8 = undefined;
+    var buf: [fs.MAX_PATH_BYTES]u8 = undefined;
     const buf_self_exe_path = try std.fs.selfExePath(&buf);
     const alloc_self_exe_path = try std.fs.selfExePathAlloc(testing.allocator);
     defer testing.allocator.free(alloc_self_exe_path);
@@ -1191,8 +1161,7 @@ test "makepath existing directories" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("A");
-    var tmpA = try tmp.dir.openDir("A", .{});
-    defer tmpA.close();
+    const tmpA = try tmp.dir.openDir("A", .{});
     try tmpA.makeDir("B");
 
     const testPath = "A" ++ fs.path.sep_str ++ "B" ++ fs.path.sep_str ++ "C";
@@ -1299,11 +1268,11 @@ test "max file name component lengths" {
     } else if (native_os == .wasi) {
         // On WASI, the maxed filename depends on the host OS, so in order for this test to
         // work on any host, we need to use a length that will work for all platforms
-        // (i.e. the minimum max_name_bytes of all supported platforms).
+        // (i.e. the minimum MAX_NAME_BYTES of all supported platforms).
         const maxed_wasi_filename = [_]u8{'1'} ** 255;
         try testFilenameLimits(tmp.dir, &maxed_wasi_filename);
     } else {
-        const maxed_ascii_filename = [_]u8{'1'} ** std.fs.max_name_bytes;
+        const maxed_ascii_filename = [_]u8{'1'} ** std.fs.MAX_NAME_BYTES;
         try testFilenameLimits(tmp.dir, &maxed_ascii_filename);
     }
 }
@@ -1391,61 +1360,6 @@ test "pwritev, preadv" {
     try testing.expectEqualStrings(&buf2, "line1\n");
 }
 
-test "setEndPos" {
-    // https://github.com/ziglang/zig/issues/20747 (open fd does not have write permission)
-    if (native_os == .wasi and builtin.link_libc) return error.SkipZigTest;
-    if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23806
-
-    var tmp = tmpDir(.{});
-    defer tmp.cleanup();
-
-    const file_name = "afile.txt";
-    try tmp.dir.writeFile(.{ .sub_path = file_name, .data = "ninebytes" });
-    const f = try tmp.dir.openFile(file_name, .{ .mode = .read_write });
-    defer f.close();
-
-    const initial_size = try f.getEndPos();
-    var buffer: [32]u8 = undefined;
-
-    {
-        try f.setEndPos(initial_size);
-        try testing.expectEqual(initial_size, try f.getEndPos());
-        try testing.expectEqual(initial_size, try f.preadAll(&buffer, 0));
-        try testing.expectEqualStrings("ninebytes", buffer[0..@intCast(initial_size)]);
-    }
-
-    {
-        const larger = initial_size + 4;
-        try f.setEndPos(larger);
-        try testing.expectEqual(larger, try f.getEndPos());
-        try testing.expectEqual(larger, try f.preadAll(&buffer, 0));
-        try testing.expectEqualStrings("ninebytes\x00\x00\x00\x00", buffer[0..@intCast(larger)]);
-    }
-
-    {
-        const smaller = initial_size - 5;
-        try f.setEndPos(smaller);
-        try testing.expectEqual(smaller, try f.getEndPos());
-        try testing.expectEqual(smaller, try f.preadAll(&buffer, 0));
-        try testing.expectEqualStrings("nine", buffer[0..@intCast(smaller)]);
-    }
-
-    try f.setEndPos(0);
-    try testing.expectEqual(0, try f.getEndPos());
-    try testing.expectEqual(0, try f.preadAll(&buffer, 0));
-
-    // Invalid file length should error gracefully. Actual limit is host
-    // and file-system dependent, but 1PB should fail most everywhere.
-    // Except MacOS APFS limit is 8 exabytes.
-    f.setEndPos(0x4_0000_0000_0000) catch |err| if (err != error.FileTooBig) {
-        return err;
-    };
-
-    try testing.expectError(error.FileTooBig, f.setEndPos(std.math.maxInt(u63))); // Maximum signed value
-
-    try testing.expectError(error.FileTooBig, f.setEndPos(std.math.maxInt(u64)));
-}
-
 test "access file" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -1467,6 +1381,7 @@ test "sendfile" {
     defer tmp.cleanup();
 
     try tmp.dir.makePath("os_test_tmp");
+    defer tmp.dir.deleteTree("os_test_tmp") catch {};
 
     var dir = try tmp.dir.openDir("os_test_tmp", .{});
     defer dir.close();
@@ -1531,6 +1446,7 @@ test "copyRangeAll" {
     defer tmp.cleanup();
 
     try tmp.dir.makePath("os_test_tmp");
+    defer tmp.dir.deleteTree("os_test_tmp") catch {};
 
     var dir = try tmp.dir.openDir("os_test_tmp", .{});
     defer dir.close();
@@ -1729,37 +1645,9 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     try testing.expectError(error.WouldBlock, file2);
 }
 
-test "read from locked file" {
-    try testWithAllSupportedPathTypes(struct {
-        fn impl(ctx: *TestContext) !void {
-            const filename = try ctx.transformPath("read_lock_file_test.txt");
-
-            {
-                const f = try ctx.dir.createFile(filename, .{ .read = true });
-                defer f.close();
-                var buffer: [1]u8 = undefined;
-                _ = try f.readAll(&buffer);
-            }
-            {
-                const f = try ctx.dir.createFile(filename, .{
-                    .read = true,
-                    .lock = .exclusive,
-                });
-                defer f.close();
-                const f2 = try ctx.dir.openFile(filename, .{});
-                defer f2.close();
-                var buffer: [1]u8 = undefined;
-                if (builtin.os.tag == .windows) {
-                    try std.testing.expectError(error.LockViolation, f2.readAll(&buffer));
-                } else {
-                    try std.testing.expectEqual(0, f2.readAll(&buffer));
-                }
-            }
-        }
-    }.impl);
-}
-
 test "walker" {
+    if (native_os == .wasi and builtin.link_libc) return error.SkipZigTest;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -1811,6 +1699,8 @@ test "walker" {
 }
 
 test "walker without fully iterating" {
+    if (native_os == .wasi and builtin.link_libc) return error.SkipZigTest;
+
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -1832,6 +1722,8 @@ test "walker without fully iterating" {
 }
 
 test "'.' and '..' in fs.Dir functions" {
+    if (native_os == .wasi and builtin.link_libc) return error.SkipZigTest;
+
     if (native_os == .windows and builtin.cpu.arch == .aarch64) {
         // https://github.com/ziglang/zig/issues/17134
         return error.SkipZigTest;
@@ -1879,7 +1771,10 @@ test "'.' and '..' in absolute functions" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const base_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const base_path = blk: {
+        const relative_path = try fs.path.join(allocator, &.{ "zig-cache", "tmp", tmp.sub_path[0..] });
+        break :blk try fs.realpathAlloc(allocator, relative_path);
+    };
 
     const subdir_path = try fs.path.join(allocator, &.{ base_path, "./subdir" });
     try fs.makeDirAbsolute(subdir_path);
@@ -2165,7 +2060,7 @@ test "invalid UTF-8/WTF-8 paths" {
                 try testing.expectError(expected_err, fs.deleteFileAbsolute(invalid_path));
                 try testing.expectError(expected_err, fs.deleteFileAbsoluteZ(invalid_path));
                 try testing.expectError(expected_err, fs.deleteTreeAbsolute(invalid_path));
-                var readlink_buf: [fs.max_path_bytes]u8 = undefined;
+                var readlink_buf: [fs.MAX_PATH_BYTES]u8 = undefined;
                 try testing.expectError(expected_err, fs.readLinkAbsolute(invalid_path, &readlink_buf));
                 try testing.expectError(expected_err, fs.readLinkAbsoluteZ(invalid_path, &readlink_buf));
                 try testing.expectError(expected_err, fs.symLinkAbsolute(invalid_path, invalid_path, .{}));

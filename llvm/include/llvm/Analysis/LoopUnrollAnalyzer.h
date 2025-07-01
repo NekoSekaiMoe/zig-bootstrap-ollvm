@@ -44,7 +44,7 @@ class UnrolledInstAnalyzer : private InstVisitor<UnrolledInstAnalyzer, bool> {
   friend class InstVisitor<UnrolledInstAnalyzer, bool>;
   struct SimplifiedAddress {
     Value *Base = nullptr;
-    APInt Offset;
+    ConstantInt *Offset = nullptr;
   };
 
 public:

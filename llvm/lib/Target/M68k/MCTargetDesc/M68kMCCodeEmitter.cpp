@@ -59,10 +59,6 @@ class M68kMCCodeEmitter : public MCCodeEmitter {
                       APInt &Value, SmallVectorImpl<MCFixup> &Fixups,
                       const MCSubtargetInfo &STI) const;
 
-  void encodeFPSYSSelect(const MCInst &MI, unsigned OpIdx, unsigned InsertPos,
-                         APInt &Value, SmallVectorImpl<MCFixup> &Fixups,
-                         const MCSubtargetInfo &STI) const;
-
 public:
   M68kMCCodeEmitter(const MCInstrInfo &mcii, MCContext &ctx)
       : MCII(mcii), Ctx(ctx) {}
@@ -176,26 +172,6 @@ void M68kMCCodeEmitter::encodePCRelImm(const MCInst &MI, unsigned OpIdx,
   }
 }
 
-void M68kMCCodeEmitter::encodeFPSYSSelect(const MCInst &MI, unsigned OpIdx,
-                                          unsigned InsertPos, APInt &Value,
-                                          SmallVectorImpl<MCFixup> &Fixups,
-                                          const MCSubtargetInfo &STI) const {
-  MCRegister FPSysReg = MI.getOperand(OpIdx).getReg();
-  switch (FPSysReg) {
-  case M68k::FPC:
-    Value = 0b100;
-    break;
-  case M68k::FPS:
-    Value = 0b010;
-    break;
-  case M68k::FPIAR:
-    Value = 0b001;
-    break;
-  default:
-    llvm_unreachable("Unrecognized FPSYS register");
-  }
-}
-
 void M68kMCCodeEmitter::getMachineOpValue(const MCInst &MI, const MCOperand &Op,
                                           unsigned InsertPos, APInt &Value,
                                           SmallVectorImpl<MCFixup> &Fixups,
@@ -227,20 +203,25 @@ void M68kMCCodeEmitter::encodeInstruction(const MCInst &MI,
                                           SmallVectorImpl<char> &CB,
                                           SmallVectorImpl<MCFixup> &Fixups,
                                           const MCSubtargetInfo &STI) const {
-  LLVM_DEBUG(dbgs() << "EncodeInstruction: " << MCII.getName(MI.getOpcode())
-                    << "(" << MI.getOpcode() << ")\n");
-  (void)MCII;
+  unsigned Opcode = MI.getOpcode();
+
+  LLVM_DEBUG(dbgs() << "EncodeInstruction: " << MCII.getName(Opcode) << "("
+                    << Opcode << ")\n");
 
   // Try using the new method first.
   APInt EncodedInst(16, 0U);
-  APInt Scratch(64, 0U); // One APInt word is enough.
+  APInt Scratch(16, 0U);
   getBinaryCodeForInstr(MI, Fixups, EncodedInst, Scratch, STI);
 
-  unsigned InstSize = EncodedInst.getBitWidth();
-  for (unsigned i = 0; i != InstSize; i += 16)
-    support::endian::write<uint16_t>(
-        CB, static_cast<uint16_t>(EncodedInst.extractBitsAsZExtValue(16, i)),
-        llvm::endianness::big);
+  ArrayRef<uint64_t> Data(EncodedInst.getRawData(), EncodedInst.getNumWords());
+  int64_t InstSize = EncodedInst.getBitWidth();
+  for (uint64_t Word : Data) {
+    for (int i = 0; i < 4 && InstSize > 0; ++i, InstSize -= 16) {
+      support::endian::write<uint16_t>(CB, static_cast<uint16_t>(Word),
+                                       support::big);
+      Word >>= 16;
+    }
+  }
 }
 
 MCCodeEmitter *llvm::createM68kMCCodeEmitter(const MCInstrInfo &MCII,

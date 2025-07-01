@@ -9,7 +9,6 @@ HcsEnumerateVmWorkerProcesses
 HcsFindVmWorkerProcesses
 HcsGetWorkerProcessJob
 HcsStartVmWorkerProcess
-HcsAbortSystemPreservation
 HcsAddResourceToOperation
 HcsCancelOperation
 HcsCloseComputeSystem
@@ -25,8 +24,6 @@ HcsCreateOperationWithNotifications
 HcsCreateProcess
 HcsEnumerateComputeSystems
 HcsEnumerateComputeSystemsInNamespace
-HcsFinalizeLiveMigration
-HcsFinalizeSystemPreservation
 HcsGetComputeSystemFromOperation
 HcsGetComputeSystemProperties
 HcsGetOperationContext
@@ -42,7 +39,6 @@ HcsGetProcessorCompatibilityFromSavedState
 HcsGetServiceProperties
 HcsGrantVmAccess
 HcsGrantVmGroupAccess
-HcsInitializeLiveMigrationOnSource
 HcsModifyComputeSystem
 HcsModifyProcess
 HcsModifyServiceSettings
@@ -61,9 +57,6 @@ HcsSetProcessCallback
 HcsShutDownComputeSystem
 HcsSignalProcess
 HcsStartComputeSystem
-HcsStartLiveMigrationOnSource
-HcsStartLiveMigrationTransfer
-HcsStartSystemPreservation
 HcsSubmitWerReport
 HcsSystemControl
 HcsTerminateComputeSystem

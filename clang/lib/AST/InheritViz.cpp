@@ -63,11 +63,12 @@ void InheritanceHierarchyWriter::WriteNode(QualType Type, bool FromVirtual) {
   QualType CanonType = Context.getCanonicalType(Type);
 
   if (FromVirtual) {
-    if (!KnownVirtualBases.insert(CanonType).second)
+    if (KnownVirtualBases.find(CanonType) != KnownVirtualBases.end())
       return;
 
     // We haven't seen this virtual base before, so display it and
     // its bases.
+    KnownVirtualBases.insert(CanonType);
   }
 
   // Declare the node itself.

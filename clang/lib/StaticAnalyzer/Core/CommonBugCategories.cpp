@@ -13,7 +13,6 @@ namespace clang {
 namespace ento {
 namespace categories {
 
-const char *const AppleAPIMisuse = "API Misuse (Apple)";
 const char *const CoreFoundationObjectiveC = "Core Foundation/Objective-C";
 const char *const LogicError = "Logic error";
 const char *const MemoryRefCount =

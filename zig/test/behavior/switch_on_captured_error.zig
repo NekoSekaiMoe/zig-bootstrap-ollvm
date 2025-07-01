@@ -3,11 +3,9 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 const expectEqual = std.testing.expectEqual;
-const builtin = @import("builtin");
 
 test "switch on error union catch capture" {
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         const Error = error{ A, B, C };
@@ -18,7 +16,6 @@ test "switch on error union catch capture" {
             try testCapture();
             try testInline();
             try testEmptyErrSet();
-            try testAddressOf();
         }
 
         fn testScalar() !void {
@@ -255,44 +252,6 @@ test "switch on error union catch capture" {
                 try expectEqual(@as(u64, 0), b);
             }
         }
-
-        fn testAddressOf() !void {
-            {
-                const a: anyerror!usize = 0;
-                const ptr = &(a catch |e| switch (e) {
-                    else => 3,
-                });
-                comptime assert(@TypeOf(ptr) == *const usize);
-                try expectEqual(ptr, &(a catch unreachable));
-            }
-            {
-                const a: anyerror!usize = error.A;
-                const ptr = &(a catch |e| switch (e) {
-                    else => 3,
-                });
-                comptime assert(@TypeOf(ptr) == *const comptime_int);
-                try expectEqual(3, ptr.*);
-            }
-            {
-                var a: anyerror!usize = 0;
-                _ = &a;
-                const ptr = &(a catch |e| switch (e) {
-                    else => return,
-                });
-                comptime assert(@TypeOf(ptr) == *usize);
-                ptr.* += 1;
-                try expectEqual(@as(usize, 1), a catch unreachable);
-            }
-            {
-                var a: anyerror!usize = error.A;
-                _ = &a;
-                const ptr = &(a catch |e| switch (e) {
-                    else => return,
-                });
-                comptime assert(@TypeOf(ptr) == *usize);
-                unreachable;
-            }
-        }
     };
 
     try comptime S.doTheTest();
@@ -301,7 +260,6 @@ test "switch on error union catch capture" {
 
 test "switch on error union if else capture" {
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         const Error = error{ A, B, C };
@@ -318,7 +276,6 @@ test "switch on error union if else capture" {
             try testInlinePtr();
             try testEmptyErrSet();
             try testEmptyErrSetPtr();
-            try testAddressOf();
         }
 
         fn testScalar() !void {
@@ -788,44 +745,6 @@ test "switch on error union if else capture" {
                     else => |e| return e,
                 };
                 try expectEqual(@as(u64, 0), b);
-            }
-        }
-
-        fn testAddressOf() !void {
-            {
-                const a: anyerror!usize = 0;
-                const ptr = &(if (a) |*v| v.* else |e| switch (e) {
-                    else => 3,
-                });
-                comptime assert(@TypeOf(ptr) == *const usize);
-                try expectEqual(ptr, &(a catch unreachable));
-            }
-            {
-                const a: anyerror!usize = error.A;
-                const ptr = &(if (a) |*v| v.* else |e| switch (e) {
-                    else => 3,
-                });
-                comptime assert(@TypeOf(ptr) == *const comptime_int);
-                try expectEqual(3, ptr.*);
-            }
-            {
-                var a: anyerror!usize = 0;
-                _ = &a;
-                const ptr = &(if (a) |*v| v.* else |e| switch (e) {
-                    else => return,
-                });
-                comptime assert(@TypeOf(ptr) == *usize);
-                ptr.* += 1;
-                try expectEqual(@as(usize, 1), a catch unreachable);
-            }
-            {
-                var a: anyerror!usize = error.A;
-                _ = &a;
-                const ptr = &(if (a) |*v| v.* else |e| switch (e) {
-                    else => return,
-                });
-                comptime assert(@TypeOf(ptr) == *usize);
-                unreachable;
             }
         }
     };

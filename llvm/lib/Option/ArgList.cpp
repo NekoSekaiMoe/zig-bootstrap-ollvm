@@ -132,14 +132,17 @@ void ArgList::AddAllArgsExcept(ArgStringList &Output,
 }
 
 /// This is a nicer interface when you don't have a list of Ids to exclude.
-void ArgList::addAllArgs(ArgStringList &Output,
+void ArgList::AddAllArgs(ArgStringList &Output,
                          ArrayRef<OptSpecifier> Ids) const {
-  ArrayRef<OptSpecifier> Exclude = {};
+  ArrayRef<OptSpecifier> Exclude = std::nullopt;
   AddAllArgsExcept(Output, Ids, Exclude);
 }
 
-void ArgList::AddAllArgs(ArgStringList &Output, OptSpecifier Id0) const {
-  for (auto *Arg : filtered(Id0)) {
+/// This 3-opt variant of AddAllArgs could be eliminated in favor of one
+/// that accepts a single specifier, given the above which accepts any number.
+void ArgList::AddAllArgs(ArgStringList &Output, OptSpecifier Id0,
+                         OptSpecifier Id1, OptSpecifier Id2) const {
+  for (auto *Arg : filtered(Id0, Id1, Id2)) {
     Arg->claim();
     Arg->render(*this, Output);
   }
@@ -185,8 +188,8 @@ const char *ArgList::GetOrMakeJoinedArgString(unsigned Index,
                                               StringRef LHS,
                                               StringRef RHS) const {
   StringRef Cur = getArgString(Index);
-  if (Cur.size() == LHS.size() + RHS.size() && Cur.starts_with(LHS) &&
-      Cur.ends_with(RHS))
+  if (Cur.size() == LHS.size() + RHS.size() &&
+      Cur.startswith(LHS) && Cur.endswith(RHS))
     return Cur.data();
 
   return MakeArgString(LHS + RHS);

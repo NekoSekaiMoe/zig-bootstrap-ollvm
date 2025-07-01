@@ -471,10 +471,6 @@ Error ResourceFileWriter::visitMenuResource(const RCResource *Res) {
   return writeResource(Res, &ResourceFileWriter::writeMenuBody);
 }
 
-Error ResourceFileWriter::visitMenuExResource(const RCResource *Res) {
-  return writeResource(Res, &ResourceFileWriter::writeMenuExBody);
-}
-
 Error ResourceFileWriter::visitStringTableResource(const RCResource *Base) {
   const auto *Res = cast<StringTableResource>(Base);
 
@@ -547,11 +543,6 @@ Error ResourceFileWriter::visitStyleStmt(const StyleStmt *Stmt) {
 
 Error ResourceFileWriter::visitVersionStmt(const VersionStmt *Stmt) {
   ObjectData.VersionInfo = Stmt->Value;
-  return Error::success();
-}
-
-Error ResourceFileWriter::visitMenuStmt(const MenuStmt *Stmt) {
-  ObjectData.Menu = Stmt->Value;
   return Error::success();
 }
 
@@ -896,7 +887,7 @@ Error ResourceFileWriter::visitIconOrCursorResource(const RCResource *Base) {
   if (!File)
     return File.takeError();
 
-  BinaryStreamReader Reader((*File)->getBuffer(), llvm::endianness::little);
+  BinaryStreamReader Reader((*File)->getBuffer(), support::little);
 
   // Read the file headers.
   //   - At the beginning, ICONDIR/NEWHEADER header.
@@ -1137,8 +1128,9 @@ Error ResourceFileWriter::writeDialogBody(const RCResource *Base) {
            ulittle16_t(Res->Height)};
   writeObject(Middle);
 
-  // MENU field.
-  RETURN_IF_ERROR(writeIntOrString(ObjectData.Menu));
+  // MENU field. As of now, we don't keep them in the state and can peacefully
+  // think there is no menu attached to the dialog.
+  writeInt<uint16_t>(0);
 
   // Window CLASS field.
   RETURN_IF_ERROR(writeIntOrString(ObjectData.Class));
@@ -1184,7 +1176,6 @@ Error ResourceFileWriter::writeHTMLBody(const RCResource *Base) {
 
 Error ResourceFileWriter::writeMenuDefinition(
     const std::unique_ptr<MenuDefinition> &Def, uint16_t Flags) {
-  // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-menuitemtemplate
   assert(Def);
   const MenuDefinition *DefPtr = Def.get();
 
@@ -1211,34 +1202,6 @@ Error ResourceFileWriter::writeMenuDefinition(
   return writeMenuDefinitionList(PopupPtr->SubItems);
 }
 
-Error ResourceFileWriter::writeMenuExDefinition(
-    const std::unique_ptr<MenuDefinition> &Def, uint16_t Flags) {
-  // https://learn.microsoft.com/en-us/windows/win32/menurc/menuex-template-item
-  assert(Def);
-  const MenuDefinition *DefPtr = Def.get();
-
-  padStream(sizeof(uint32_t));
-  if (auto *MenuItemPtr = dyn_cast<MenuExItem>(DefPtr)) {
-    writeInt<uint32_t>(MenuItemPtr->Type);
-    writeInt<uint32_t>(MenuItemPtr->State);
-    writeInt<uint32_t>(MenuItemPtr->Id);
-    writeInt<uint16_t>(Flags);
-    padStream(sizeof(uint16_t));
-    RETURN_IF_ERROR(writeCString(MenuItemPtr->Name));
-    return Error::success();
-  }
-
-  auto *PopupPtr = cast<PopupExItem>(DefPtr);
-  writeInt<uint32_t>(PopupPtr->Type);
-  writeInt<uint32_t>(PopupPtr->State);
-  writeInt<uint32_t>(PopupPtr->Id);
-  writeInt<uint16_t>(Flags);
-  padStream(sizeof(uint16_t));
-  RETURN_IF_ERROR(writeCString(PopupPtr->Name));
-  writeInt<uint32_t>(PopupPtr->HelpId);
-  return writeMenuExDefinitionList(PopupPtr->SubItems);
-}
-
 Error ResourceFileWriter::writeMenuDefinitionList(
     const MenuDefinitionList &List) {
   for (auto &Def : List.Definitions) {
@@ -1253,37 +1216,12 @@ Error ResourceFileWriter::writeMenuDefinitionList(
   return Error::success();
 }
 
-Error ResourceFileWriter::writeMenuExDefinitionList(
-    const MenuDefinitionList &List) {
-  for (auto &Def : List.Definitions) {
-    uint16_t Flags = Def->getResFlags();
-    // Last element receives an additional 0x80 flag.
-    const uint16_t LastElementFlag = 0x0080;
-    if (&Def == &List.Definitions.back())
-      Flags |= LastElementFlag;
-
-    RETURN_IF_ERROR(writeMenuExDefinition(Def, Flags));
-  }
-  return Error::success();
-}
-
 Error ResourceFileWriter::writeMenuBody(const RCResource *Base) {
   // At first, MENUHEADER structure. In fact, these are two WORDs equal to 0.
   // Ref: msdn.microsoft.com/en-us/library/windows/desktop/ms648018.aspx
   writeInt<uint32_t>(0);
 
   return writeMenuDefinitionList(cast<MenuResource>(Base)->Elements);
-}
-
-Error ResourceFileWriter::writeMenuExBody(const RCResource *Base) {
-  // At first, MENUEX_TEMPLATE_HEADER structure.
-  // Ref:
-  // https://learn.microsoft.com/en-us/windows/win32/menurc/menuex-template-header
-  writeInt<uint16_t>(1);
-  writeInt<uint16_t>(4);
-  writeInt<uint32_t>(0);
-
-  return writeMenuExDefinitionList(cast<MenuExResource>(Base)->Elements);
 }
 
 // --- StringTableResource helpers. --- //
@@ -1541,14 +1479,15 @@ Error ResourceFileWriter::writeVersionInfoBody(const RCResource *Base) {
   };
 
   auto FileVer = GetField(VersionInfoFixed::FtFileVersion);
-  RETURN_IF_ERROR(checkNumberFits<uint16_t>(*llvm::max_element(FileVer),
-                                            "FILEVERSION fields"));
+  RETURN_IF_ERROR(checkNumberFits<uint16_t>(
+      *std::max_element(FileVer.begin(), FileVer.end()), "FILEVERSION fields"));
   FixedInfo.FileVersionMS = (FileVer[0] << 16) | FileVer[1];
   FixedInfo.FileVersionLS = (FileVer[2] << 16) | FileVer[3];
 
   auto ProdVer = GetField(VersionInfoFixed::FtProductVersion);
-  RETURN_IF_ERROR(checkNumberFits<uint16_t>(*llvm::max_element(ProdVer),
-                                            "PRODUCTVERSION fields"));
+  RETURN_IF_ERROR(checkNumberFits<uint16_t>(
+      *std::max_element(ProdVer.begin(), ProdVer.end()),
+      "PRODUCTVERSION fields"));
   FixedInfo.ProductVersionMS = (ProdVer[0] << 16) | ProdVer[1];
   FixedInfo.ProductVersionLS = (ProdVer[2] << 16) | ProdVer[3];
 

@@ -7,7 +7,6 @@ const mem = std.mem;
 const process = std.process;
 const EnvMap = process.EnvMap;
 const assert = std.debug.assert;
-const Path = Build.Cache.Path;
 
 const Run = @This();
 
@@ -24,11 +23,6 @@ cwd: ?Build.LazyPath,
 /// Override this field to modify the environment, or use setEnvironmentVariable
 env_map: ?*EnvMap,
 
-/// When `true` prevents `ZIG_PROGRESS` environment variable from being passed
-/// to the child process, which otherwise would be used for the child to send
-/// progress updates to the parent.
-disable_zig_progress: bool,
-
 /// Configures whether the Run step is considered to have side-effects, and also
 /// whether the Run step will inherit stdio streams, forwarding them to the
 /// parent process, in which case will require a global lock to prevent other
@@ -42,6 +36,9 @@ stdio: StdIo,
 /// This field must be `.none` if stdio is `inherit`.
 /// It should be only set using `setStdIn`.
 stdin: StdIn,
+
+/// Deprecated: use `addFileInput`
+extra_file_dependencies: []const []const u8,
 
 /// Additional input files that, when modified, indicate that the Run step
 /// should be re-executed.
@@ -84,18 +81,6 @@ dep_output_file: ?*Output,
 
 has_side_effects: bool,
 
-/// If this is a Zig unit test binary, this tracks the indexes of the unit
-/// tests that are also fuzz tests.
-fuzz_tests: std.ArrayListUnmanaged(u32),
-cached_test_metadata: ?CachedTestMetadata = null,
-
-/// Populated during the fuzz phase if this run step corresponds to a unit test
-/// executable that contains fuzz tests.
-rebuilt_executable: ?Path,
-
-/// If this Run step was produced by a Compile step, it is tracked here.
-producer: ?*Step.Compile,
-
 pub const StdIn = union(enum) {
     none,
     bytes: []const u8,
@@ -136,28 +121,17 @@ pub const StdIo = union(enum) {
 };
 
 pub const Arg = union(enum) {
-    artifact: PrefixedArtifact,
+    artifact: *Step.Compile,
     lazy_path: PrefixedLazyPath,
-    decorated_directory: DecoratedLazyPath,
+    directory_source: PrefixedLazyPath,
     bytes: []u8,
     output_file: *Output,
     output_directory: *Output,
 };
 
-pub const PrefixedArtifact = struct {
-    prefix: []const u8,
-    artifact: *Step.Compile,
-};
-
 pub const PrefixedLazyPath = struct {
     prefix: []const u8,
     lazy_path: std.Build.LazyPath,
-};
-
-pub const DecoratedLazyPath = struct {
-    prefix: []const u8,
-    lazy_path: std.Build.LazyPath,
-    suffix: []const u8,
 };
 
 pub const Output = struct {
@@ -178,9 +152,9 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
         .argv = .{},
         .cwd = null,
         .env_map = null,
-        .disable_zig_progress = false,
         .stdio = .infer_from_args,
         .stdin = .none,
+        .extra_file_dependencies = &.{},
         .file_inputs = .{},
         .rename_step_with_output_arg = true,
         .skip_foreign_checks = false,
@@ -190,9 +164,6 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
         .captured_stderr = null,
         .dep_output_file = null,
         .has_side_effects = false,
-        .fuzz_tests = .{},
-        .rebuilt_executable = null,
-        .producer = null,
     };
     return run;
 }
@@ -203,31 +174,15 @@ pub fn setName(run: *Run, name: []const u8) void {
 }
 
 pub fn enableTestRunnerMode(run: *Run) void {
-    const b = run.step.owner;
-    const arena = b.allocator;
     run.stdio = .zig_test;
-    run.addArgs(&.{
-        std.fmt.allocPrint(arena, "--seed=0x{x}", .{b.graph.random_seed}) catch @panic("OOM"),
-        std.fmt.allocPrint(arena, "--cache-dir={s}", .{b.cache_root.path orelse ""}) catch @panic("OOM"),
-        "--listen=-",
-    });
+    run.addArgs(&.{"--listen=-"});
 }
 
 pub fn addArtifactArg(run: *Run, artifact: *Step.Compile) void {
-    run.addPrefixedArtifactArg("", artifact);
-}
-
-pub fn addPrefixedArtifactArg(run: *Run, prefix: []const u8, artifact: *Step.Compile) void {
     const b = run.step.owner;
-
-    const prefixed_artifact: PrefixedArtifact = .{
-        .prefix = b.dupe(prefix),
-        .artifact = artifact,
-    };
-    run.argv.append(b.allocator, .{ .artifact = prefixed_artifact }) catch @panic("OOM");
-
     const bin_file = artifact.getEmittedBin();
     bin_file.addStepDependencies(&run.step);
+    run.argv.append(b.allocator, Arg{ .artifact = artifact }) catch @panic("OOM");
 }
 
 /// Provides a file path as a command line argument to the command being run.
@@ -366,33 +321,25 @@ pub fn addPrefixedOutputDirectoryArg(
     return .{ .generated = .{ .file = &output.generated_file } };
 }
 
-pub fn addDirectoryArg(run: *Run, lazy_directory: std.Build.LazyPath) void {
-    run.addDecoratedDirectoryArg("", lazy_directory, "");
+/// deprecated: use `addDirectoryArg`
+pub const addDirectorySourceArg = addDirectoryArg;
+
+pub fn addDirectoryArg(run: *Run, directory_source: std.Build.LazyPath) void {
+    run.addPrefixedDirectoryArg("", directory_source);
 }
 
-pub fn addPrefixedDirectoryArg(run: *Run, prefix: []const u8, lazy_directory: std.Build.LazyPath) void {
-    const b = run.step.owner;
-    run.argv.append(b.allocator, .{ .decorated_directory = .{
-        .prefix = b.dupe(prefix),
-        .lazy_path = lazy_directory.dupe(b),
-        .suffix = "",
-    } }) catch @panic("OOM");
-    lazy_directory.addStepDependencies(&run.step);
-}
+// deprecated: use `addPrefixedDirectoryArg`
+pub const addPrefixedDirectorySourceArg = addPrefixedDirectoryArg;
 
-pub fn addDecoratedDirectoryArg(
-    run: *Run,
-    prefix: []const u8,
-    lazy_directory: std.Build.LazyPath,
-    suffix: []const u8,
-) void {
+pub fn addPrefixedDirectoryArg(run: *Run, prefix: []const u8, directory_source: std.Build.LazyPath) void {
     const b = run.step.owner;
-    run.argv.append(b.allocator, .{ .decorated_directory = .{
+
+    const prefixed_directory_source: PrefixedLazyPath = .{
         .prefix = b.dupe(prefix),
-        .lazy_path = lazy_directory.dupe(b),
-        .suffix = b.dupe(suffix),
-    } }) catch @panic("OOM");
-    lazy_directory.addStepDependencies(&run.step);
+        .lazy_path = directory_source.dupe(b),
+    };
+    run.argv.append(b.allocator, .{ .directory_source = prefixed_directory_source }) catch @panic("OOM");
+    directory_source.addStepDependencies(&run.step);
 }
 
 /// Add a path argument to a dep file (.d) for the child process to write its
@@ -624,11 +571,10 @@ fn checksContainStderr(checks: []const StdIo.Check) bool {
 
 const IndexedOutput = struct {
     index: usize,
-    tag: @typeInfo(Arg).@"union".tag_type.?,
+    tag: @typeInfo(Arg).Union.tag_type.?,
     output: *Output,
 };
-fn make(step: *Step, options: Step.MakeOptions) !void {
-    const prog_node = options.progress_node;
+fn make(step: *Step, prog_node: *std.Progress.Node) !void {
     const b = step.owner;
     const arena = b.allocator;
     const run: *Run = @fieldParentPtr("step", step);
@@ -639,35 +585,6 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     var man = b.graph.cache.obtain();
     defer man.deinit();
-
-    if (run.env_map) |env_map| {
-        const KV = struct { []const u8, []const u8 };
-        var kv_pairs = try std.ArrayList(KV).initCapacity(arena, env_map.count());
-        var iter = env_map.iterator();
-        while (iter.next()) |entry| {
-            kv_pairs.appendAssumeCapacity(.{ entry.key_ptr.*, entry.value_ptr.* });
-        }
-
-        std.mem.sortUnstable(KV, kv_pairs.items, {}, struct {
-            fn lessThan(_: void, kv1: KV, kv2: KV) bool {
-                const k1 = kv1[0];
-                const k2 = kv2[0];
-
-                if (k1.len != k2.len) return k1.len < k2.len;
-
-                for (k1, k2) |c1, c2| {
-                    if (c1 == c2) continue;
-                    return c1 < c2;
-                }
-                unreachable; // two keys cannot be equal
-            }
-        }.lessThan);
-
-        for (kv_pairs.items) |kv| {
-            man.hash.addBytes(kv[0]);
-            man.hash.addBytes(kv[1]);
-        }
-    }
 
     for (run.argv.items) |arg| {
         switch (arg) {
@@ -681,22 +598,20 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 man.hash.addBytes(file.prefix);
                 _ = try man.addFile(file_path, null);
             },
-            .decorated_directory => |dd| {
-                const file_path = dd.lazy_path.getPath3(b, step);
-                const resolved_arg = b.fmt("{s}{}{s}", .{ dd.prefix, file_path, dd.suffix });
-                try argv_list.append(resolved_arg);
-                man.hash.addBytes(resolved_arg);
+            .directory_source => |file| {
+                const file_path = file.lazy_path.getPath2(b, step);
+                try argv_list.append(b.fmt("{s}{s}", .{ file.prefix, file_path }));
+                man.hash.addBytes(file.prefix);
+                man.hash.addBytes(file_path);
             },
-            .artifact => |pa| {
-                const artifact = pa.artifact;
-
+            .artifact => |artifact| {
                 if (artifact.rootModuleTarget().os.tag == .windows) {
                     // On Windows we don't have rpaths so we have to add .dll search paths to PATH
                     run.addPathForDynLibs(artifact);
                 }
-                const file_path = artifact.installed_path orelse artifact.generated_bin.?.path.?;
+                const file_path = artifact.installed_path orelse artifact.generated_bin.?.path.?; // the path is guaranteed to be set
 
-                try argv_list.append(b.fmt("{s}{s}", .{ pa.prefix, file_path }));
+                try argv_list.append(file_path);
 
                 _ = try man.addFile(file_path, null);
             },
@@ -737,11 +652,14 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     hashStdIo(&man.hash, run.stdio);
 
+    for (run.extra_file_dependencies) |file_path| {
+        _ = try man.addFile(b.pathFromRoot(file_path), null);
+    }
     for (run.file_inputs.items) |lazy_path| {
         _ = try man.addFile(lazy_path.getPath2(b, step), null);
     }
 
-    if (!has_side_effects and try step.cacheHitAndWatch(&man)) {
+    if (try step.cacheHit(&man) and !has_side_effects) {
         // cache hit, skip running command
         const digest = man.final();
 
@@ -760,10 +678,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const dep_output_file = run.dep_output_file orelse {
         // We already know the final output paths, use them directly.
-        const digest = if (has_side_effects)
-            man.hash.final()
-        else
-            man.final();
+        const digest = man.final();
 
         try populateGeneratedPaths(
             arena,
@@ -794,14 +709,12 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 b.fmt("{s}{s}", .{ placeholder.output.prefix, output_path });
         }
 
-        try runCommand(run, argv_list.items, has_side_effects, output_dir_path, prog_node, null);
-        if (!has_side_effects) try step.writeManifestAndWatch(&man);
-        return;
+        return runCommand(run, argv_list.items, has_side_effects, output_dir_path, prog_node);
     };
 
     // We do not know the final output paths yet, use temp paths to run the command.
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
+    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.Build.hex64(rand_int);
 
     for (output_placeholders.items) |placeholder| {
         const output_components = .{ tmp_dir_path, placeholder.output.basename };
@@ -824,19 +737,11 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             b.fmt("{s}{s}", .{ placeholder.output.prefix, output_path });
     }
 
-    try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, prog_node, null);
+    try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, prog_node);
 
-    const dep_file_dir = std.fs.cwd();
-    const dep_file_basename = dep_output_file.generated_file.getPath();
-    if (has_side_effects)
-        try man.addDepFile(dep_file_dir, dep_file_basename)
-    else
-        try man.addDepFilePost(dep_file_dir, dep_file_basename);
+    try man.addDepFilePost(std.fs.cwd(), dep_output_file.generated_file.getPath());
 
-    const digest = if (has_side_effects)
-        man.hash.final()
-    else
-        man.final();
+    const digest = man.final();
 
     const any_output = output_placeholders.items.len > 0 or
         run.captured_stdout != null or run.captured_stderr != null;
@@ -871,7 +776,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         };
     }
 
-    if (!has_side_effects) try step.writeManifestAndWatch(&man);
+    try step.writeManifest(&man);
 
     try populateGeneratedPaths(
         arena,
@@ -881,49 +786,6 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         b.cache_root,
         &digest,
     );
-}
-
-pub fn rerunInFuzzMode(
-    run: *Run,
-    web_server: *std.Build.Fuzz.WebServer,
-    unit_test_index: u32,
-    prog_node: std.Progress.Node,
-) !void {
-    const step = &run.step;
-    const b = step.owner;
-    const arena = b.allocator;
-    var argv_list: std.ArrayListUnmanaged([]const u8) = .empty;
-    for (run.argv.items) |arg| {
-        switch (arg) {
-            .bytes => |bytes| {
-                try argv_list.append(arena, bytes);
-            },
-            .lazy_path => |file| {
-                const file_path = file.lazy_path.getPath2(b, step);
-                try argv_list.append(arena, b.fmt("{s}{s}", .{ file.prefix, file_path }));
-            },
-            .decorated_directory => |dd| {
-                const file_path = dd.lazy_path.getPath3(b, step);
-                try argv_list.append(arena, b.fmt("{s}{}{s}", .{ dd.prefix, file_path, dd.suffix }));
-            },
-            .artifact => |pa| {
-                const artifact = pa.artifact;
-                const file_path = if (artifact == run.producer.?)
-                    b.fmt("{}", .{run.rebuilt_executable.?})
-                else
-                    (artifact.installed_path orelse artifact.generated_bin.?.path.?);
-                try argv_list.append(arena, b.fmt("{s}{s}", .{ pa.prefix, file_path }));
-            },
-            .output_file, .output_directory => unreachable,
-        }
-    }
-    const has_side_effects = false;
-    const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
-    try runCommand(run, argv_list.items, has_side_effects, tmp_dir_path, prog_node, .{
-        .unit_test_index = unit_test_index,
-        .web_server = web_server,
-    });
 }
 
 fn populateGeneratedPaths(
@@ -998,18 +860,12 @@ fn termMatches(expected: ?std.process.Child.Term, actual: std.process.Child.Term
     };
 }
 
-const FuzzContext = struct {
-    web_server: *std.Build.Fuzz.WebServer,
-    unit_test_index: u32,
-};
-
 fn runCommand(
     run: *Run,
     argv: []const []const u8,
     has_side_effects: bool,
     output_dir_path: []const u8,
-    prog_node: std.Progress.Node,
-    fuzz_context: ?FuzzContext,
+    prog_node: *std.Progress.Node,
 ) !void {
     const step = &run.step;
     const b = step.owner;
@@ -1028,7 +884,7 @@ fn runCommand(
     var interp_argv = std.ArrayList([]const u8).init(b.allocator);
     defer interp_argv.deinit();
 
-    const result = spawnChildAndCollect(run, argv, has_side_effects, prog_node, fuzz_context) catch |err| term: {
+    const result = spawnChildAndCollect(run, argv, has_side_effects, prog_node) catch |err| term: {
         // InvalidExe: cpu arch mismatch
         // FileNotFound: can happen with a wrong dynamic linker path
         if (err == error.InvalidExe or err == error.FileNotFound) interpret: {
@@ -1037,7 +893,7 @@ fn runCommand(
             // work even for the edge case that the binary was produced by a
             // third party.
             const exe = switch (run.argv.items[0]) {
-                .artifact => |exe| exe.artifact,
+                .artifact => |exe| exe,
                 else => break :interpret,
             };
             switch (exe.kind) {
@@ -1045,12 +901,11 @@ fn runCommand(
                 else => break :interpret,
             }
 
-            const root_target = exe.rootModuleTarget();
-            const need_cross_libc = exe.is_linking_libc and
-                (root_target.isGnuLibC() or (root_target.isMuslLibC() and exe.linkage == .dynamic));
+            const need_cross_glibc = exe.rootModuleTarget().isGnuLibC() and
+                exe.is_linking_libc;
             const other_target = exe.root_module.resolved_target.?.result;
-            switch (std.zig.system.getExternalExecutor(b.graph.host.result, &other_target, .{
-                .qemu_fixes_dl = need_cross_libc and b.libc_runtimes_dir != null,
+            switch (std.zig.system.getExternalExecutor(b.host.result, &other_target, .{
+                .qemu_fixes_dl = need_cross_glibc and b.glibc_runtimes_dir != null,
                 .link_libc = exe.is_linking_libc,
             })) {
                 .native, .rosetta => {
@@ -1067,29 +922,38 @@ fn runCommand(
                 },
                 .qemu => |bin_name| {
                     if (b.enable_qemu) {
+                        const glibc_dir_arg = if (need_cross_glibc)
+                            b.glibc_runtimes_dir orelse
+                                return failForeign(run, "--glibc-runtimes", argv[0], exe)
+                        else
+                            null;
+
                         try interp_argv.append(bin_name);
 
-                        if (need_cross_libc) {
-                            if (b.libc_runtimes_dir) |dir| {
-                                try interp_argv.append("-L");
-                                try interp_argv.append(b.pathJoin(&.{
-                                    dir,
-                                    try if (root_target.isGnuLibC()) std.zig.target.glibcRuntimeTriple(
-                                        b.allocator,
-                                        root_target.cpu.arch,
-                                        root_target.os.tag,
-                                        root_target.abi,
-                                    ) else if (root_target.isMuslLibC()) std.zig.target.muslRuntimeTriple(
-                                        b.allocator,
-                                        root_target.cpu.arch,
-                                        root_target.abi,
-                                    ) else unreachable,
-                                }));
-                            } else return failForeign(run, "--libc-runtimes", argv[0], exe);
+                        if (glibc_dir_arg) |dir| {
+                            // TODO look into making this a call to `linuxTriple`. This
+                            // needs the directory to be called "i686" rather than
+                            // "x86" which is why we do it manually here.
+                            const fmt_str = "{s}" ++ fs.path.sep_str ++ "{s}-{s}-{s}";
+                            const cpu_arch = exe.rootModuleTarget().cpu.arch;
+                            const os_tag = exe.rootModuleTarget().os.tag;
+                            const abi = exe.rootModuleTarget().abi;
+                            const cpu_arch_name: []const u8 = if (cpu_arch == .x86)
+                                "i686"
+                            else
+                                @tagName(cpu_arch);
+                            const full_dir = try std.fmt.allocPrint(b.allocator, fmt_str, .{
+                                dir, cpu_arch_name, @tagName(os_tag), @tagName(abi),
+                            });
+
+                            try interp_argv.append("-L");
+                            try interp_argv.append(full_dir);
                         }
 
                         try interp_argv.appendSlice(argv);
-                    } else return failForeign(run, "-fqemu", argv[0], exe);
+                    } else {
+                        return failForeign(run, "-fqemu", argv[0], exe);
+                    }
                 },
                 .darling => |bin_name| {
                     if (b.enable_darling) {
@@ -1101,25 +965,10 @@ fn runCommand(
                 },
                 .wasmtime => |bin_name| {
                     if (b.enable_wasmtime) {
-                        // https://github.com/bytecodealliance/wasmtime/issues/7384
-                        //
-                        // In Wasmtime versions prior to 14, options passed after the module name
-                        // could be interpreted by Wasmtime if it recognized them. As with many CLI
-                        // tools, the `--` token is used to stop that behavior and indicate that the
-                        // remaining arguments are for the WASM program being executed. Historically,
-                        // we passed `--` after the module name here.
-                        //
-                        // After version 14, the `--` can no longer be passed after the module name,
-                        // but is also not necessary as Wasmtime will no longer try to interpret
-                        // options after the module name. So, we could just simply omit `--` for
-                        // newer Wasmtime versions. But to maintain compatibility for older versions
-                        // that still try to interpret options after the module name, we have moved
-                        // the `--` before the module name. This appears to work for both old and
-                        // new Wasmtime versions.
                         try interp_argv.append(bin_name);
                         try interp_argv.append("--dir=.");
-                        try interp_argv.append("--");
                         try interp_argv.append(argv[0]);
+                        try interp_argv.append("--");
                         try interp_argv.appendSlice(argv[1..]);
                     } else {
                         return failForeign(run, "-fwasmtime", argv[0], exe);
@@ -1128,7 +977,7 @@ fn runCommand(
                 .bad_dl => |foreign_dl| {
                     if (allow_skip) return error.MakeSkipped;
 
-                    const host_dl = b.graph.host.result.dynamic_linker.get() orelse "(none)";
+                    const host_dl = b.host.result.dynamic_linker.get() orelse "(none)";
 
                     return step.fail(
                         \\the host system is unable to execute binaries from the target
@@ -1140,8 +989,8 @@ fn runCommand(
                 .bad_os_or_cpu => {
                     if (allow_skip) return error.MakeSkipped;
 
-                    const host_name = try b.graph.host.result.zigTriple(b.allocator);
-                    const foreign_name = try root_target.zigTriple(b.allocator);
+                    const host_name = try b.host.result.zigTriple(b.allocator);
+                    const foreign_name = try exe.rootModuleTarget().zigTriple(b.allocator);
 
                     return step.fail("the host system ({s}) is unable to execute binaries from the target ({s})", .{
                         host_name, foreign_name,
@@ -1149,14 +998,14 @@ fn runCommand(
                 },
             }
 
-            if (root_target.os.tag == .windows) {
+            if (exe.rootModuleTarget().os.tag == .windows) {
                 // On Windows we don't have rpaths so we have to add .dll search paths to PATH
                 run.addPathForDynLibs(exe);
             }
 
             try Step.handleVerbose2(step.owner, cwd, run.env_map, interp_argv.items);
 
-            break :term spawnChildAndCollect(run, interp_argv.items, has_side_effects, prog_node, fuzz_context) catch |e| {
+            break :term spawnChildAndCollect(run, interp_argv.items, has_side_effects, prog_node) catch |e| {
                 if (!run.failing_to_execute_foreign_is_an_error) return error.MakeSkipped;
 
                 return step.fail("unable to spawn interpreter {s}: {s}", .{
@@ -1165,21 +1014,12 @@ fn runCommand(
             };
         }
 
-        return step.fail("failed to spawn and capture stdio from {s}: {s}", .{ argv[0], @errorName(err) });
+        return step.fail("unable to spawn {s}: {s}", .{ argv[0], @errorName(err) });
     };
 
     step.result_duration_ns = result.elapsed_ns;
     step.result_peak_rss = result.peak_rss;
     step.test_results = result.stdio.test_results;
-    if (result.stdio.test_metadata) |tm|
-        run.cached_test_metadata = tm.toCachedTestMetadata();
-
-    const final_argv = if (interp_argv.items.len == 0) argv else interp_argv.items;
-
-    if (fuzz_context != null) {
-        try step.handleChildProcessTerm(result.term, cwd, final_argv);
-        return;
-    }
 
     // Capture stdout and stderr to GeneratedFile objects.
     const Stream = struct {
@@ -1215,6 +1055,8 @@ fn runCommand(
             };
         }
     }
+
+    const final_argv = if (interp_argv.items.len == 0) argv else interp_argv.items;
 
     switch (run.stdio) {
         .check => |checks| for (checks.items) |check| switch (check) {
@@ -1340,20 +1182,17 @@ fn spawnChildAndCollect(
     run: *Run,
     argv: []const []const u8,
     has_side_effects: bool,
-    prog_node: std.Progress.Node,
-    fuzz_context: ?FuzzContext,
+    prog_node: *std.Progress.Node,
 ) !ChildProcResult {
     const b = run.step.owner;
     const arena = b.allocator;
 
-    if (fuzz_context != null) {
-        assert(!has_side_effects);
-        assert(run.stdio == .zig_test);
-    }
-
     var child = std.process.Child.init(argv, arena);
     if (run.cwd) |lazy_cwd| {
         child.cwd = lazy_cwd.getPath2(b, &run.step);
+    } else {
+        child.cwd = b.build_root.path;
+        child.cwd_dir = b.build_root.handle;
     }
     child.env_map = run.env_map orelse &b.graph.env_map;
     child.request_resource_usage_statistics = true;
@@ -1383,36 +1222,19 @@ fn spawnChildAndCollect(
         child.stdin_behavior = .Pipe;
     }
 
-    const inherit = child.stdout_behavior == .Inherit or child.stderr_behavior == .Inherit;
+    try child.spawn();
+    var timer = try std.time.Timer.start();
 
-    if (run.stdio != .zig_test and !run.disable_zig_progress and !inherit) {
-        child.progress_node = prog_node;
-    }
+    const result = if (run.stdio == .zig_test)
+        evalZigTest(run, &child, prog_node)
+    else
+        evalGeneric(run, &child);
 
-    const term, const result, const elapsed_ns = t: {
-        if (inherit) std.debug.lockStdErr();
-        defer if (inherit) std.debug.unlockStdErr();
-
-        try child.spawn();
-        errdefer {
-            _ = child.kill() catch {};
-        }
-
-        // We need to report `error.InvalidExe` *now* if applicable.
-        try child.waitForSpawn();
-
-        var timer = try std.time.Timer.start();
-
-        const result = if (run.stdio == .zig_test)
-            try evalZigTest(run, &child, prog_node, fuzz_context)
-        else
-            try evalGeneric(run, &child);
-
-        break :t .{ try child.wait(), result, timer.read() };
-    };
+    const term = try child.wait();
+    const elapsed_ns = timer.read();
 
     return .{
-        .stdio = result,
+        .stdio = try result,
         .term = term,
         .elapsed_ns = elapsed_ns,
         .peak_rss = child.resource_usage_statistics.getMaxRss() orelse 0,
@@ -1429,8 +1251,7 @@ const StdIoResult = struct {
 fn evalZigTest(
     run: *Run,
     child: *std.process.Child,
-    prog_node: std.Progress.Node,
-    fuzz_context: ?FuzzContext,
+    prog_node: *std.Progress.Node,
 ) !StdIoResult {
     const gpa = run.step.owner.allocator;
     const arena = run.step.owner.allocator;
@@ -1441,23 +1262,7 @@ fn evalZigTest(
     });
     defer poller.deinit();
 
-    // If this is `true`, we avoid ever entering the polling loop below, because the stdin pipe has
-    // somehow already closed; instead, we go straight to capturing stderr in case it has anything
-    // useful.
-    const first_write_failed = if (fuzz_context) |fuzz| failed: {
-        sendRunTestMessage(child.stdin.?, .start_fuzzing, fuzz.unit_test_index) catch |err| {
-            try run.step.addError("unable to write stdin: {s}", .{@errorName(err)});
-            break :failed true;
-        };
-        break :failed false;
-    } else failed: {
-        run.fuzz_tests.clearRetainingCapacity();
-        sendMessage(child.stdin.?, .query_test_metadata) catch |err| {
-            try run.step.addError("unable to write stdin: {s}", .{@errorName(err)});
-            break :failed true;
-        };
-        break :failed false;
-    };
+    try sendMessage(child.stdin.?, .query_test_metadata);
 
     const Header = std.zig.Server.Message.Header;
 
@@ -1471,18 +1276,17 @@ fn evalZigTest(
     var log_err_count: u32 = 0;
 
     var metadata: ?TestMetadata = null;
-    var coverage_id: ?u64 = null;
 
     var sub_prog_node: ?std.Progress.Node = null;
-    defer if (sub_prog_node) |n| n.end();
+    defer if (sub_prog_node) |*n| n.end();
 
-    const any_write_failed = first_write_failed or poll: while (true) {
+    poll: while (true) {
         while (stdout.readableLength() < @sizeOf(Header)) {
-            if (!(try poller.poll())) break :poll false;
+            if (!(try poller.poll())) break :poll;
         }
         const header = stdout.reader().readStruct(Header) catch unreachable;
         while (stdout.readableLength() < header.bytes_len) {
-            if (!(try poller.poll())) break :poll false;
+            if (!(try poller.poll())) break :poll;
         }
         const body = stdout.readableSliceOfLen(header.bytes_len);
 
@@ -1496,7 +1300,6 @@ fn evalZigTest(
                 }
             },
             .test_metadata => {
-                assert(fuzz_context == null);
                 const TmHdr = std.zig.Server.Message.TestMetadata;
                 const tm_hdr = @as(*align(1) const TmHdr, @ptrCast(body));
                 test_count = tm_hdr.tests_len;
@@ -1522,13 +1325,9 @@ fn evalZigTest(
                     .prog_node = prog_node,
                 };
 
-                requestNextTest(child.stdin.?, &metadata.?, &sub_prog_node) catch |err| {
-                    try run.step.addError("unable to write stdin: {s}", .{@errorName(err)});
-                    break :poll true;
-                };
+                try requestNextTest(child.stdin.?, &metadata.?, &sub_prog_node);
             },
             .test_results => {
-                assert(fuzz_context == null);
                 const md = metadata.?;
 
                 const TrHdr = std.zig.Server.Message.TestResults;
@@ -1537,8 +1336,6 @@ fn evalZigTest(
                 skip_count +|= @intFromBool(tr_hdr.flags.skip);
                 leak_count +|= @intFromBool(tr_hdr.flags.leak);
                 log_err_count +|= tr_hdr.flags.log_err_count;
-
-                if (tr_hdr.flags.fuzz) try run.fuzz_tests.append(gpa, tr_hdr.index);
 
                 if (tr_hdr.flags.fail or tr_hdr.flags.leak or tr_hdr.flags.log_err_count > 0) {
                     const name = std.mem.sliceTo(md.string_bytes[md.names[tr_hdr.index]..], 0);
@@ -1560,49 +1357,12 @@ fn evalZigTest(
                     }
                 }
 
-                requestNextTest(child.stdin.?, &metadata.?, &sub_prog_node) catch |err| {
-                    try run.step.addError("unable to write stdin: {s}", .{@errorName(err)});
-                    break :poll true;
-                };
-            },
-            .coverage_id => {
-                const web_server = fuzz_context.?.web_server;
-                const msg_ptr: *align(1) const u64 = @ptrCast(body);
-                coverage_id = msg_ptr.*;
-                {
-                    web_server.mutex.lock();
-                    defer web_server.mutex.unlock();
-                    try web_server.msg_queue.append(web_server.gpa, .{ .coverage = .{
-                        .id = coverage_id.?,
-                        .run = run,
-                    } });
-                    web_server.condition.signal();
-                }
-            },
-            .fuzz_start_addr => {
-                const web_server = fuzz_context.?.web_server;
-                const msg_ptr: *align(1) const u64 = @ptrCast(body);
-                const addr = msg_ptr.*;
-                {
-                    web_server.mutex.lock();
-                    defer web_server.mutex.unlock();
-                    try web_server.msg_queue.append(web_server.gpa, .{ .entry_point = .{
-                        .addr = addr,
-                        .coverage_id = coverage_id.?,
-                    } });
-                    web_server.condition.signal();
-                }
+                try requestNextTest(child.stdin.?, &metadata.?, &sub_prog_node);
             },
             else => {}, // ignore other messages
         }
 
         stdout.discard(body.len);
-    };
-
-    if (any_write_failed) {
-        // The compiler unexpectedly closed stdin; something is very wrong and has probably crashed.
-        // We want to make sure we've captured all of stderr so that it's logged below.
-        while (try poller.poll()) {}
     }
 
     if (stderr.readableLength() > 0) {
@@ -1633,25 +1393,9 @@ const TestMetadata = struct {
     expected_panic_msgs: []const u32,
     string_bytes: []const u8,
     next_index: u32,
-    prog_node: std.Progress.Node,
-
-    fn toCachedTestMetadata(tm: TestMetadata) CachedTestMetadata {
-        return .{
-            .names = tm.names,
-            .string_bytes = tm.string_bytes,
-        };
-    }
+    prog_node: *std.Progress.Node,
 
     fn testName(tm: TestMetadata, index: u32) []const u8 {
-        return tm.toCachedTestMetadata().testName(index);
-    }
-};
-
-pub const CachedTestMetadata = struct {
-    names: []const u32,
-    string_bytes: []const u8,
-
-    pub fn testName(tm: CachedTestMetadata, index: u32) []const u8 {
         return std.mem.sliceTo(tm.string_bytes[tm.names[index]..], 0);
     }
 };
@@ -1664,10 +1408,10 @@ fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
         if (metadata.expected_panic_msgs[i] != 0) continue;
 
         const name = metadata.testName(i);
-        if (sub_prog_node.*) |n| n.end();
+        if (sub_prog_node.*) |*n| n.end();
         sub_prog_node.* = metadata.prog_node.start(name, 0);
 
-        try sendRunTestMessage(in, .run_test, i);
+        try sendRunTestMessage(in, i);
         return;
     } else {
         try sendMessage(in, .exit);
@@ -1682,9 +1426,9 @@ fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
     try file.writeAll(std.mem.asBytes(&header));
 }
 
-fn sendRunTestMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag, index: u32) !void {
+fn sendRunTestMessage(file: std.fs.File, index: u32) !void {
     const header: std.zig.Client.Message.Header = .{
-        .tag = tag,
+        .tag = .run_test,
         .bytes_len = 4,
     };
     const full_msg = std.mem.asBytes(&header) ++ std.mem.asBytes(&index);
@@ -1766,12 +1510,15 @@ fn evalGeneric(run: *Run, child: *std.process.Child) !StdIoResult {
 
 fn addPathForDynLibs(run: *Run, artifact: *Step.Compile) void {
     const b = run.step.owner;
-    const compiles = artifact.getCompileDependencies(true);
-    for (compiles) |compile| {
-        if (compile.root_module.resolved_target.?.result.os.tag == .windows and
-            compile.isDynamicLibrary())
-        {
-            addPathDir(run, fs.path.dirname(compile.getEmittedBin().getPath2(b, &run.step)).?);
+    var it = artifact.root_module.iterateDependencies(artifact, true);
+    while (it.next()) |item| {
+        const other = item.compile.?;
+        if (item.module == &other.root_module) {
+            if (item.module.resolved_target.?.result.os.tag == .windows and
+                other.isDynamicLibrary())
+            {
+                addPathDir(run, fs.path.dirname(other.getEmittedBin().getPath2(b, &run.step)).?);
+            }
         }
     }
 }
@@ -1788,7 +1535,7 @@ fn failForeign(
                 return error.MakeSkipped;
 
             const b = run.step.owner;
-            const host_name = try b.graph.host.result.zigTriple(b.allocator);
+            const host_name = try b.host.result.zigTriple(b.allocator);
             const foreign_name = try exe.rootModuleTarget().zigTriple(b.allocator);
 
             return run.step.fail(

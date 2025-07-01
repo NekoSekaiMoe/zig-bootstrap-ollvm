@@ -13,14 +13,12 @@
 
 #ifndef LLVM_CLANG_BASIC_ATTRIBUTECOMMONINFO_H
 #define LLVM_CLANG_BASIC_ATTRIBUTECOMMONINFO_H
-
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TokenKinds.h"
 
 namespace clang {
-
-class ASTRecordWriter;
 class IdentifierInfo;
+class ASTRecordWriter;
 
 class AttributeCommonInfo {
 public:
@@ -33,7 +31,7 @@ public:
     AS_CXX11,
 
     /// [[...]]
-    AS_C23,
+    AS_C2x,
 
     /// __declspec(...)
     AS_Declspec,
@@ -52,8 +50,8 @@ public:
     /// Context-sensitive version of a keyword attribute.
     AS_ContextSensitiveKeyword,
 
-    /// <vardecl> : <annotation>
-    AS_HLSLAnnotation,
+    /// <vardecl> : <semantic>
+    AS_HLSLSemantic,
 
     /// The attibute has no source code manifestation and is only created
     /// implicitly.
@@ -61,17 +59,11 @@ public:
   };
   enum Kind {
 #define PARSED_ATTR(NAME) AT_##NAME,
-#include "clang/Basic/AttrParsedAttrList.inc"
+#include "clang/Sema/AttrParsedAttrList.inc"
 #undef PARSED_ATTR
     NoSemaHandlerAttribute,
     IgnoredAttribute,
     UnknownAttribute,
-  };
-  enum class Scope { NONE, CLANG, GNU, MSVC, OMP, HLSL, GSL, RISCV };
-  enum class AttrArgsInfo {
-    None,
-    Optional,
-    Required,
   };
 
 private:
@@ -80,16 +72,11 @@ private:
   SourceRange AttrRange;
   const SourceLocation ScopeLoc;
   // Corresponds to the Kind enum.
-  LLVM_PREFERRED_TYPE(Kind)
   unsigned AttrKind : 16;
   /// Corresponds to the Syntax enum.
-  LLVM_PREFERRED_TYPE(Syntax)
   unsigned SyntaxUsed : 4;
-  LLVM_PREFERRED_TYPE(bool)
   unsigned SpellingIndex : 4;
-  LLVM_PREFERRED_TYPE(bool)
   unsigned IsAlignas : 1;
-  LLVM_PREFERRED_TYPE(bool)
   unsigned IsRegularKeywordAttribute : 1;
 
 protected:
@@ -117,7 +104,7 @@ public:
 
     static Form GNU() { return AS_GNU; }
     static Form CXX11() { return AS_CXX11; }
-    static Form C23() { return AS_C23; }
+    static Form C2x() { return AS_C2x; }
     static Form Declspec() { return AS_Declspec; }
     static Form Microsoft() { return AS_Microsoft; }
     static Form Keyword(bool IsAlignas, bool IsRegularKeywordAttribute) {
@@ -126,7 +113,7 @@ public:
     }
     static Form Pragma() { return AS_Pragma; }
     static Form ContextSensitiveKeyword() { return AS_ContextSensitiveKeyword; }
-    static Form HLSLAnnotation() { return AS_HLSLAnnotation; }
+    static Form HLSLSemantic() { return AS_HLSLSemantic; }
     static Form Implicit() { return AS_Implicit; }
 
   private:
@@ -134,12 +121,9 @@ public:
         : SyntaxUsed(SyntaxUsed), SpellingIndex(SpellingNotCalculated),
           IsAlignas(0), IsRegularKeywordAttribute(0) {}
 
-    LLVM_PREFERRED_TYPE(Syntax)
     unsigned SyntaxUsed : 4;
     unsigned SpellingIndex : 4;
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IsAlignas : 1;
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IsRegularKeywordAttribute : 1;
   };
 
@@ -183,7 +167,6 @@ public:
                 IsRegularKeywordAttribute);
   }
   const IdentifierInfo *getAttrName() const { return AttrName; }
-  void setAttrName(const IdentifierInfo *AttrNameII) { AttrName = AttrNameII; }
   SourceLocation getLoc() const { return AttrRange.getBegin(); }
   SourceRange getRange() const { return AttrRange; }
   void setRange(SourceRange R) { AttrRange = R; }
@@ -205,21 +188,12 @@ public:
 
   bool isCXX11Attribute() const { return SyntaxUsed == AS_CXX11 || IsAlignas; }
 
-  bool isC23Attribute() const { return SyntaxUsed == AS_C23; }
-
-  bool isAlignas() const {
-    // FIXME: In the current state, the IsAlignas member variable is only true
-    // with the C++  `alignas` keyword but not `_Alignas`. The following
-    // expression works around the otherwise lost information so it will return
-    // true for `alignas` or `_Alignas` while still returning false for things
-    // like  `__attribute__((aligned))`.
-    return (getParsedKind() == AT_Aligned && isKeywordAttribute());
-  }
+  bool isC2xAttribute() const { return SyntaxUsed == AS_C2x; }
 
   /// The attribute is spelled [[]] in either C or C++ mode, including standard
   /// attributes spelled with a keyword, like alignas.
   bool isStandardAttributeSyntax() const {
-    return isCXX11Attribute() || isC23Attribute();
+    return isCXX11Attribute() || isC2xAttribute();
   }
 
   bool isGNUAttribute() const { return SyntaxUsed == AS_GNU; }
@@ -246,8 +220,6 @@ public:
   static Kind getParsedKind(const IdentifierInfo *Name,
                             const IdentifierInfo *Scope, Syntax SyntaxUsed);
 
-  static AttrArgsInfo getCXX11AttrArgsInfo(const IdentifierInfo *Name);
-
 private:
   /// Get an index into the attribute spelling list
   /// defined in Attr.td. This index is used by an attribute
@@ -263,19 +235,6 @@ protected:
     return SpellingIndex != SpellingNotCalculated;
   }
 };
-
-inline bool doesKeywordAttributeTakeArgs(tok::TokenKind Kind) {
-  switch (Kind) {
-  default:
-    return false;
-#define KEYWORD_ATTRIBUTE(NAME, HASARG, ...)                                   \
-  case tok::kw_##NAME:                                                         \
-    return HASARG;
-#include "clang/Basic/RegularKeywordAttrInfo.inc"
-#undef KEYWORD_ATTRIBUTE
-  }
-}
-
 } // namespace clang
 
 #endif // LLVM_CLANG_BASIC_ATTRIBUTECOMMONINFO_H

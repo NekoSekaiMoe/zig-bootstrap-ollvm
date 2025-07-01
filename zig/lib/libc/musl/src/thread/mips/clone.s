@@ -27,8 +27,7 @@ __clone:
 	addu $sp, $sp, 16
 	jr $ra
 	nop
-1:	move $fp, $0
-	lw $25, 0($sp)
+1:	lw $25, 0($sp)
 	lw $4, 4($sp)
 	jalr $25
 	nop

@@ -23,18 +23,19 @@ export fn sub(a: i8, b: i8) i8 {
 // dynamically. The quoted identifier after the extern keyword specifies
 // the library that has the function. (e.g. "c" -> libc.so)
 // The callconv specifier changes the calling convention of the function.
-extern "kernel32" fn ExitProcess(exit_code: u32) callconv(.winapi) noreturn;
+const WINAPI: std.builtin.CallingConvention = if (native_arch == .x86) .Stdcall else .C;
+extern "kernel32" fn ExitProcess(exit_code: u32) callconv(WINAPI) noreturn;
 extern "c" fn atan2(a: f64, b: f64) f64;
 
-// The @branchHint builtin can be used to tell the optimizer that a function is rarely called ("cold").
+// The @setCold builtin tells the optimizer that a function is rarely called.
 fn abort() noreturn {
-    @branchHint(.cold);
+    @setCold(true);
     while (true) {}
 }
 
 // The naked calling convention makes a function not have any function prologue or epilogue.
 // This can be useful when integrating with assembly.
-fn _start() callconv(.naked) noreturn {
+fn _start() callconv(.Naked) noreturn {
     abort();
 }
 

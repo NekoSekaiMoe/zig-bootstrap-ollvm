@@ -56,21 +56,9 @@ private:
   unsigned getPriority(const LiveInterval &LI) const override;
 };
 
-/// Stupid priority advisor which just enqueues in virtual register number
-/// order, for debug purposes only.
-class DummyPriorityAdvisor : public RegAllocPriorityAdvisor {
-public:
-  DummyPriorityAdvisor(const MachineFunction &MF, const RAGreedy &RA,
-                       SlotIndexes *const Indexes)
-      : RegAllocPriorityAdvisor(MF, RA, Indexes) {}
-
-private:
-  unsigned getPriority(const LiveInterval &LI) const override;
-};
-
 class RegAllocPriorityAdvisorAnalysis : public ImmutablePass {
 public:
-  enum class AdvisorMode : int { Default, Release, Development, Dummy };
+  enum class AdvisorMode : int { Default, Release, Development };
 
   RegAllocPriorityAdvisorAnalysis(AdvisorMode Mode)
       : ImmutablePass(ID), Mode(Mode){};

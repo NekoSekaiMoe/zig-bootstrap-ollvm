@@ -1,4 +1,4 @@
-//===------------ Value.cpp - Definition of interpreter value -------------===//
+//===--- Interpreter.h - Incremental Compiation and Execution---*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -21,6 +21,8 @@
 #include <cassert>
 #include <cstdint>
 #include <utility>
+
+using namespace clang;
 
 namespace {
 
@@ -59,7 +61,7 @@ public:
   void Release() {
     assert(RefCnt > 0 && "Can't release if reference count is already zero");
     if (--RefCnt == 0) {
-      // We have a non-trivial dtor.
+      // We hace a non-trivial dtor.
       if (Dtor && IsAlive()) {
         assert(Elements && "We at least should have 1 element in Value");
         size_t Stride = AllocSize / Elements;
@@ -94,8 +96,6 @@ private:
                                               0x2d, 0x23, 0x95, 0x91};
 };
 } // namespace
-
-namespace clang {
 
 static Value::Kind ConvertQualTypeToKind(const ASTContext &Ctx, QualType QT) {
   if (Ctx.hasSameType(QT, Ctx.VoidTy))
@@ -201,17 +201,16 @@ Value &Value::operator=(const Value &RHS) {
 }
 
 Value &Value::operator=(Value &&RHS) noexcept {
-  if (this != &RHS) {
-    if (IsManuallyAlloc)
-      ValueStorage::getFromPayload(getPtr())->Release();
+  if (IsManuallyAlloc)
+    ValueStorage::getFromPayload(getPtr())->Release();
 
-    Interp = std::exchange(RHS.Interp, nullptr);
-    OpaqueType = std::exchange(RHS.OpaqueType, nullptr);
-    ValueKind = std::exchange(RHS.ValueKind, K_Unspecified);
-    IsManuallyAlloc = std::exchange(RHS.IsManuallyAlloc, false);
+  Interp = std::exchange(RHS.Interp, nullptr);
+  OpaqueType = std::exchange(RHS.OpaqueType, nullptr);
+  ValueKind = std::exchange(RHS.ValueKind, K_Unspecified);
+  IsManuallyAlloc = std::exchange(RHS.IsManuallyAlloc, false);
 
-    Data = RHS.Data;
-  }
+  Data = RHS.Data;
+
   return *this;
 }
 
@@ -265,5 +264,3 @@ void Value::print(llvm::raw_ostream &Out) const {
   assert(OpaqueType != nullptr && "Can't print default Value");
   Out << "Not implement yet.\n";
 }
-
-} // namespace clang

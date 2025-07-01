@@ -29,8 +29,7 @@ namespace llvm {
 namespace orc {
 
 class SimpleRemoteEPC : public ExecutorProcessControl,
-                        public SimpleRemoteEPCTransportClient,
-                        private DylibManager {
+                        public SimpleRemoteEPCTransportClient {
 public:
   /// A setup object containing callbacks to construct a memory manager and
   /// memory access object. Both are optional. If not specified,
@@ -70,6 +69,11 @@ public:
   SimpleRemoteEPC &operator=(SimpleRemoteEPC &&) = delete;
   ~SimpleRemoteEPC();
 
+  Expected<tpctypes::DylibHandle> loadDylib(const char *DylibPath) override;
+
+  Expected<std::vector<tpctypes::LookupResult>>
+  lookupSymbols(ArrayRef<LookupRequest> Request) override;
+
   Expected<int32_t> runAsMain(ExecutorAddr MainFnAddr,
                               ArrayRef<std::string> Args) override;
 
@@ -92,9 +96,7 @@ public:
 private:
   SimpleRemoteEPC(std::shared_ptr<SymbolStringPool> SSP,
                   std::unique_ptr<TaskDispatcher> D)
-      : ExecutorProcessControl(std::move(SSP), std::move(D)) {
-    this->DylibMgr = this;
-  }
+    : ExecutorProcessControl(std::move(SSP), std::move(D)) {}
 
   static Expected<std::unique_ptr<jitlink::JITLinkMemoryManager>>
   createDefaultMemoryManager(SimpleRemoteEPC &SREPC);
@@ -117,11 +119,6 @@ private:
   uint64_t getNextSeqNo() { return NextSeqNo++; }
   void releaseSeqNo(uint64_t SeqNo) {}
 
-  Expected<tpctypes::DylibHandle> loadDylib(const char *DylibPath) override;
-
-  void lookupSymbolsAsync(ArrayRef<LookupRequest> Request,
-                          SymbolLookupCompleteFn F) override;
-
   using PendingCallWrapperResultsMap =
     DenseMap<uint64_t, IncomingWFRHandler>;
 
@@ -134,7 +131,7 @@ private:
   std::unique_ptr<jitlink::JITLinkMemoryManager> OwnedMemMgr;
   std::unique_ptr<MemoryAccess> OwnedMemAccess;
 
-  std::unique_ptr<EPCGenericDylibManager> EPCDylibMgr;
+  std::unique_ptr<EPCGenericDylibManager> DylibMgr;
   ExecutorAddr RunAsMainAddr;
   ExecutorAddr RunAsVoidFunctionAddr;
   ExecutorAddr RunAsIntFunctionAddr;

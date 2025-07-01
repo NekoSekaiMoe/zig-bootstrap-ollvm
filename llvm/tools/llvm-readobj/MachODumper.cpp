@@ -59,7 +59,7 @@ private:
   StringRef getSymbolName(const SymbolRef &Symbol) const;
   uint8_t getSymbolType(const SymbolRef &Symbol) const;
 
-  void printSymbols(bool ExtraSymInfo) override;
+  void printSymbols() override;
   void printSymbols(std::optional<SymbolComparator> SymComp) override;
   void printDynamicSymbols() override;
   void printDynamicSymbols(std::optional<SymbolComparator> SymComp) override;
@@ -632,9 +632,7 @@ bool MachODumper::compareSymbolsByType(SymbolRef LHS, SymbolRef RHS) const {
   return getSymbolType(LHS) < getSymbolType(RHS);
 }
 
-void MachODumper::printSymbols(bool /*ExtraSymInfo*/) {
-  printSymbols(std::nullopt);
-}
+void MachODumper::printSymbols() { printSymbols(std::nullopt); }
 
 void MachODumper::printSymbols(std::optional<SymbolComparator> SymComp) {
   ListScope Group(W, "Symbols");
@@ -734,10 +732,10 @@ void MachODumper::printStackMap() const {
 
   if (Obj->isLittleEndian())
     prettyPrintStackMap(
-        W, StackMapParser<llvm::endianness::little>(StackMapContentsArray));
+        W, StackMapParser<support::little>(StackMapContentsArray));
   else
     prettyPrintStackMap(
-        W, StackMapParser<llvm::endianness::big>(StackMapContentsArray));
+        W, StackMapParser<support::big>(StackMapContentsArray));
 }
 
 void MachODumper::printCGProfile() {
@@ -760,8 +758,8 @@ void MachODumper::printCGProfile() {
   StringRef CGProfileContents =
       unwrapOrError(Obj->getFileName(), CGProfileSection.getContents());
   BinaryStreamReader Reader(CGProfileContents, Obj->isLittleEndian()
-                                                   ? llvm::endianness::little
-                                                   : llvm::endianness::big);
+                                                   ? llvm::support::little
+                                                   : llvm::support::big);
 
   ListScope L(W, "CGProfile");
   while (!Reader.empty()) {

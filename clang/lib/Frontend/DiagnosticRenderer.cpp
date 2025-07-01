@@ -98,7 +98,8 @@ void DiagnosticRenderer::emitDiagnostic(FullSourceLoc Loc,
     emitDiagnosticMessage(Loc, PresumedLoc(), Level, Message, Ranges, D);
   else {
     // Get the ranges into a local array we can hack on.
-    SmallVector<CharSourceRange, 20> MutableRanges(Ranges);
+    SmallVector<CharSourceRange, 20> MutableRanges(Ranges.begin(),
+                                                   Ranges.end());
 
     SmallVector<FixItHint, 8> MergedFixits;
     if (!FixItHints.empty()) {
@@ -146,7 +147,7 @@ void DiagnosticRenderer::emitStoredDiagnostic(StoredDiagnostic &Diag) {
 
 void DiagnosticRenderer::emitBasicNote(StringRef Message) {
   emitDiagnosticMessage(FullSourceLoc(), PresumedLoc(), DiagnosticsEngine::Note,
-                        Message, {}, DiagOrStoredDiag());
+                        Message, std::nullopt, DiagOrStoredDiag());
 }
 
 /// Prints an include stack when appropriate for a particular
@@ -451,7 +452,7 @@ void DiagnosticRenderer::emitSingleMacroExpansion(
     Message << "expanded from macro '" << MacroName << "'";
 
   emitDiagnostic(SpellingLoc, DiagnosticsEngine::Note, Message.str(),
-                 SpellingRanges, {});
+                 SpellingRanges, std::nullopt);
 }
 
 /// Check that the macro argument location of Loc starts with ArgumentLoc.

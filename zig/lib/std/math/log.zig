@@ -14,26 +14,26 @@ pub fn log(comptime T: type, base: T, x: T) T {
         return math.log2(x);
     } else if (base == 10) {
         return math.log10(x);
-    } else if ((@typeInfo(T) == .float or @typeInfo(T) == .comptime_float) and base == math.e) {
+    } else if ((@typeInfo(T) == .Float or @typeInfo(T) == .ComptimeFloat) and base == math.e) {
         return @log(x);
     }
 
     const float_base = math.lossyCast(f64, base);
     switch (@typeInfo(T)) {
-        .comptime_float => {
+        .ComptimeFloat => {
             return @as(comptime_float, @log(@as(f64, x)) / @log(float_base));
         },
 
-        .comptime_int => {
+        .ComptimeInt => {
             return @as(comptime_int, math.log_int(comptime_int, base, x));
         },
 
-        .int => |IntType| switch (IntType.signedness) {
+        .Int => |IntType| switch (IntType.signedness) {
             .signed => @compileError("log not implemented for signed integers"),
             .unsigned => return @as(T, math.log_int(T, base, x)),
         },
 
-        .float => {
+        .Float => {
             switch (T) {
                 f32 => return @as(f32, @floatCast(@log(@as(f64, x)) / @log(float_base))),
                 f64 => return @log(x) / @log(float_base),

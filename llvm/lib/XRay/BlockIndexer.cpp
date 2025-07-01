@@ -80,9 +80,12 @@ Error BlockIndexer::visit(FunctionRecord &R) {
 }
 
 Error BlockIndexer::flush() {
-  Indices[{CurrentBlock.ProcessID, CurrentBlock.ThreadID}].push_back(
-      {CurrentBlock.ProcessID, CurrentBlock.ThreadID,
-       CurrentBlock.WallclockTime, std::move(CurrentBlock.Records)});
+  Index::iterator It;
+  std::tie(It, std::ignore) =
+      Indices.insert({{CurrentBlock.ProcessID, CurrentBlock.ThreadID}, {}});
+  It->second.push_back({CurrentBlock.ProcessID, CurrentBlock.ThreadID,
+                        CurrentBlock.WallclockTime,
+                        std::move(CurrentBlock.Records)});
   CurrentBlock.ProcessID = 0;
   CurrentBlock.ThreadID = 0;
   CurrentBlock.Records = {};

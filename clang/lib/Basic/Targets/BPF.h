@@ -67,7 +67,9 @@ public:
   }
 
   bool isValidGCCRegisterName(StringRef Name) const override { return true; }
-  ArrayRef<const char *> getGCCRegNames() const override { return {}; }
+  ArrayRef<const char *> getGCCRegNames() const override {
+    return std::nullopt;
+  }
 
   bool validateAsmConstraint(const char *&Name,
                              TargetInfo::ConstraintInfo &Info) const override {
@@ -84,7 +86,7 @@ public:
   }
 
   ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override {
-    return {};
+    return std::nullopt;
   }
 
   bool allowDebugInfoForExternalRef() const override { return true; }
@@ -104,16 +106,12 @@ public:
   void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
 
   bool setCPU(const std::string &Name) override {
-    if (Name == "v3" || Name == "v4") {
+    if (Name == "v3") {
       HasAlu32 = true;
     }
 
     StringRef CPUName(Name);
     return isValidCPUName(CPUName);
-  }
-
-  std::pair<unsigned, unsigned> hardwareInterferenceSizes() const override {
-    return std::make_pair(32, 32);
   }
 };
 } // namespace targets

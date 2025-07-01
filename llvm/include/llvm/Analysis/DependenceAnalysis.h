@@ -994,8 +994,6 @@ namespace llvm {
 
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
 
-    static bool isRequired() { return true; }
-
   private:
     raw_ostream &OS;
     bool NormalizeResults;

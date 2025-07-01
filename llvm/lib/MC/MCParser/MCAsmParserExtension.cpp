@@ -22,9 +22,9 @@ void MCAsmParserExtension::Initialize(MCAsmParser &Parser) {
   this->Parser = &Parser;
 }
 
-/// parseDirectiveCGProfile
+/// ParseDirectiveCGProfile
 ///  ::= .cg_profile identifier, identifier, <number>
-bool MCAsmParserExtension::parseDirectiveCGProfile(StringRef, SMLoc) {
+bool MCAsmParserExtension::ParseDirectiveCGProfile(StringRef, SMLoc) {
   StringRef From;
   SMLoc FromLoc = getLexer().getLoc();
   if (getParser().parseIdentifier(From))

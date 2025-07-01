@@ -20,9 +20,8 @@
 
 namespace llvm {
 /// Analysis pass that exposes the \c DXILResource for a module.
-class DXILResourceMDAnalysis
-    : public AnalysisInfoMixin<DXILResourceMDAnalysis> {
-  friend AnalysisInfoMixin<DXILResourceMDAnalysis>;
+class DXILResourceAnalysis : public AnalysisInfoMixin<DXILResourceAnalysis> {
+  friend AnalysisInfoMixin<DXILResourceAnalysis>;
   static AnalysisKey Key;
 
 public:
@@ -30,15 +29,24 @@ public:
   dxil::Resources run(Module &M, ModuleAnalysisManager &AM);
 };
 
+/// Printer pass for the \c DXILResourceAnalysis results.
+class DXILResourcePrinterPass : public PassInfoMixin<DXILResourcePrinterPass> {
+  raw_ostream &OS;
+
+public:
+  explicit DXILResourcePrinterPass(raw_ostream &OS) : OS(OS) {}
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+};
+
 /// The legacy pass manager's analysis pass to compute DXIL resource
 /// information.
-class DXILResourceMDWrapper : public ModulePass {
+class DXILResourceWrapper : public ModulePass {
   dxil::Resources Resources;
 
 public:
   static char ID; // Pass identification, replacement for typeid
 
-  DXILResourceMDWrapper();
+  DXILResourceWrapper();
 
   dxil::Resources &getDXILResource() { return Resources; }
   const dxil::Resources &getDXILResource() const { return Resources; }
@@ -46,9 +54,7 @@ public:
   /// Calculate the DXILResource for the module.
   bool runOnModule(Module &M) override;
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
-  }
+  void print(raw_ostream &O, const Module *M = nullptr) const override;
 };
 } // namespace llvm
 

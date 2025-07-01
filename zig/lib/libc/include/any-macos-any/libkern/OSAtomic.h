@@ -40,10 +40,6 @@
 
 #include <sys/cdefs.h>
 
-#if __has_include(<libkern/OSAtomicPrivate.h>)
-#include <libkern/OSAtomicPrivate.h>
-#endif
-
 #include "OSAtomicDeprecated.h"
 #include "OSSpinLockDeprecated.h"
 #include "OSAtomicQueue.h"

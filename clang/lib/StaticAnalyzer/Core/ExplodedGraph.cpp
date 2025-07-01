@@ -211,9 +211,9 @@ void ExplodedNode::NodeGroup::replaceNode(ExplodedNode *node) {
   assert(!getFlag());
 
   GroupStorage &Storage = reinterpret_cast<GroupStorage&>(P);
-  assert(isa<ExplodedNode *>(Storage));
+  assert(Storage.is<ExplodedNode *>());
   Storage = node;
-  assert(isa<ExplodedNode *>(Storage));
+  assert(Storage.is<ExplodedNode *>());
 }
 
 void ExplodedNode::NodeGroup::addNode(ExplodedNode *N, ExplodedGraph &G) {
@@ -222,15 +222,15 @@ void ExplodedNode::NodeGroup::addNode(ExplodedNode *N, ExplodedGraph &G) {
   GroupStorage &Storage = reinterpret_cast<GroupStorage&>(P);
   if (Storage.isNull()) {
     Storage = N;
-    assert(isa<ExplodedNode *>(Storage));
+    assert(Storage.is<ExplodedNode *>());
     return;
   }
 
-  ExplodedNodeVector *V = dyn_cast<ExplodedNodeVector *>(Storage);
+  ExplodedNodeVector *V = Storage.dyn_cast<ExplodedNodeVector *>();
 
   if (!V) {
     // Switch from single-node to multi-node representation.
-    auto *Old = cast<ExplodedNode *>(Storage);
+    ExplodedNode *Old = Storage.get<ExplodedNode *>();
 
     BumpVectorContext &Ctx = G.getNodeAllocator();
     V = new (G.getAllocator()) ExplodedNodeVector(Ctx, 4);
@@ -238,7 +238,7 @@ void ExplodedNode::NodeGroup::addNode(ExplodedNode *N, ExplodedGraph &G) {
 
     Storage = V;
     assert(!getFlag());
-    assert(isa<ExplodedNodeVector *>(Storage));
+    assert(Storage.is<ExplodedNodeVector *>());
   }
 
   V->push_back(N, G.getNodeAllocator());
@@ -251,7 +251,7 @@ unsigned ExplodedNode::NodeGroup::size() const {
   const GroupStorage &Storage = reinterpret_cast<const GroupStorage &>(P);
   if (Storage.isNull())
     return 0;
-  if (ExplodedNodeVector *V = dyn_cast<ExplodedNodeVector *>(Storage))
+  if (ExplodedNodeVector *V = Storage.dyn_cast<ExplodedNodeVector *>())
     return V->size();
   return 1;
 }
@@ -263,7 +263,7 @@ ExplodedNode * const *ExplodedNode::NodeGroup::begin() const {
   const GroupStorage &Storage = reinterpret_cast<const GroupStorage &>(P);
   if (Storage.isNull())
     return nullptr;
-  if (ExplodedNodeVector *V = dyn_cast<ExplodedNodeVector *>(Storage))
+  if (ExplodedNodeVector *V = Storage.dyn_cast<ExplodedNodeVector *>())
     return V->begin();
   return Storage.getAddrOfPtr1();
 }
@@ -275,7 +275,7 @@ ExplodedNode * const *ExplodedNode::NodeGroup::end() const {
   const GroupStorage &Storage = reinterpret_cast<const GroupStorage &>(P);
   if (Storage.isNull())
     return nullptr;
-  if (ExplodedNodeVector *V = dyn_cast<ExplodedNodeVector *>(Storage))
+  if (ExplodedNodeVector *V = Storage.dyn_cast<ExplodedNodeVector *>())
     return V->end();
   return Storage.getAddrOfPtr1() + 1;
 }
@@ -349,8 +349,6 @@ const Stmt *ExplodedNode::getStmtForDiagnostics() const {
 
 const Stmt *ExplodedNode::getNextStmtForDiagnostics() const {
   for (const ExplodedNode *N = getFirstSucc(); N; N = N->getFirstSucc()) {
-    if (N->getLocation().isPurgeKind())
-      continue;
     if (const Stmt *S = N->getStmtForDiagnostics()) {
       // Check if the statement is '?' or '&&'/'||'.  These are "merges",
       // not actual statement points.
@@ -378,7 +376,7 @@ const Stmt *ExplodedNode::getNextStmtForDiagnostics() const {
 
 const Stmt *ExplodedNode::getPreviousStmtForDiagnostics() const {
   for (const ExplodedNode *N = getFirstPred(); N; N = N->getFirstPred())
-    if (const Stmt *S = N->getStmtForDiagnostics(); S && !isa<CompoundStmt>(S))
+    if (const Stmt *S = N->getStmtForDiagnostics())
       return S;
 
   return nullptr;

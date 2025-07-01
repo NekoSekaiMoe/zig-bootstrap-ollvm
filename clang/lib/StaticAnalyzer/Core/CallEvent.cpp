@@ -38,7 +38,6 @@
 #include "clang/CrossTU/CrossTranslationUnit.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallDescription.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/CheckerHelpers.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/DynamicType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/DynamicTypeInfo.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/MemRegion.h"
@@ -435,27 +434,27 @@ static SVal processArgument(SVal Value, const Expr *ArgumentExpr,
 /// runtime definition don't match in terms of argument and parameter count.
 static SVal castArgToParamTypeIfNeeded(const CallEvent &Call, unsigned ArgIdx,
                                        SVal ArgVal, SValBuilder &SVB) {
+  const FunctionDecl *RTDecl =
+      Call.getRuntimeDefinition().getDecl()->getAsFunction();
   const auto *CallExprDecl = dyn_cast_or_null<FunctionDecl>(Call.getDecl());
-  if (!CallExprDecl)
-    return ArgVal;
 
-  const FunctionDecl *Definition = CallExprDecl;
-  Definition->hasBody(Definition);
+  if (!RTDecl || !CallExprDecl)
+    return ArgVal;
 
   // The function decl of the Call (in the AST) will not have any parameter
   // declarations, if it was 'only' declared without a prototype. However, the
   // engine will find the appropriate runtime definition - basically a
   // redeclaration, which has a function body (and a function prototype).
-  if (CallExprDecl->hasPrototype() || !Definition->hasPrototype())
+  if (CallExprDecl->hasPrototype() || !RTDecl->hasPrototype())
     return ArgVal;
 
   // Only do this cast if the number arguments at the callsite matches with
   // the parameters at the runtime definition.
-  if (Call.getNumArgs() != Definition->getNumParams())
+  if (Call.getNumArgs() != RTDecl->getNumParams())
     return UnknownVal();
 
   const Expr *ArgExpr = Call.getArgExpr(ArgIdx);
-  const ParmVarDecl *Param = Definition->getParamDecl(ArgIdx);
+  const ParmVarDecl *Param = RTDecl->getParamDecl(ArgIdx);
   return SVB.evalCast(ArgVal, Param->getType(), ArgExpr->getType());
 }
 
@@ -518,26 +517,6 @@ const ConstructionContext *CallEvent::getConstructionContext() const {
   return nullptr;
 }
 
-const CallEventRef<> CallEvent::getCaller() const {
-  const auto *CallLocationContext = this->getLocationContext();
-  if (!CallLocationContext || CallLocationContext->inTopFrame())
-    return nullptr;
-
-  const auto *CallStackFrameContext = CallLocationContext->getStackFrame();
-  if (!CallStackFrameContext)
-    return nullptr;
-
-  CallEventManager &CEMgr = State->getStateManager().getCallEventManager();
-  return CEMgr.getCaller(CallStackFrameContext, State);
-}
-
-bool CallEvent::isCalledFromSystemHeader() const {
-  if (const CallEventRef<> Caller = getCaller())
-    return Caller->isInSystemHeader();
-
-  return false;
-}
-
 std::optional<SVal> CallEvent::getReturnValueUnderConstruction() const {
   const auto *CC = getConstructionContext();
   if (!CC)
@@ -554,7 +533,7 @@ std::optional<SVal> CallEvent::getReturnValueUnderConstruction() const {
 ArrayRef<ParmVarDecl*> AnyFunctionCall::parameters() const {
   const FunctionDecl *D = getDecl();
   if (!D)
-    return {};
+    return std::nullopt;
   return D->parameters();
 }
 
@@ -660,17 +639,17 @@ bool AnyFunctionCall::argumentsMayEscape() const {
 
   // - CoreFoundation functions that end with "NoCopy" can free a passed-in
   //   buffer even if it is const.
-  if (FName.ends_with("NoCopy"))
+  if (FName.endswith("NoCopy"))
     return true;
 
   // - NSXXInsertXX, for example NSMapInsertIfAbsent, since they can
   //   be deallocated by NSMapRemove.
-  if (FName.starts_with("NS") && FName.contains("Insert"))
+  if (FName.startswith("NS") && FName.contains("Insert"))
     return true;
 
   // - Many CF containers allow objects to escape through custom
   //   allocators/deallocators upon container construction. (PR12101)
-  if (FName.starts_with("CF") || FName.starts_with("CG")) {
+  if (FName.startswith("CF") || FName.startswith("CG")) {
     return StrInStrNoCase(FName, "InsertValue")  != StringRef::npos ||
            StrInStrNoCase(FName, "AddValue")     != StringRef::npos ||
            StrInStrNoCase(FName, "SetValue")     != StringRef::npos ||
@@ -711,17 +690,18 @@ void CXXInstanceCall::getExtraInvalidatedValues(
   if (const auto *D = cast_or_null<CXXMethodDecl>(getDecl())) {
     if (!D->isConst())
       return;
-
-    // Get the record decl for the class of 'This'. D->getParent() may return
-    // a base class decl, rather than the class of the instance which needs to
-    // be checked for mutable fields.
-    const CXXRecordDecl *ParentRecord = getDeclForDynamicType().first;
-    if (!ParentRecord || !ParentRecord->hasDefinition())
-      return;
-
+    // Get the record decl for the class of 'This'. D->getParent() may return a
+    // base class decl, rather than the class of the instance which needs to be
+    // checked for mutable fields.
+    // TODO: We might as well look at the dynamic type of the object.
+    const Expr *Ex = getCXXThisExpr()->IgnoreParenBaseCasts();
+    QualType T = Ex->getType();
+    if (T->isPointerType()) // Arrow or implicit-this syntax?
+      T = T->getPointeeType();
+    const CXXRecordDecl *ParentRecord = T->getAsCXXRecordDecl();
+    assert(ParentRecord);
     if (ParentRecord->hasMutableFields())
       return;
-
     // Preserve CXXThis.
     const MemRegion *ThisRegion = ThisVal.getAsRegion();
     if (!ThisRegion)
@@ -735,31 +715,12 @@ void CXXInstanceCall::getExtraInvalidatedValues(
 SVal CXXInstanceCall::getCXXThisVal() const {
   const Expr *Base = getCXXThisExpr();
   // FIXME: This doesn't handle an overloaded ->* operator.
-  SVal ThisVal = Base ? getSVal(Base) : UnknownVal();
+  if (!Base)
+    return UnknownVal();
 
-  if (isa<NonLoc>(ThisVal)) {
-    SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
-    QualType OriginalTy = ThisVal.getType(SVB.getContext());
-    return SVB.evalCast(ThisVal, Base->getType(), OriginalTy);
-  }
-
+  SVal ThisVal = getSVal(Base);
   assert(ThisVal.isUnknownOrUndef() || isa<Loc>(ThisVal));
   return ThisVal;
-}
-
-std::pair<const CXXRecordDecl *, bool>
-CXXInstanceCall::getDeclForDynamicType() const {
-  const MemRegion *R = getCXXThisVal().getAsRegion();
-  if (!R)
-    return {};
-
-  DynamicTypeInfo DynType = getDynamicTypeInfo(getState(), R);
-  if (!DynType.isValid())
-    return {};
-
-  assert(!DynType.getType()->getPointeeType().isNull());
-  return {DynType.getType()->getPointeeCXXRecordDecl(),
-          DynType.canBeASubClass()};
 }
 
 RuntimeDefinition CXXInstanceCall::getRuntimeDefinition() const {
@@ -773,7 +734,21 @@ RuntimeDefinition CXXInstanceCall::getRuntimeDefinition() const {
   if (!MD->isVirtual())
     return AnyFunctionCall::getRuntimeDefinition();
 
-  auto [RD, CanBeSubClass] = getDeclForDynamicType();
+  // Do we know the implicit 'this' object being called?
+  const MemRegion *R = getCXXThisVal().getAsRegion();
+  if (!R)
+    return {};
+
+  // Do we know anything about the type of 'this'?
+  DynamicTypeInfo DynType = getDynamicTypeInfo(getState(), R);
+  if (!DynType.isValid())
+    return {};
+
+  // Is the type a C++ class? (This is mostly a defensive check.)
+  QualType RegionType = DynType.getType()->getPointeeType();
+  assert(!RegionType.isNull() && "DynamicTypeInfo should always be a pointer.");
+
+  const CXXRecordDecl *RD = RegionType->getAsCXXRecordDecl();
   if (!RD || !RD->hasDefinition())
     return {};
 
@@ -790,9 +765,8 @@ RuntimeDefinition CXXInstanceCall::getRuntimeDefinition() const {
     // the static type. However, because we currently don't update
     // DynamicTypeInfo when an object is cast, we can't actually be sure the
     // DynamicTypeInfo is up to date. This assert should be re-enabled once
-    // this is fixed.
-    //
-    // assert(!MD->getParent()->isDerivedFrom(RD) && "Bad DynamicTypeInfo");
+    // this is fixed. <rdar://problem/12287087>
+    //assert(!MD->getParent()->isDerivedFrom(RD) && "Bad DynamicTypeInfo");
 
     return {};
   }
@@ -800,7 +774,7 @@ RuntimeDefinition CXXInstanceCall::getRuntimeDefinition() const {
   // Does the decl that we found have an implementation?
   const FunctionDecl *Definition;
   if (!Result->hasBody(Definition)) {
-    if (!CanBeSubClass)
+    if (!DynType.canBeASubClass())
       return AnyFunctionCall::getRuntimeDefinition();
     return {};
   }
@@ -808,9 +782,8 @@ RuntimeDefinition CXXInstanceCall::getRuntimeDefinition() const {
   // We found a definition. If we're not sure that this devirtualization is
   // actually what will happen at runtime, make sure to provide the region so
   // that ExprEngine can decide what to do with it.
-  if (CanBeSubClass)
-    return RuntimeDefinition(Definition,
-                             getCXXThisVal().getAsRegion()->StripCasts());
+  if (DynType.canBeASubClass())
+    return RuntimeDefinition(Definition, R->StripCasts());
   return RuntimeDefinition(Definition, /*DispatchRegion=*/nullptr);
 }
 
@@ -885,7 +858,7 @@ const BlockDataRegion *BlockCall::getBlockRegion() const {
 ArrayRef<ParmVarDecl*> BlockCall::parameters() const {
   const BlockDecl *D = getDecl();
   if (!D)
-    return {};
+    return std::nullopt;
   return D->parameters();
 }
 
@@ -931,14 +904,6 @@ void AnyCXXConstructorCall::getExtraInvalidatedValues(ValueList &Values,
   if (SymbolRef Sym = V.getAsSymbol(true))
     ETraits->setTrait(Sym,
                       RegionAndSymbolInvalidationTraits::TK_SuppressEscape);
-
-  // Standard classes don't reinterpret-cast and modify super regions.
-  const bool IsStdClassCtor = isWithinStdNamespace(getDecl());
-  if (const MemRegion *Obj = V.getAsRegion(); Obj && IsStdClassCtor) {
-    ETraits->setTrait(
-        Obj, RegionAndSymbolInvalidationTraits::TK_DoNotInvalidateSuperRegion);
-  }
-
   Values.push_back(V);
 }
 
@@ -982,7 +947,7 @@ RuntimeDefinition CXXDestructorCall::getRuntimeDefinition() const {
 ArrayRef<ParmVarDecl*> ObjCMethodCall::parameters() const {
   const ObjCMethodDecl *D = getDecl();
   if (!D)
-    return {};
+    return std::nullopt;
   return D->parameters();
 }
 
@@ -1418,12 +1383,9 @@ CallEventManager::getSimpleCall(const CallExpr *CE, ProgramStateRef State,
 
   if (const auto *OpCE = dyn_cast<CXXOperatorCallExpr>(CE)) {
     const FunctionDecl *DirectCallee = OpCE->getDirectCallee();
-    if (const auto *MD = dyn_cast<CXXMethodDecl>(DirectCallee)) {
-      if (MD->isImplicitObjectMemberFunction())
+    if (const auto *MD = dyn_cast<CXXMethodDecl>(DirectCallee))
+      if (MD->isInstance())
         return create<CXXMemberOperatorCall>(OpCE, State, LCtx, ElemRef);
-      if (MD->isStatic())
-        return create<CXXStaticOperatorCall>(OpCE, State, LCtx, ElemRef);
-    }
 
   } else if (CE->getCallee()->getType()->isBlockPointerType()) {
     return create<BlockCall>(CE, State, LCtx, ElemRef);

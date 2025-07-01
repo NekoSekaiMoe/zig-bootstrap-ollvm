@@ -21,7 +21,6 @@
 #include "clang/Basic/LLVM.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -88,7 +87,7 @@ bool matchesAnyBase(const CXXRecordDecl &Node,
       [Finder, Builder, &BaseSpecMatcher](const CXXBaseSpecifier *BaseSpec,
                                           CXXBasePath &IgnoredParam) {
         BoundNodesTreeBuilder Result(*Builder);
-        if (BaseSpecMatcher.matches(*BaseSpec, Finder, &Result)) {
+        if (BaseSpecMatcher.matches(*BaseSpec, Finder, Builder)) {
           *Builder = std::move(Result);
           return true;
         }
@@ -481,11 +480,11 @@ HasNameMatcher::HasNameMatcher(std::vector<std::string> N)
 
 static bool consumeNameSuffix(StringRef &FullName, StringRef Suffix) {
   StringRef Name = FullName;
-  if (!Name.ends_with(Suffix))
+  if (!Name.endswith(Suffix))
     return false;
   Name = Name.drop_back(Suffix.size());
   if (!Name.empty()) {
-    if (!Name.ends_with("::"))
+    if (!Name.endswith("::"))
       return false;
     Name = Name.drop_back(2);
   }
@@ -531,30 +530,21 @@ public:
   PatternSet(ArrayRef<std::string> Names) {
     Patterns.reserve(Names.size());
     for (StringRef Name : Names)
-      Patterns.push_back({Name, Name.starts_with("::")});
+      Patterns.push_back({Name, Name.startswith("::")});
   }
 
   /// Consumes the name suffix from each pattern in the set and removes the ones
   /// that didn't match.
   /// Return true if there are still any patterns left.
   bool consumeNameSuffix(StringRef NodeName, bool CanSkip) {
-    if (CanSkip) {
-      // If we can skip the node, then we need to handle the case where a
-      // skipped node has the same name as its parent.
-      // namespace a { inline namespace a { class A; } }
-      // cxxRecordDecl(hasName("::a::A"))
-      // To do this, any patterns that match should be duplicated in our set,
-      // one of them with the tail removed.
-      for (size_t I = 0, E = Patterns.size(); I != E; ++I) {
-        StringRef Pattern = Patterns[I].P;
-        if (ast_matchers::internal::consumeNameSuffix(Patterns[I].P, NodeName))
-          Patterns.push_back({Pattern, Patterns[I].IsFullyQualified});
+    for (size_t I = 0; I < Patterns.size();) {
+      if (::clang::ast_matchers::internal::consumeNameSuffix(Patterns[I].P,
+                                                             NodeName) ||
+          CanSkip) {
+        ++I;
+      } else {
+        Patterns.erase(Patterns.begin() + I);
       }
-    } else {
-      llvm::erase_if(Patterns, [&NodeName](auto &Pattern) {
-        return !::clang::ast_matchers::internal::consumeNameSuffix(Pattern.P,
-                                                                   NodeName);
-      });
     }
     return !Patterns.empty();
   }
@@ -656,19 +646,17 @@ bool HasNameMatcher::matchesNodeFullSlow(const NamedDecl &Node) const {
 
     PrintingPolicy Policy = Node.getASTContext().getPrintingPolicy();
     Policy.SuppressUnwrittenScope = SkipUnwritten;
-    Policy.SuppressInlineNamespace =
-        SkipUnwritten ? PrintingPolicy::SuppressInlineNamespaceMode::All
-                      : PrintingPolicy::SuppressInlineNamespaceMode::None;
+    Policy.SuppressInlineNamespace = SkipUnwritten;
     Node.printQualifiedName(OS, Policy);
 
     const StringRef FullName = OS.str();
 
     for (const StringRef Pattern : Names) {
-      if (Pattern.starts_with("::")) {
+      if (Pattern.startswith("::")) {
         if (FullName == Pattern)
           return true;
-      } else if (FullName.ends_with(Pattern) &&
-                 FullName.drop_back(Pattern.size()).ends_with("::")) {
+      } else if (FullName.endswith(Pattern) &&
+                 FullName.drop_back(Pattern.size()).endswith("::")) {
         return true;
       }
     }
@@ -698,40 +686,25 @@ static bool isTokenAtLoc(const SourceManager &SM, const LangOptions &LangOpts,
   return !Invalid && Text == TokenText;
 }
 
-static std::optional<SourceLocation> getExpansionLocOfMacroRecursive(
-    StringRef MacroName, SourceLocation Loc, const ASTContext &Context,
-    llvm::DenseSet<SourceLocation> &CheckedLocations) {
+std::optional<SourceLocation>
+getExpansionLocOfMacro(StringRef MacroName, SourceLocation Loc,
+                       const ASTContext &Context) {
   auto &SM = Context.getSourceManager();
   const LangOptions &LangOpts = Context.getLangOpts();
   while (Loc.isMacroID()) {
-    if (CheckedLocations.count(Loc))
-      return std::nullopt;
-    CheckedLocations.insert(Loc);
     SrcMgr::ExpansionInfo Expansion =
         SM.getSLocEntry(SM.getFileID(Loc)).getExpansion();
-    if (Expansion.isMacroArgExpansion()) {
+    if (Expansion.isMacroArgExpansion())
       // Check macro argument for an expansion of the given macro. For example,
       // `F(G(3))`, where `MacroName` is `G`.
-      if (std::optional<SourceLocation> ArgLoc =
-              getExpansionLocOfMacroRecursive(MacroName,
-                                              Expansion.getSpellingLoc(),
-                                              Context, CheckedLocations)) {
+      if (std::optional<SourceLocation> ArgLoc = getExpansionLocOfMacro(
+              MacroName, Expansion.getSpellingLoc(), Context))
         return ArgLoc;
-      }
-    }
     Loc = Expansion.getExpansionLocStart();
     if (isTokenAtLoc(SM, LangOpts, MacroName, Loc))
       return Loc;
   }
   return std::nullopt;
-}
-
-std::optional<SourceLocation>
-getExpansionLocOfMacro(StringRef MacroName, SourceLocation Loc,
-                       const ASTContext &Context) {
-  llvm::DenseSet<SourceLocation> CheckedLocations;
-  return getExpansionLocOfMacroRecursive(MacroName, Loc, Context,
-                                         CheckedLocations);
 }
 
 std::shared_ptr<llvm::Regex> createAndVerifyRegex(StringRef Regex,
@@ -815,7 +788,6 @@ const internal::VariadicDynCastAllOfMatcher<TypeLoc, ElaboratedTypeLoc>
 
 const internal::VariadicDynCastAllOfMatcher<Stmt, UnaryExprOrTypeTraitExpr>
     unaryExprOrTypeTraitExpr;
-const internal::VariadicDynCastAllOfMatcher<Decl, ExportDecl> exportDecl;
 const internal::VariadicDynCastAllOfMatcher<Decl, ValueDecl> valueDecl;
 const internal::VariadicDynCastAllOfMatcher<Decl, CXXConstructorDecl>
     cxxConstructorDecl;
@@ -921,11 +893,8 @@ const internal::VariadicDynCastAllOfMatcher<Stmt, CXXOperatorCallExpr>
     cxxOperatorCallExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, CXXRewrittenBinaryOperator>
     cxxRewrittenBinaryOperator;
-const internal::VariadicDynCastAllOfMatcher<Stmt, CXXFoldExpr> cxxFoldExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, Expr> expr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, DeclRefExpr> declRefExpr;
-const internal::VariadicDynCastAllOfMatcher<Stmt, DependentScopeDeclRefExpr>
-    dependentScopeDeclRefExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, ObjCIvarRefExpr> objcIvarRefExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, BlockExpr> blockExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, IfStmt> ifStmt;
@@ -972,8 +941,6 @@ const internal::VariadicDynCastAllOfMatcher<Stmt, CompoundLiteralExpr>
 const internal::VariadicDynCastAllOfMatcher<Stmt, CXXNullPtrLiteralExpr>
     cxxNullPtrLiteralExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, ChooseExpr> chooseExpr;
-const internal::VariadicDynCastAllOfMatcher<Stmt, ConvertVectorExpr>
-    convertVectorExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, CoawaitExpr>
     coawaitExpr;
 const internal::VariadicDynCastAllOfMatcher<Stmt, DependentCoawaitExpr>
@@ -1079,7 +1046,6 @@ const AstTypeMatcher<ConstantArrayType> constantArrayType;
 const AstTypeMatcher<DeducedTemplateSpecializationType>
     deducedTemplateSpecializationType;
 const AstTypeMatcher<DependentSizedArrayType> dependentSizedArrayType;
-const AstTypeMatcher<DependentSizedExtVectorType> dependentSizedExtVectorType;
 const AstTypeMatcher<IncompleteArrayType> incompleteArrayType;
 const AstTypeMatcher<VariableArrayType> variableArrayType;
 const AstTypeMatcher<AtomicType> atomicType;
@@ -1089,7 +1055,6 @@ const AstTypeMatcher<FunctionType> functionType;
 const AstTypeMatcher<FunctionProtoType> functionProtoType;
 const AstTypeMatcher<ParenType> parenType;
 const AstTypeMatcher<BlockPointerType> blockPointerType;
-const AstTypeMatcher<MacroQualifiedType> macroQualifiedType;
 const AstTypeMatcher<MemberPointerType> memberPointerType;
 const AstTypeMatcher<PointerType> pointerType;
 const AstTypeMatcher<ObjCObjectPointerType> objcObjectPointerType;
@@ -1108,9 +1073,6 @@ const AstTypeMatcher<SubstTemplateTypeParmType> substTemplateTypeParmType;
 const AstTypeMatcher<TemplateTypeParmType> templateTypeParmType;
 const AstTypeMatcher<InjectedClassNameType> injectedClassNameType;
 const AstTypeMatcher<DecayedType> decayedType;
-const AstTypeMatcher<DependentNameType> dependentNameType;
-const AstTypeMatcher<DependentTemplateSpecializationType>
-    dependentTemplateSpecializationType;
 AST_TYPELOC_TRAVERSE_MATCHER_DEF(hasElementType,
                                  AST_POLYMORPHIC_SUPPORTED_TYPES(ArrayType,
                                                                  ComplexType));
@@ -1119,8 +1081,7 @@ AST_TYPELOC_TRAVERSE_MATCHER_DEF(hasValueType,
 AST_TYPELOC_TRAVERSE_MATCHER_DEF(
     pointee,
     AST_POLYMORPHIC_SUPPORTED_TYPES(BlockPointerType, MemberPointerType,
-                                    PointerType, ReferenceType,
-                                    ObjCObjectPointerType));
+                                    PointerType, ReferenceType));
 
 const internal::VariadicDynCastAllOfMatcher<Stmt, OMPExecutableDirective>
     ompExecutableDirective;

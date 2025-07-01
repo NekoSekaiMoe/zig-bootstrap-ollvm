@@ -22,5 +22,5 @@ fn bar(a: u2) Foo {
 fn baz(_: Foo) void {}
 
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

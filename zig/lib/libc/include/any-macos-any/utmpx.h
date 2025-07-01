@@ -60,7 +60,6 @@
 #ifndef	_UTMPX_H_
 #define	_UTMPX_H_
 
-#include <_bounds.h>
 #include <_types.h>
 #include <sys/time.h>
 #include <sys/cdefs.h>
@@ -70,8 +69,6 @@
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 #include <sys/_types/_uid_t.h>
 #endif /* !_POSIX_C_SOURCE || _DARWIN_C_SOURCE */
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 #define	_PATH_UTMPX		"/var/run/utmpx"
 

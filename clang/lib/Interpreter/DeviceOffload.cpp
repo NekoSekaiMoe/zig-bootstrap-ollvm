@@ -15,27 +15,23 @@
 #include "clang/Basic/TargetOptions.h"
 #include "clang/CodeGen/ModuleBuilder.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Interpreter/PartialTranslationUnit.h"
 
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace clang {
 
 IncrementalCUDADeviceParser::IncrementalCUDADeviceParser(
-    std::unique_ptr<CompilerInstance> DeviceInstance,
-    CompilerInstance &HostInstance,
+    Interpreter &Interp, std::unique_ptr<CompilerInstance> Instance,
+    IncrementalParser &HostParser, llvm::LLVMContext &LLVMCtx,
     llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> FS,
-    llvm::Error &Err, const std::list<PartialTranslationUnit> &PTUs)
-    : IncrementalParser(*DeviceInstance, Err), PTUs(PTUs), VFS(FS),
-      CodeGenOpts(HostInstance.getCodeGenOpts()),
-      TargetOpts(HostInstance.getTargetOpts()) {
+    llvm::Error &Err)
+    : IncrementalParser(Interp, std::move(Instance), LLVMCtx, Err),
+      HostParser(HostParser), VFS(FS) {
   if (Err)
     return;
-  DeviceCI = std::move(DeviceInstance);
-  StringRef Arch = TargetOpts.CPU;
+  StringRef Arch = CI->getTargetOpts().CPU;
   if (!Arch.starts_with("sm_") || Arch.substr(3).getAsInteger(10, SMVersion)) {
     Err = llvm::joinErrors(std::move(Err), llvm::make_error<llvm::StringError>(
                                                "Invalid CUDA architecture",
@@ -44,7 +40,7 @@ IncrementalCUDADeviceParser::IncrementalCUDADeviceParser(
   }
 }
 
-llvm::Expected<TranslationUnitDecl *>
+llvm::Expected<PartialTranslationUnit &>
 IncrementalCUDADeviceParser::Parse(llvm::StringRef Input) {
   auto PTU = IncrementalParser::Parse(Input);
   if (!PTU)
@@ -65,7 +61,7 @@ IncrementalCUDADeviceParser::Parse(llvm::StringRef Input) {
                    llvm::StringRef(FatbinContent.data(), FatbinContent.size()),
                    "", false));
 
-  CodeGenOpts.CudaGpuBinaryFileName = FatbinFileName;
+  HostParser.getCI()->getCodeGenOpts().CudaGpuBinaryFileName = FatbinFileName;
 
   FatbinContent.clear();
 
@@ -83,7 +79,7 @@ llvm::Expected<llvm::StringRef> IncrementalCUDADeviceParser::GeneratePTX() {
                                                std::error_code());
   llvm::TargetOptions TO = llvm::TargetOptions();
   llvm::TargetMachine *TargetMachine = Target->createTargetMachine(
-      PTU.TheModule->getTargetTriple(), TargetOpts.CPU, "", TO,
+      PTU.TheModule->getTargetTriple(), getCI()->getTargetOpts().CPU, "", TO,
       llvm::Reloc::Model::PIC_);
   PTU.TheModule->setDataLayout(TargetMachine->createDataLayout());
 
@@ -92,7 +88,7 @@ llvm::Expected<llvm::StringRef> IncrementalCUDADeviceParser::GeneratePTX() {
 
   llvm::legacy::PassManager PM;
   if (TargetMachine->addPassesToEmitFile(PM, dest, nullptr,
-                                         llvm::CodeGenFileType::AssemblyFile)) {
+                                         llvm::CGFT_AssemblyFile)) {
     return llvm::make_error<llvm::StringError>(
         "NVPTX backend cannot produce PTX code.",
         llvm::inconvertibleErrorCode());

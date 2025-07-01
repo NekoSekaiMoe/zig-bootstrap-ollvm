@@ -7,25 +7,24 @@ const native_os = builtin.os.tag;
 
 /// Detect suitable TTY configuration options for the given file (commonly stdout/stderr).
 /// This includes feature checks for ANSI escape codes and the Windows console API, as well as
-/// respecting the `NO_COLOR` and `CLICOLOR_FORCE` environment variables to override the default.
-/// Will attempt to enable ANSI escape code support if necessary/possible.
+/// respecting the `NO_COLOR` and `YES_COLOR` environment variables to override the default.
 pub fn detectConfig(file: File) Config {
     const force_color: ?bool = if (builtin.os.tag == .wasi)
         null // wasi does not support environment variables
-    else if (process.hasNonEmptyEnvVarConstant("NO_COLOR"))
+    else if (process.hasEnvVarConstant("NO_COLOR"))
         false
-    else if (process.hasNonEmptyEnvVarConstant("CLICOLOR_FORCE"))
+    else if (process.hasEnvVarConstant("YES_COLOR"))
         true
     else
         null;
 
     if (force_color == false) return .no_color;
 
-    if (file.getOrEnableAnsiEscapeSupport()) return .escape_codes;
+    if (file.supportsAnsiEscapeCodes()) return .escape_codes;
 
     if (native_os == .windows and file.isTty()) {
         var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-        if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) == windows.FALSE) {
+        if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != windows.TRUE) {
             return if (force_color == true) .escape_codes else .no_color;
         }
         return .{ .windows_api = .{
@@ -71,12 +70,7 @@ pub const Config = union(enum) {
         reset_attributes: u16,
     };
 
-    pub fn setColor(
-        conf: Config,
-        writer: anytype,
-        color: Color,
-    ) (@typeInfo(@TypeOf(writer.writeAll(""))).error_union.error_set ||
-        windows.SetConsoleTextAttributeError)!void {
+    pub fn setColor(conf: Config, out_stream: anytype, color: Color) !void {
         nosuspend switch (conf) {
             .no_color => return,
             .escape_codes => {
@@ -101,7 +95,7 @@ pub const Config = union(enum) {
                     .dim => "\x1b[2m",
                     .reset => "\x1b[0m",
                 };
-                try writer.writeAll(color_string);
+                try out_stream.writeAll(color_string);
             },
             .windows_api => |ctx| if (native_os == .windows) {
                 const attributes = switch (color) {

@@ -33,7 +33,7 @@ enum PartialMappingIdx {
   PMI_Min = PMI_GPR,
 };
 
-const RegisterBankInfo::PartialMapping PartMappings[]{
+RegisterBankInfo::PartialMapping PartMappings[]{
     // GPR Partial Mapping
     {0, 32, GPRRegBank},
 };
@@ -43,7 +43,7 @@ enum ValueMappingIdx {
   GPR3OpsIdx = 1,
 };
 
-const RegisterBankInfo::ValueMapping ValueMappings[] = {
+RegisterBankInfo::ValueMapping ValueMappings[] = {
     // invalid
     {nullptr, 0},
     // 3 operands in GPRs
@@ -57,6 +57,12 @@ const RegisterBankInfo::ValueMapping ValueMappings[] = {
 
 M68kRegisterBankInfo::M68kRegisterBankInfo(const TargetRegisterInfo &TRI)
     : M68kGenRegisterBankInfo() {}
+
+const RegisterBank &
+M68kRegisterBankInfo::getRegBankFromRegClass(const TargetRegisterClass &RC,
+                                             LLT) const {
+  return getRegBank(M68k::GPRRegBankID);
+}
 
 const RegisterBankInfo::InstructionMapping &
 M68kRegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {

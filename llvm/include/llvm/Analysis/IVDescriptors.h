@@ -13,6 +13,7 @@
 #ifndef LLVM_ANALYSIS_IVDESCRIPTORS_H
 #define LLVM_ANALYSIS_IVDESCRIPTORS_H
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -23,6 +24,7 @@ namespace llvm {
 class AssumptionCache;
 class DemandedBits;
 class DominatorTree;
+class Instruction;
 class Loop;
 class PredicatedScalarEvolution;
 class ScalarEvolution;
@@ -31,35 +33,27 @@ class StoreInst;
 
 /// These are the kinds of recurrences that we support.
 enum class RecurKind {
-  None,     ///< Not a recurrence.
-  Add,      ///< Sum of integers.
-  Mul,      ///< Product of integers.
-  Or,       ///< Bitwise or logical OR of integers.
-  And,      ///< Bitwise or logical AND of integers.
-  Xor,      ///< Bitwise or logical XOR of integers.
-  SMin,     ///< Signed integer min implemented in terms of select(cmp()).
-  SMax,     ///< Signed integer max implemented in terms of select(cmp()).
-  UMin,     ///< Unsigned integer min implemented in terms of select(cmp()).
-  UMax,     ///< Unsigned integer max implemented in terms of select(cmp()).
-  FAdd,     ///< Sum of floats.
-  FMul,     ///< Product of floats.
-  FMin,     ///< FP min implemented in terms of select(cmp()).
-  FMax,     ///< FP max implemented in terms of select(cmp()).
-  FMinimum, ///< FP min with llvm.minimum semantics
-  FMaximum, ///< FP max with llvm.maximum semantics
-  FMulAdd,  ///< Sum of float products with llvm.fmuladd(a * b + sum).
-  IAnyOf,   ///< Any_of reduction with select(icmp(),x,y) where one of (x,y) is
-            ///< loop invariant, and both x and y are integer type.
-  FAnyOf,   ///< Any_of reduction with select(fcmp(),x,y) where one of (x,y) is
-            ///< loop invariant, and both x and y are integer type.
-  IFindLastIV, ///< FindLast reduction with select(icmp(),x,y) where one of
-               ///< (x,y) is increasing loop induction, and both x and y are
-               ///< integer type.
-  FFindLastIV ///< FindLast reduction with select(fcmp(),x,y) where one of (x,y)
-              ///< is increasing loop induction, and both x and y are integer
-              ///< type.
-  // TODO: Any_of and FindLast reduction need not be restricted to integer type
-  // only.
+  None,       ///< Not a recurrence.
+  Add,        ///< Sum of integers.
+  Mul,        ///< Product of integers.
+  Or,         ///< Bitwise or logical OR of integers.
+  And,        ///< Bitwise or logical AND of integers.
+  Xor,        ///< Bitwise or logical XOR of integers.
+  SMin,       ///< Signed integer min implemented in terms of select(cmp()).
+  SMax,       ///< Signed integer max implemented in terms of select(cmp()).
+  UMin,       ///< Unisgned integer min implemented in terms of select(cmp()).
+  UMax,       ///< Unsigned integer max implemented in terms of select(cmp()).
+  FAdd,       ///< Sum of floats.
+  FMul,       ///< Product of floats.
+  FMin,       ///< FP min implemented in terms of select(cmp()).
+  FMax,       ///< FP max implemented in terms of select(cmp()).
+  FMinimum,   ///< FP min with llvm.minimum semantics
+  FMaximum,   ///< FP max with llvm.maximum semantics
+  FMulAdd,    ///< Fused multiply-add of floats (a * b + c).
+  SelectICmp, ///< Integer select(icmp(),x,y) where one of (x,y) is loop
+              ///< invariant
+  SelectFCmp  ///< Integer select(fcmp(),x,y) where one of (x,y) is loop
+              ///< invariant
 };
 
 /// The RecurrenceDescriptor is used to identify recurrences variables in a
@@ -131,7 +125,7 @@ public:
   /// the returned struct.
   static InstDesc isRecurrenceInstr(Loop *L, PHINode *Phi, Instruction *I,
                                     RecurKind Kind, InstDesc &Prev,
-                                    FastMathFlags FuncFMF, ScalarEvolution *SE);
+                                    FastMathFlags FuncFMF);
 
   /// Returns true if instruction I has multiple uses in Insts
   static bool hasMultipleUsesOf(Instruction *I,
@@ -155,22 +149,15 @@ public:
   /// where one of (X, Y) is a loop invariant integer and the other is a PHI
   /// value. \p Prev specifies the description of an already processed select
   /// instruction, so its corresponding cmp can be matched to it.
-  static InstDesc isAnyOfPattern(Loop *Loop, PHINode *OrigPhi, Instruction *I,
-                                 InstDesc &Prev);
-
-  /// Returns a struct describing whether the instruction is either a
-  ///   Select(ICmp(A, B), X, Y), or
-  ///   Select(FCmp(A, B), X, Y)
-  /// where one of (X, Y) is an increasing loop induction variable, and the
-  /// other is a PHI value.
-  // TODO: Support non-monotonic variable. FindLast does not need be restricted
-  // to increasing loop induction variables.
-  static InstDesc isFindLastIVPattern(Loop *TheLoop, PHINode *OrigPhi,
-                                      Instruction *I, ScalarEvolution &SE);
+  static InstDesc isSelectCmpPattern(Loop *Loop, PHINode *OrigPhi,
+                                     Instruction *I, InstDesc &Prev);
 
   /// Returns a struct describing if the instruction is a
   /// Select(FCmp(X, Y), (Z = X op PHINode), PHINode) instruction pattern.
   static InstDesc isConditionalRdxPattern(RecurKind Kind, Instruction *I);
+
+  /// Returns identity corresponding to the RecurrenceKind.
+  Value *getRecurrenceIdentity(RecurKind K, Type *Tp, FastMathFlags FMF) const;
 
   /// Returns the opcode corresponding to the RecurrenceKind.
   static unsigned getOpcode(RecurKind Kind);
@@ -249,28 +236,13 @@ public:
 
   /// Returns true if the recurrence kind is of the form
   ///   select(cmp(),x,y) where one of (x,y) is loop invariant.
-  static bool isAnyOfRecurrenceKind(RecurKind Kind) {
-    return Kind == RecurKind::IAnyOf || Kind == RecurKind::FAnyOf;
-  }
-
-  /// Returns true if the recurrence kind is of the form
-  ///   select(cmp(),x,y) where one of (x,y) is increasing loop induction.
-  static bool isFindLastIVRecurrenceKind(RecurKind Kind) {
-    return Kind == RecurKind::IFindLastIV || Kind == RecurKind::FFindLastIV;
+  static bool isSelectCmpRecurrenceKind(RecurKind Kind) {
+    return Kind == RecurKind::SelectICmp || Kind == RecurKind::SelectFCmp;
   }
 
   /// Returns the type of the recurrence. This type can be narrower than the
   /// actual type of the Phi if the recurrence has been type-promoted.
   Type *getRecurrenceType() const { return RecurrenceType; }
-
-  /// Returns the sentinel value for FindLastIV recurrences to replace the start
-  /// value.
-  Value *getSentinelValue() const {
-    assert(isFindLastIVRecurrenceKind(Kind) && "Unexpected recurrence kind");
-    Type *Ty = StartValue->getType();
-    return ConstantInt::get(Ty,
-                            APInt::getSignedMinValue(Ty->getIntegerBitWidth()));
-  }
 
   /// Returns a reference to the instructions used for type-promoting the
   /// recurrence.

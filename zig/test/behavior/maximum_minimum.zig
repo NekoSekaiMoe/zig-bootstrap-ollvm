@@ -9,7 +9,6 @@ test "@max" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -32,8 +31,8 @@ test "@max on vectors" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and
+        !comptime std.Target.x86.featureSetHas(builtin.cpu.features, .sse4_1)) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -64,7 +63,6 @@ test "@min" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -87,8 +85,8 @@ test "@min for vectors" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and
+        !comptime std.Target.x86.featureSetHas(builtin.cpu.features, .sse4_1)) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -120,9 +118,8 @@ test "@min/max for floats" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_x86_64 and builtin.target.ofmt != .elf and builtin.target.ofmt != .macho) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c and comptime builtin.cpu.arch.isArmOrThumb()) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(comptime T: type) !void {
@@ -144,8 +141,6 @@ test "@min/max for floats" {
     };
 
     inline for (.{ f16, f32, f64, f80, f128, c_longdouble }) |T| {
-        if (T == c_longdouble and builtin.cpu.arch.isMIPS64()) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21090
-
         try S.doTheTest(T);
         try comptime S.doTheTest(T);
     }
@@ -172,7 +167,6 @@ test "@min/@max more than two vector arguments" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const x: @Vector(2, u32) = .{ 3, 2 };
     const y: @Vector(2, u32) = .{ 4, 1 };
@@ -203,7 +197,7 @@ test "@min/@max notices vector bounds" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
 
     var x: @Vector(2, u16) = .{ 140, 40 };
     const y: @Vector(2, u64) = .{ 5, 100 };
@@ -256,7 +250,7 @@ test "@min/@max notices bounds from vector types" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
 
     var x: @Vector(2, u16) = .{ 30, 67 };
     var y: @Vector(2, u32) = .{ 20, 500 };
@@ -277,7 +271,6 @@ test "@min/@max notices bounds from types when comptime-known value is undef" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var x: u32 = 1_000_000;
     _ = &x;
@@ -298,7 +291,8 @@ test "@min/@max notices bounds from vector types when element of comptime-known 
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and
+        !comptime std.Target.x86.featureSetHas(builtin.cpu.features, .avx)) return error.SkipZigTest;
 
     var x: @Vector(2, u32) = .{ 1_000_000, 12345 };
     _ = &x;
@@ -317,8 +311,6 @@ test "@min/@max notices bounds from vector types when element of comptime-known 
 }
 
 test "@min/@max of signed and unsigned runtime integers" {
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-
     var x: i32 = -1;
     var y: u31 = 1;
     _ = .{ &x, &y };
@@ -331,58 +323,4 @@ test "@min/@max of signed and unsigned runtime integers" {
 
     try expectEqual(x, @min(x, y));
     try expectEqual(y, @max(x, y));
-}
-
-test "@min resulting in u0" {
-    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-
-    const S = struct {
-        fn min(a: u0, b: u8) u8 {
-            return @min(a, b);
-        }
-    };
-    const x = S.min(0, 1);
-    try expect(x == 0);
-}
-
-test "@min/@max with runtime signed and unsigned integers of same size" {
-    const S = struct {
-        fn min(a: i32, b: u32) i32 {
-            return @min(a, b);
-        }
-        fn max(a: i32, b: u32) u32 {
-            return @max(a, b);
-        }
-    };
-
-    const min = S.min(std.math.minInt(i32), std.math.maxInt(u32));
-    try expect(min == std.math.minInt(i32));
-
-    const max = S.max(std.math.minInt(i32), std.math.maxInt(u32));
-    try expect(max == std.math.maxInt(u32));
-}
-
-test "@min/@max with runtime vectors of signed and unsigned integers of same size" {
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
-    const S = struct {
-        fn min(a: @Vector(2, i32), b: @Vector(2, u32)) @Vector(2, i32) {
-            return @min(a, b);
-        }
-        fn max(a: @Vector(2, i32), b: @Vector(2, u32)) @Vector(2, u32) {
-            return @max(a, b);
-        }
-    };
-
-    const a: @Vector(2, i32) = .{ std.math.minInt(i32), std.math.maxInt(i32) };
-    const b: @Vector(2, u32) = .{ std.math.maxInt(u32), std.math.minInt(u32) };
-
-    try expectEqual(@Vector(2, i32){ std.math.minInt(i32), std.math.minInt(u32) }, S.min(a, b));
-    try expectEqual(@Vector(2, u32){ std.math.maxInt(u32), std.math.maxInt(i32) }, S.max(a, b));
 }

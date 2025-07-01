@@ -16,9 +16,8 @@ namespace dataflow {
 
 /// Determines whether `D` is one of the methods used to implement Chromium's
 /// `CHECK` macros. Populates `CheckDecls`, if empty.
-static bool
-isCheckLikeMethod(llvm::SmallDenseSet<const CXXMethodDecl *> &CheckDecls,
-                  const CXXMethodDecl &D) {
+bool isCheckLikeMethod(llvm::SmallDenseSet<const CXXMethodDecl *> &CheckDecls,
+                       const CXXMethodDecl &D) {
   // All of the methods of interest are static, so avoid any lookup for
   // non-static methods (the common case).
   if (!D.isStatic())
@@ -44,7 +43,7 @@ isCheckLikeMethod(llvm::SmallDenseSet<const CXXMethodDecl *> &CheckDecls,
       return false;
 
     for (const CXXMethodDecl *M : ParentClass->methods())
-      if (M->getDeclName().isIdentifier() && M->getName().ends_with("Check"))
+      if (M->getDeclName().isIdentifier() && M->getName().endswith("Check"))
         CheckDecls.insert(M);
   }
 
@@ -57,11 +56,10 @@ bool ChromiumCheckModel::transfer(const CFGElement &Element, Environment &Env) {
     return false;
   auto Stmt = CS->getStmt();
   if (const auto *Call = dyn_cast<CallExpr>(Stmt)) {
-    if (const auto *M =
-            dyn_cast_or_null<CXXMethodDecl>(Call->getDirectCallee())) {
+    if (const auto *M = dyn_cast<CXXMethodDecl>(Call->getDirectCallee())) {
       if (isCheckLikeMethod(CheckDecls, *M)) {
         // Mark this branch as unreachable.
-        Env.assume(Env.arena().makeLiteral(false));
+        Env.addToFlowCondition(Env.arena().makeLiteral(false));
         return true;
       }
     }

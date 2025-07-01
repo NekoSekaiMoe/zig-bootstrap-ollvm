@@ -16,7 +16,6 @@ add_public_tablegen_target(LoongArchCommonTableGen)
 
 add_llvm_target(LoongArchCodeGen
   LoongArchAsmPrinter.cpp
-  LoongArchDeadRegisterDefinitions.cpp
   LoongArchExpandAtomicPseudoInsts.cpp
   LoongArchExpandPseudoInsts.cpp
   LoongArchFrameLowering.cpp
@@ -24,8 +23,6 @@ add_llvm_target(LoongArchCodeGen
   LoongArchISelDAGToDAG.cpp
   LoongArchISelLowering.cpp
   LoongArchMCInstLower.cpp
-  LoongArchMergeBaseOffset.cpp
-  LoongArchOptWInstrs.cpp
   LoongArchRegisterInfo.cpp
   LoongArchSubtarget.cpp
   LoongArchTargetMachine.cpp
@@ -45,7 +42,6 @@ add_llvm_target(LoongArchCodeGen
   Support
   Target
   TargetParser
-  TransformUtils
 
   ADD_TO_COMPONENT
   LoongArch

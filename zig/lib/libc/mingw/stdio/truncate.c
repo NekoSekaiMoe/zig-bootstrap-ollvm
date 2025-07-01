@@ -7,9 +7,9 @@ int truncate(const char *pathname, _off_t len){
   int fd = _open(pathname,_O_BINARY|_O_RDWR);
   if (fd == -1) return fd;
   ret = ftruncate(fd,len);
-  err = errno;
+  _get_errno(&err);
   _close(fd);
-  errno = err;
+  _set_errno(err);
   return ret;
 }
 
@@ -18,8 +18,8 @@ int truncate64(const char *pathname, _off64_t len){
   int fd = _open(pathname,_O_BINARY|_O_RDWR);
   if (fd == -1) return fd;
   ret = ftruncate64(fd,len);
-  err = errno;
+  _get_errno(&err);
   _close(fd);
-  errno = err;
+  _set_errno(err);
   return ret;
 }

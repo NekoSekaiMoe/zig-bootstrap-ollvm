@@ -17,6 +17,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include <optional>
 using namespace llvm;
@@ -25,7 +26,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeMSP430Target() {
   // Register the target.
   RegisterTargetMachine<MSP430TargetMachine> X(getTheMSP430Target());
   PassRegistry &PR = *PassRegistry::getPassRegistry();
-  initializeMSP430DAGToDAGISelLegacyPass(PR);
+  initializeMSP430DAGToDAGISelPass(PR);
 }
 
 static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {
@@ -42,10 +43,10 @@ MSP430TargetMachine::MSP430TargetMachine(const Target &T, const Triple &TT,
                                          const TargetOptions &Options,
                                          std::optional<Reloc::Model> RM,
                                          std::optional<CodeModel::Model> CM,
-                                         CodeGenOptLevel OL, bool JIT)
-    : CodeGenTargetMachineImpl(T, computeDataLayout(TT, CPU, Options), TT, CPU,
-                               FS, Options, getEffectiveRelocModel(RM),
-                               getEffectiveCodeModel(CM, CodeModel::Small), OL),
+                                         CodeGenOpt::Level OL, bool JIT)
+    : LLVMTargetMachine(T, computeDataLayout(TT, CPU, Options), TT, CPU, FS,
+                        Options, getEffectiveRelocModel(RM),
+                        getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
@@ -64,7 +65,6 @@ public:
     return getTM<MSP430TargetMachine>();
   }
 
-  void addIRPasses() override;
   bool addInstSelector() override;
   void addPreEmitPass() override;
 };
@@ -79,12 +79,6 @@ MachineFunctionInfo *MSP430TargetMachine::createMachineFunctionInfo(
     const TargetSubtargetInfo *STI) const {
   return MSP430MachineFunctionInfo::create<MSP430MachineFunctionInfo>(Allocator,
                                                                       F, STI);
-}
-
-void MSP430PassConfig::addIRPasses() {
-  addPass(createAtomicExpandLegacyPass());
-
-  TargetPassConfig::addIRPasses();
 }
 
 bool MSP430PassConfig::addInstSelector() {

@@ -69,11 +69,11 @@ using namespace llvm;
 
 namespace {
 
-class AMDGPURewriteUndefForPHILegacy : public FunctionPass {
+class AMDGPURewriteUndefForPHI : public FunctionPass {
 public:
   static char ID;
-  AMDGPURewriteUndefForPHILegacy() : FunctionPass(ID) {
-    initializeAMDGPURewriteUndefForPHILegacyPass(*PassRegistry::getPassRegistry());
+  AMDGPURewriteUndefForPHI() : FunctionPass(ID) {
+    initializeAMDGPURewriteUndefForPHIPass(*PassRegistry::getPassRegistry());
   }
   bool runOnFunction(Function &F) override;
   StringRef getPassName() const override {
@@ -85,18 +85,19 @@ public:
     AU.addRequired<DominatorTreeWrapperPass>();
 
     AU.addPreserved<DominatorTreeWrapperPass>();
+    AU.addPreserved<UniformityInfoWrapperPass>();
     AU.setPreservesCFG();
   }
 };
 
 } // end anonymous namespace
-char AMDGPURewriteUndefForPHILegacy::ID = 0;
+char AMDGPURewriteUndefForPHI::ID = 0;
 
-INITIALIZE_PASS_BEGIN(AMDGPURewriteUndefForPHILegacy, DEBUG_TYPE,
+INITIALIZE_PASS_BEGIN(AMDGPURewriteUndefForPHI, DEBUG_TYPE,
                       "Rewrite undef for PHI", false, false)
 INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_END(AMDGPURewriteUndefForPHILegacy, DEBUG_TYPE,
+INITIALIZE_PASS_END(AMDGPURewriteUndefForPHI, DEBUG_TYPE,
                     "Rewrite undef for PHI", false, false)
 
 bool rewritePHIs(Function &F, UniformityInfo &UA, DominatorTree *DT) {
@@ -169,27 +170,13 @@ bool rewritePHIs(Function &F, UniformityInfo &UA, DominatorTree *DT) {
   return Changed;
 }
 
-bool AMDGPURewriteUndefForPHILegacy::runOnFunction(Function &F) {
+bool AMDGPURewriteUndefForPHI::runOnFunction(Function &F) {
   UniformityInfo &UA =
       getAnalysis<UniformityInfoWrapperPass>().getUniformityInfo();
   DominatorTree *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   return rewritePHIs(F, UA, DT);
 }
 
-PreservedAnalyses
-AMDGPURewriteUndefForPHIPass::run(Function &F, FunctionAnalysisManager &AM) {
-  UniformityInfo &UA = AM.getResult<UniformityInfoAnalysis>(F);
-  DominatorTree *DT = &AM.getResult<DominatorTreeAnalysis>(F);
-  bool Changed = rewritePHIs(F, UA, DT);
-  if (Changed) {
-    PreservedAnalyses PA;
-    PA.preserveSet<CFGAnalyses>();
-    return PA;
-  }
-
-  return PreservedAnalyses::all();
-}
-
-FunctionPass *llvm::createAMDGPURewriteUndefForPHILegacyPass() {
-  return new AMDGPURewriteUndefForPHILegacy();
+FunctionPass *llvm::createAMDGPURewriteUndefForPHIPass() {
+  return new AMDGPURewriteUndefForPHI();
 }

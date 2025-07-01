@@ -6,5 +6,7 @@ comptime {
 }
 
 // error
+// backend=llvm
+// target=native
 //
-// :3:32: error: use of undefined value here causes illegal behavior
+// :3:32: error: use of undefined value here causes undefined behavior

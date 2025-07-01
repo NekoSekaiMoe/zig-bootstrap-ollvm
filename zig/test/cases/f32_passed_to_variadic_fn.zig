@@ -7,7 +7,7 @@ pub fn main() void {
 }
 
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=x86_64-linux-gnu
 // link_libc=true
 //

@@ -73,13 +73,13 @@ pub const Wyhash = struct {
             newSelf.smallKey(input);
         } else {
             var offset: usize = 0;
-            var scratch: [16]u8 = undefined;
             if (self.buf_len < 16) {
+                var scratch: [16]u8 = undefined;
                 const rem = 16 - self.buf_len;
                 @memcpy(scratch[0..rem], self.buf[self.buf.len - rem ..][0..rem]);
                 @memcpy(scratch[rem..][0..self.buf_len], self.buf[0..self.buf_len]);
 
-                // Same as input but with additional bytes preceding start in case of a short buffer
+                // Same as input but with additional bytes preceeding start in case of a short buffer
                 input = &scratch;
                 offset = rem;
             }

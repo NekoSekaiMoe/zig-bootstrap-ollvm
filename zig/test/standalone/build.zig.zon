@@ -5,9 +5,6 @@
         .simple = .{
             .path = "simple",
         },
-        .test_obj_link_run = .{
-            .path = "test_obj_link_run",
-        },
         .test_runner_path = .{
             .path = "test_runner_path",
         },
@@ -54,15 +51,14 @@
         .install_raw_hex = .{
             .path = "install_raw_hex",
         },
-        .emit_asm_and_bin = .{
-            .path = "emit_asm_and_bin",
-        },
-        .emit_llvm_no_bin = .{
-            .path = "emit_llvm_no_bin",
-        },
-        .emit_asm_no_bin = .{
-            .path = "emit_asm_no_bin",
-        },
+        // https://github.com/ziglang/zig/issues/17484
+        //.emit_asm_and_bin = .{
+        //    .path = "emit_asm_and_bin",
+        //},
+        // https://github.com/ziglang/zig/issues/17484
+        //.issue_12588 = .{
+        //    .path = "issue_12588",
+        //},
         .child_process = .{
             .path = "child_process",
         },
@@ -87,29 +83,14 @@
         .dep_shared_builtin = .{
             .path = "dep_shared_builtin",
         },
-        .dep_lazypath = .{
-            .path = "dep_lazypath",
-        },
         .dirname = .{
             .path = "dirname",
-        },
-        .dep_duplicate_module = .{
-            .path = "dep_duplicate_module",
         },
         .empty_env = .{
             .path = "empty_env",
         },
-        .env_vars = .{
-            .path = "env_vars",
-        },
         .issue_11595 = .{
             .path = "issue_11595",
-        },
-        .libcxx = .{
-            .path = "libcxx",
-        },
-        .libfuzzer = .{
-            .path = "libfuzzer",
         },
         .load_dynamic_library = .{
             .path = "load_dynamic_library",
@@ -134,9 +115,6 @@
         },
         .c_compiler = .{
             .path = "c_compiler",
-        },
-        .c_embed_path = .{
-            .path = "c_embed_path",
         },
         .pie = .{
             .path = "pie",
@@ -188,18 +166,6 @@
         },
         .run_output_paths = .{
             .path = "run_output_paths",
-        },
-        .run_output_caching = .{
-            .path = "run_output_caching",
-        },
-        .empty_global_error_set = .{
-            .path = "empty_global_error_set",
-        },
-        .omit_cfi = .{
-            .path = "omit_cfi",
-        },
-        .config_header = .{
-            .path = "config_header",
         },
     },
     .paths = .{

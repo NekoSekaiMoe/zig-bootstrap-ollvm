@@ -88,7 +88,8 @@ namespace llvm {
     ConstraintWeight
     getSingleConstraintMatchWeight(AsmOperandInfo &info,
                                    const char *constraint) const override;
-    void LowerAsmOperandForConstraint(SDValue Op, StringRef Constraint,
+    void LowerAsmOperandForConstraint(SDValue Op,
+                                      std::string &Constraint,
                                       std::vector<SDValue> &Ops,
                                       SelectionDAG &DAG) const override;
 
@@ -119,7 +120,7 @@ namespace llvm {
     }
 
     /// Override to support customized stack guard loading.
-    bool useLoadStackGuardNode(const Module &M) const override;
+    bool useLoadStackGuardNode() const override;
     void insertSSPDeclarations(Module &M) const override;
 
     /// getSetCCResultType - Return the ISD::SETCC ValueType
@@ -153,7 +154,7 @@ namespace llvm {
     bool CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
                         bool isVarArg,
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
-                        LLVMContext &Context, const Type *RetTy) const override;
+                        LLVMContext &Context) const override;
 
     SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
@@ -222,10 +223,7 @@ namespace llvm {
 
     MachineBasicBlock *expandSelectCC(MachineInstr &MI, MachineBasicBlock *BB,
                                       unsigned BROpcode) const;
-
-    void AdjustInstrPostInstrSelection(MachineInstr &MI,
-                                       SDNode *Node) const override;
   };
 } // end namespace llvm
 
-#endif // LLVM_LIB_TARGET_SPARC_SPARCISELLOWERING_H
+#endif    // SPARC_ISELLOWERING_H

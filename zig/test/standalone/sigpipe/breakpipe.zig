@@ -1,7 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-pub const std_options: std.Options = .{
+pub const std_options = .{
     .keep_sigpipe = build_options.keep_sigpipe,
 };
 

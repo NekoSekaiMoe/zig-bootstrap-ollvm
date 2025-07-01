@@ -19,7 +19,6 @@
 #define LLVM_EXECUTIONENGINE_ORC_EPCGENERICDYLIBMANAGER_H
 
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
-#include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/ExecutionEngine/Orc/Shared/SimpleRemoteEPCUtils.h"
 
 namespace llvm {
@@ -50,33 +49,12 @@ public:
   Expected<tpctypes::DylibHandle> open(StringRef Path, uint64_t Mode);
 
   /// Looks up symbols within the given dylib.
-  Expected<std::vector<ExecutorSymbolDef>>
-  lookup(tpctypes::DylibHandle H, const SymbolLookupSet &Lookup) {
-    std::promise<MSVCPExpected<std::vector<ExecutorSymbolDef>>> RP;
-    auto RF = RP.get_future();
-    lookupAsync(H, Lookup, [&RP](auto R) { RP.set_value(std::move(R)); });
-    return RF.get();
-  }
+  Expected<std::vector<ExecutorAddr>> lookup(tpctypes::DylibHandle H,
+                                             const SymbolLookupSet &Lookup);
 
   /// Looks up symbols within the given dylib.
-  Expected<std::vector<ExecutorSymbolDef>>
-  lookup(tpctypes::DylibHandle H, const RemoteSymbolLookupSet &Lookup) {
-    std::promise<MSVCPExpected<std::vector<ExecutorSymbolDef>>> RP;
-    auto RF = RP.get_future();
-    lookupAsync(H, Lookup, [&RP](auto R) { RP.set_value(std::move(R)); });
-    return RF.get();
-  }
-
-  using SymbolLookupCompleteFn =
-      unique_function<void(Expected<std::vector<ExecutorSymbolDef>>)>;
-
-  /// Looks up symbols within the given dylib.
-  void lookupAsync(tpctypes::DylibHandle H, const SymbolLookupSet &Lookup,
-                   SymbolLookupCompleteFn Complete);
-
-  /// Looks up symbols within the given dylib.
-  void lookupAsync(tpctypes::DylibHandle H, const RemoteSymbolLookupSet &Lookup,
-                   SymbolLookupCompleteFn Complete);
+  Expected<std::vector<ExecutorAddr>>
+  lookup(tpctypes::DylibHandle H, const RemoteSymbolLookupSet &Lookup);
 
 private:
   ExecutorProcessControl &EPC;

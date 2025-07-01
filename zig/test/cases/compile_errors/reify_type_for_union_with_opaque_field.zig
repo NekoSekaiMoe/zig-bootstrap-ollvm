@@ -1,5 +1,5 @@
 const Untagged = @Type(.{
-    .@"union" = .{
+    .Union = .{
         .layout = .auto,
         .tag_type = null,
         .fields = &.{

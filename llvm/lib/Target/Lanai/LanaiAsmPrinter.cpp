@@ -13,14 +13,20 @@
 
 #include "LanaiAluCode.h"
 #include "LanaiCondCode.h"
+#include "LanaiInstrInfo.h"
 #include "LanaiMCInstLower.h"
 #include "LanaiTargetMachine.h"
 #include "MCTargetDesc/LanaiInstPrinter.h"
 #include "TargetInfo/LanaiTargetInfo.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Mangler.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstBuilder.h"
@@ -117,8 +123,8 @@ bool LanaiAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       const MachineOperand &FlagsOP = MI->getOperand(OpNo - 1);
       if (!FlagsOP.isImm())
         return true;
-      const InlineAsm::Flag Flags(FlagsOP.getImm());
-      const unsigned NumVals = Flags.getNumOperandRegisters();
+      unsigned Flags = FlagsOP.getImm();
+      unsigned NumVals = InlineAsm::getNumOperandRegisters(Flags);
       if (NumVals != 2)
         return true;
       unsigned RegOp = OpNo + 1;

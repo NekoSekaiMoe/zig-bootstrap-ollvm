@@ -26,12 +26,13 @@ class FunctionPass;
 class PassRegistry;
 
 Pass *createAVRShiftExpandPass();
-FunctionPass *createAVRISelDag(AVRTargetMachine &TM, CodeGenOptLevel OptLevel);
+FunctionPass *createAVRISelDag(AVRTargetMachine &TM,
+                               CodeGenOpt::Level OptLevel);
 FunctionPass *createAVRExpandPseudoPass();
 FunctionPass *createAVRFrameAnalyzerPass();
 FunctionPass *createAVRBranchSelectionPass();
 
-void initializeAVRDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeAVRDAGToDAGISelPass(PassRegistry &);
 void initializeAVRExpandPseudoPass(PassRegistry &);
 void initializeAVRShiftExpandPass(PassRegistry &);
 

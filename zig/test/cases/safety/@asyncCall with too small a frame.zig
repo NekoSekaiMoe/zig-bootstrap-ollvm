@@ -18,7 +18,7 @@ pub fn main() !void {
     _ = &frame;
     return error.TestFailed;
 }
-fn other() callconv(.@"async") void {
+fn other() callconv(.Async) void {
     suspend {}
 }
 // run

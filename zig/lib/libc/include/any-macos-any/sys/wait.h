@@ -202,7 +202,8 @@ union wait {
 		    w_Coredump:1,               /* core dump indicator */
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Filler:16;                /* upper bits filler */
-#elif __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
+#endif
+#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Coredump:1,               /* core dump indicator */
@@ -219,7 +220,8 @@ union wait {
 		unsigned int    w_Stopval:8,    /* == W_STOPPED if stopped */
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Filler:16;                /* upper bits filler */
-#elif __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
+#endif
+#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Stopval:8;                /* == W_STOPPED if stopped */

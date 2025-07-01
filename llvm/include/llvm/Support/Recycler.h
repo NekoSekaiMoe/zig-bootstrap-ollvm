@@ -60,10 +60,6 @@ public:
     // clear() before deleting the Recycler.
     assert(!FreeList && "Non-empty recycler deleted!");
   }
-  Recycler(const Recycler &) = delete;
-  Recycler(Recycler &&Other)
-      : FreeList(std::exchange(Other.FreeList, nullptr)) {}
-  Recycler() = default;
 
   /// clear - Release all the tracked allocations to the allocator. The
   /// recycler must be free of any tracked allocations before being
@@ -72,7 +68,7 @@ public:
   void clear(AllocatorType &Allocator) {
     while (FreeList) {
       T *t = reinterpret_cast<T *>(pop_val());
-      Allocator.Deallocate(t, Size, Align);
+      Allocator.Deallocate(t);
     }
   }
 
@@ -89,8 +85,6 @@ public:
                   "Recycler allocation alignment is less than object align!");
     static_assert(sizeof(SubClass) <= Size,
                   "Recycler allocation size is less than object size!");
-    static_assert(Size >= sizeof(FreeNode) &&
-                  "Recycler allocation size must be at least sizeof(FreeNode)");
     return FreeList ? reinterpret_cast<SubClass *>(pop_val())
                     : static_cast<SubClass *>(Allocator.Allocate(Size, Align));
   }

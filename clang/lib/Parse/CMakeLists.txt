@@ -23,7 +23,6 @@ add_clang_library(clangParse
   ParseTemplate.cpp
   ParseTentative.cpp
   Parser.cpp
-  ParseOpenACC.cpp
 
   LINK_LIBS
   clangAST
@@ -33,5 +32,4 @@ add_clang_library(clangParse
 
   DEPENDS
   omp_gen
-  ClangDriverOptions
   )

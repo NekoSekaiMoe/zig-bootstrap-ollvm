@@ -10,7 +10,9 @@ comptime {
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :5:17: error: missing struct field: b
-// :1:11: note: struct declared here
-// :9:15: note: called at comptime here
+// :1:11: note: struct 'tmp.S' declared here
+// :9:15: note: called from here

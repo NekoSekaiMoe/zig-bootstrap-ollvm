@@ -6,26 +6,22 @@ pub fn build(b: *std.Build) !void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target = b.graph.host;
+    const target = b.host;
 
     if (builtin.os.tag != .windows) return;
 
     const echo_args = b.addExecutable(.{
         .name = "echo-args",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("echo-args.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("echo-args.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const test_exe = b.addExecutable(.{
         .name = "test",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("test.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const run = b.addRunArtifact(test_exe);
@@ -37,11 +33,9 @@ pub fn build(b: *std.Build) !void {
 
     const fuzz = b.addExecutable(.{
         .name = "fuzz",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("fuzz.zig"),
-            .optimize = optimize,
-            .target = target,
-        }),
+        .root_source_file = b.path("fuzz.zig"),
+        .optimize = optimize,
+        .target = target,
     });
 
     const fuzz_max_iterations = b.option(u64, "iterations", "The max fuzz iterations (default: 100)") orelse 100;

@@ -21,11 +21,11 @@
 #include "llvm/Object/WindowsResource.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
-#include "llvm/Option/OptTable.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/LLVMDriver.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -43,7 +43,6 @@
 
 using namespace llvm;
 using namespace llvm::rc;
-using namespace llvm::opt;
 
 namespace {
 
@@ -51,22 +50,29 @@ namespace {
 
 enum ID {
   OPT_INVALID = 0, // This is not a correct option ID.
-#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  OPT_##ID,
 #include "Opts.inc"
 #undef OPTION
 };
 
 namespace rc_opt {
-#define OPTTABLE_STR_TABLE_CODE
+#define PREFIX(NAME, VALUE)                                                    \
+  static constexpr StringLiteral NAME##_init[] = VALUE;                        \
+  static constexpr ArrayRef<StringLiteral> NAME(NAME##_init,                   \
+                                                std::size(NAME##_init) - 1);
 #include "Opts.inc"
-#undef OPTTABLE_STR_TABLE_CODE
-
-#define OPTTABLE_PREFIXES_TABLE_CODE
-#include "Opts.inc"
-#undef OPTTABLE_PREFIXES_TABLE_CODE
+#undef PREFIX
 
 static constexpr opt::OptTable::Info InfoTable[] = {
-#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  {                                                                            \
+      PREFIX,      NAME,      HELPTEXT,                                        \
+      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
+      PARAM,       FLAGS,     OPT_##GROUP,                                     \
+      OPT_##ALIAS, ALIASARGS, VALUES},
 #include "Opts.inc"
 #undef OPTION
 };
@@ -74,31 +80,33 @@ static constexpr opt::OptTable::Info InfoTable[] = {
 
 class RcOptTable : public opt::GenericOptTable {
 public:
-  RcOptTable()
-      : GenericOptTable(rc_opt::OptionStrTable, rc_opt::OptionPrefixesTable,
-                        rc_opt::InfoTable,
-                        /* IgnoreCase = */ true) {}
+  RcOptTable() : GenericOptTable(rc_opt::InfoTable, /* IgnoreCase = */ true) {}
 };
 
 enum Windres_ID {
   WINDRES_INVALID = 0, // This is not a correct option ID.
-#define OPTION(...) LLVM_MAKE_OPT_ID_WITH_ID_PREFIX(WINDRES_, __VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  WINDRES_##ID,
 #include "WindresOpts.inc"
 #undef OPTION
 };
 
 namespace windres_opt {
-#define OPTTABLE_STR_TABLE_CODE
+#define PREFIX(NAME, VALUE)                                                    \
+  static constexpr StringLiteral NAME##_init[] = VALUE;                        \
+  static constexpr ArrayRef<StringLiteral> NAME(NAME##_init,                   \
+                                                std::size(NAME##_init) - 1);
 #include "WindresOpts.inc"
-#undef OPTTABLE_STR_TABLE_CODE
-
-#define OPTTABLE_PREFIXES_TABLE_CODE
-#include "WindresOpts.inc"
-#undef OPTTABLE_PREFIXES_TABLE_CODE
+#undef PREFIX
 
 static constexpr opt::OptTable::Info InfoTable[] = {
-#define OPTION(...)                                                            \
-  LLVM_CONSTRUCT_OPT_INFO_WITH_ID_PREFIX(WINDRES_, __VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  {PREFIX,          NAME,         HELPTEXT,                                    \
+   METAVAR,         WINDRES_##ID, opt::Option::KIND##Class,                    \
+   PARAM,           FLAGS,        WINDRES_##GROUP,                             \
+   WINDRES_##ALIAS, ALIASARGS,    VALUES},
 #include "WindresOpts.inc"
 #undef OPTION
 };
@@ -107,10 +115,7 @@ static constexpr opt::OptTable::Info InfoTable[] = {
 class WindresOptTable : public opt::GenericOptTable {
 public:
   WindresOptTable()
-      : GenericOptTable(windres_opt::OptionStrTable,
-                        windres_opt::OptionPrefixesTable,
-                        windres_opt::InfoTable,
-                        /* IgnoreCase = */ false) {}
+      : GenericOptTable(windres_opt::InfoTable, /* IgnoreCase = */ false) {}
 };
 
 static ExitOnError ExitOnErr;
@@ -216,7 +221,7 @@ struct RcOptions {
   bool Preprocess = true;
   bool PrintCmdAndExit = false;
   std::string Triple;
-  std::optional<std::string> Preprocessor;
+  std::vector<std::string> PreprocessCmd;
   std::vector<std::string> PreprocessArgs;
 
   std::string InputFile;
@@ -236,7 +241,7 @@ struct RcOptions {
 void preprocess(StringRef Src, StringRef Dst, const RcOptions &Opts,
                 const char *Argv0) {
   std::string Clang;
-  if (Opts.PrintCmdAndExit || Opts.Preprocessor) {
+  if (Opts.PrintCmdAndExit || !Opts.PreprocessCmd.empty()) {
     Clang = "clang";
   } else {
     ErrorOr<std::string> ClangOrErr = findClang(Argv0, Opts.Triple);
@@ -255,22 +260,16 @@ void preprocess(StringRef Src, StringRef Dst, const RcOptions &Opts,
   SmallVector<StringRef, 8> Args = {
       Clang, "--driver-mode=gcc", "-target", Opts.Triple, "-E",
       "-xc", "-DRC_INVOKED"};
-  std::string PreprocessorExecutable;
-  if (Opts.Preprocessor) {
+  if (!Opts.PreprocessCmd.empty()) {
     Args.clear();
-    Args.push_back(*Opts.Preprocessor);
-    if (!sys::fs::can_execute(Args[0])) {
-      if (auto P = sys::findProgramByName(Args[0])) {
-        PreprocessorExecutable = *P;
-        Args[0] = PreprocessorExecutable;
-      }
-    }
+    for (const auto &S : Opts.PreprocessCmd)
+      Args.push_back(S);
   }
-  for (const auto &S : Opts.PreprocessArgs)
-    Args.push_back(S);
   Args.push_back(Src);
   Args.push_back("-o");
   Args.push_back(Dst);
+  for (const auto &S : Opts.PreprocessArgs)
+    Args.push_back(S);
   if (Opts.PrintCmdAndExit || Opts.BeVerbose) {
     for (const auto &A : Args) {
       outs() << " ";
@@ -282,15 +281,9 @@ void preprocess(StringRef Src, StringRef Dst, const RcOptions &Opts,
   }
   // The llvm Support classes don't handle reading from stdout of a child
   // process; otherwise we could avoid using a temp file.
-  std::string ErrMsg;
-  int Res =
-      sys::ExecuteAndWait(Args[0], Args, /*Env=*/std::nullopt, /*Redirects=*/{},
-                          /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg);
+  int Res = sys::ExecuteAndWait(Args[0], Args);
   if (Res) {
-    if (!ErrMsg.empty())
-      fatalError("llvm-rc: Preprocessing failed: " + ErrMsg);
-    else
-      fatalError("llvm-rc: Preprocessing failed.");
+    fatalError("llvm-rc: Preprocessing failed.");
   }
 }
 
@@ -346,6 +339,36 @@ std::string unescape(StringRef S) {
     Out.push_back(S[I]);
   }
   return Out;
+}
+
+std::vector<std::string> unescapeSplit(StringRef S) {
+  std::vector<std::string> OutArgs;
+  std::string Out;
+  bool InQuote = false;
+  for (int I = 0, E = S.size(); I < E; I++) {
+    if (S[I] == '\\') {
+      if (I + 1 < E)
+        Out.push_back(S[++I]);
+      else
+        fatalError("Unterminated escape");
+      continue;
+    }
+    if (S[I] == '"') {
+      InQuote = !InQuote;
+      continue;
+    }
+    if (S[I] == ' ' && !InQuote) {
+      OutArgs.push_back(Out);
+      Out.clear();
+      continue;
+    }
+    Out.push_back(S[I]);
+  }
+  if (InQuote)
+    fatalError("Unterminated quote");
+  if (!Out.empty())
+    OutArgs.push_back(Out);
+  return OutArgs;
 }
 
 RcOptions parseWindresOptions(ArrayRef<const char *> ArgsArr,
@@ -482,8 +505,11 @@ RcOptions parseWindresOptions(ArrayRef<const char *> ArgsArr,
       break;
     }
   }
+  // TODO: If --use-temp-file is set, we shouldn't be unescaping
+  // the --preprocessor argument either, only splitting it.
   if (InputArgs.hasArg(WINDRES_preprocessor))
-    Opts.Preprocessor = InputArgs.getLastArgValue(WINDRES_preprocessor);
+    Opts.PreprocessCmd =
+        unescapeSplit(InputArgs.getLastArgValue(WINDRES_preprocessor));
 
   Opts.Params.CodePage = CpWin1252; // Different default
   if (InputArgs.hasArg(WINDRES_codepage)) {
@@ -569,7 +595,7 @@ RcOptions parseRcOptions(ArrayRef<const char *> ArgsArr,
     SmallString<128> OutputFile(Opts.InputFile);
     llvm::sys::fs::make_absolute(OutputFile);
     llvm::sys::path::replace_extension(OutputFile, "res");
-    OutArgsInfo.push_back(std::string(OutputFile));
+    OutArgsInfo.push_back(std::string(OutputFile.str()));
   }
   if (!Opts.IsDryRun) {
     if (OutArgsInfo.size() != 1)
@@ -611,7 +637,7 @@ void doRc(std::string Src, std::string Dest, RcOptions &Opts,
 
   // Read and tokenize the input file.
   ErrorOr<std::unique_ptr<MemoryBuffer>> File =
-      MemoryBuffer::getFile(PreprocessedFile, /*IsText=*/true);
+      MemoryBuffer::getFile(PreprocessedFile);
   if (!File) {
     fatalError("Error opening file '" + Twine(PreprocessedFile) +
                "': " + File.getError().message());
@@ -690,7 +716,7 @@ void doCvtres(std::string Src, std::string Dest, std::string TargetTriple) {
   object::WindowsResourceParser Parser;
 
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
-      MemoryBuffer::getFile(Src, /*IsText=*/true);
+      MemoryBuffer::getFile(Src);
   if (!BufferOrErr)
     fatalError("Error opening file '" + Twine(Src) +
                "': " + BufferOrErr.getError().message());
@@ -718,10 +744,7 @@ void doCvtres(std::string Src, std::string Dest, std::string TargetTriple) {
     MachineType = COFF::IMAGE_FILE_MACHINE_ARMNT;
     break;
   case Triple::aarch64:
-    if (T.isWindowsArm64EC())
-      MachineType = COFF::IMAGE_FILE_MACHINE_ARM64EC;
-    else
-      MachineType = COFF::IMAGE_FILE_MACHINE_ARM64;
+    MachineType = COFF::IMAGE_FILE_MACHINE_ARM64;
     break;
   default:
     fatalError("Unsupported architecture in target '" + Twine(TargetTriple) +
@@ -741,6 +764,7 @@ void doCvtres(std::string Src, std::string Dest, std::string TargetTriple) {
 } // anonymous namespace
 
 int llvm_rc_main(int Argc, char **Argv, const llvm::ToolContext &) {
+  InitLLVM X(Argc, Argv);
   ExitOnErr.setBanner("llvm-rc: ");
 
   char **DashDash = std::find_if(Argv + 1, Argv + Argc,

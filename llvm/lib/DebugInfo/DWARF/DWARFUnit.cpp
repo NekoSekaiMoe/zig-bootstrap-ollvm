@@ -81,11 +81,8 @@ void DWARFUnitVector::addUnitsImpl(
       if (!Data.isValidOffset(Offset))
         return nullptr;
       DWARFUnitHeader Header;
-      if (Error ExtractErr =
-              Header.extract(Context, Data, &Offset, SectionKind)) {
-        Context.getWarningHandler()(std::move(ExtractErr));
+      if (!Header.extract(Context, Data, &Offset, SectionKind))
         return nullptr;
-      }
       if (!IndexEntry && IsDWO) {
         const DWARFUnitIndex &Index = getDWARFUnitIndex(
             Context, Header.isTypeUnit() ? DW_SECT_EXT_TYPES : DW_SECT_INFO);
@@ -98,12 +95,8 @@ void DWARFUnitVector::addUnitsImpl(
         if (!IndexEntry)
           IndexEntry = Index.getFromOffset(Header.getOffset());
       }
-      if (IndexEntry) {
-        if (Error ApplicationErr = Header.applyIndexEntry(IndexEntry)) {
-          Context.getWarningHandler()(std::move(ApplicationErr));
-          return nullptr;
-        }
-      }
+      if (IndexEntry && !Header.applyIndexEntry(IndexEntry))
+        return nullptr;
       std::unique_ptr<DWARFUnit> U;
       if (Header.isTypeUnit())
         U = std::make_unique<DWARFTypeUnit>(Context, InfoSection, Header, DA,
@@ -251,10 +244,10 @@ Expected<uint64_t> DWARFUnit::getStringOffsetSectionItem(uint32_t Index) const {
   return DA.getRelocatedValue(ItemSize, &Offset);
 }
 
-Error DWARFUnitHeader::extract(DWARFContext &Context,
-                               const DWARFDataExtractor &debug_info,
-                               uint64_t *offset_ptr,
-                               DWARFSectionKind SectionKind) {
+bool DWARFUnitHeader::extract(DWARFContext &Context,
+                              const DWARFDataExtractor &debug_info,
+                              uint64_t *offset_ptr,
+                              DWARFSectionKind SectionKind) {
   Offset = *offset_ptr;
   Error Err = Error::success();
   IndexEntry = nullptr;
@@ -284,94 +277,89 @@ Error DWARFUnitHeader::extract(DWARFContext &Context,
   } else if (UnitType == DW_UT_split_compile || UnitType == DW_UT_skeleton)
     DWOId = debug_info.getU64(offset_ptr, &Err);
 
-  if (Err)
-    return joinErrors(
+  if (Err) {
+    Context.getWarningHandler()(joinErrors(
         createStringError(
             errc::invalid_argument,
             "DWARF unit at 0x%8.8" PRIx64 " cannot be parsed:", Offset),
-        std::move(Err));
+        std::move(Err)));
+    return false;
+  }
 
   // Header fields all parsed, capture the size of this unit header.
   assert(*offset_ptr - Offset <= 255 && "unexpected header size");
   Size = uint8_t(*offset_ptr - Offset);
   uint64_t NextCUOffset = Offset + getUnitLengthFieldByteSize() + getLength();
 
-  if (!debug_info.isValidOffset(getNextUnitOffset() - 1))
-    return createStringError(errc::invalid_argument,
-                             "DWARF unit from offset 0x%8.8" PRIx64 " incl. "
-                             "to offset  0x%8.8" PRIx64 " excl. "
-                             "extends past section size 0x%8.8zx",
-                             Offset, NextCUOffset, debug_info.size());
+  if (!debug_info.isValidOffset(getNextUnitOffset() - 1)) {
+    Context.getWarningHandler()(
+        createStringError(errc::invalid_argument,
+                          "DWARF unit from offset 0x%8.8" PRIx64 " incl. "
+                          "to offset  0x%8.8" PRIx64 " excl. "
+                          "extends past section size 0x%8.8zx",
+                          Offset, NextCUOffset, debug_info.size()));
+    return false;
+  }
 
-  if (!DWARFContext::isSupportedVersion(getVersion()))
-    return createStringError(
+  if (!DWARFContext::isSupportedVersion(getVersion())) {
+    Context.getWarningHandler()(createStringError(
         errc::invalid_argument,
         "DWARF unit at offset 0x%8.8" PRIx64 " "
         "has unsupported version %" PRIu16 ", supported are 2-%u",
-        Offset, getVersion(), DWARFContext::getMaxSupportedVersion());
+        Offset, getVersion(), DWARFContext::getMaxSupportedVersion()));
+    return false;
+  }
 
   // Type offset is unit-relative; should be after the header and before
   // the end of the current unit.
-  if (isTypeUnit() && TypeOffset < Size)
-    return createStringError(errc::invalid_argument,
-                             "DWARF type unit at offset "
-                             "0x%8.8" PRIx64 " "
-                             "has its relocated type_offset 0x%8.8" PRIx64 " "
-                             "pointing inside the header",
-                             Offset, Offset + TypeOffset);
-
-  if (isTypeUnit() && TypeOffset >= getUnitLengthFieldByteSize() + getLength())
-    return createStringError(
+  if (isTypeUnit() && TypeOffset < Size) {
+    Context.getWarningHandler()(
+        createStringError(errc::invalid_argument,
+                          "DWARF type unit at offset "
+                          "0x%8.8" PRIx64 " "
+                          "has its relocated type_offset 0x%8.8" PRIx64 " "
+                          "pointing inside the header",
+                          Offset, Offset + TypeOffset));
+    return false;
+  }
+  if (isTypeUnit() &&
+      TypeOffset >= getUnitLengthFieldByteSize() + getLength()) {
+    Context.getWarningHandler()(createStringError(
         errc::invalid_argument,
         "DWARF type unit from offset 0x%8.8" PRIx64 " incl. "
         "to offset 0x%8.8" PRIx64 " excl. has its "
         "relocated type_offset 0x%8.8" PRIx64 " pointing past the unit end",
-        Offset, NextCUOffset, Offset + TypeOffset);
+        Offset, NextCUOffset, Offset + TypeOffset));
+    return false;
+  }
 
   if (Error SizeErr = DWARFContext::checkAddressSizeSupported(
           getAddressByteSize(), errc::invalid_argument,
-          "DWARF unit at offset 0x%8.8" PRIx64, Offset))
-    return SizeErr;
+          "DWARF unit at offset 0x%8.8" PRIx64, Offset)) {
+    Context.getWarningHandler()(std::move(SizeErr));
+    return false;
+  }
 
   // Keep track of the highest DWARF version we encounter across all units.
   Context.setMaxVersionIfGreater(getVersion());
-  return Error::success();
+  return true;
 }
 
-Error DWARFUnitHeader::applyIndexEntry(const DWARFUnitIndex::Entry *Entry) {
+bool DWARFUnitHeader::applyIndexEntry(const DWARFUnitIndex::Entry *Entry) {
   assert(Entry);
   assert(!IndexEntry);
   IndexEntry = Entry;
   if (AbbrOffset)
-    return createStringError(errc::invalid_argument,
-                             "DWARF package unit at offset 0x%8.8" PRIx64
-                             " has a non-zero abbreviation offset",
-                             Offset);
-
+    return false;
   auto *UnitContrib = IndexEntry->getContribution();
-  if (!UnitContrib)
-    return createStringError(errc::invalid_argument,
-                             "DWARF package unit at offset 0x%8.8" PRIx64
-                             " has no contribution index",
-                             Offset);
-
-  uint64_t IndexLength = getLength() + getUnitLengthFieldByteSize();
-  if (UnitContrib->getLength() != IndexLength)
-    return createStringError(errc::invalid_argument,
-                             "DWARF package unit at offset 0x%8.8" PRIx64
-                             " has an inconsistent index (expected: %" PRIu64
-                             ", actual: %" PRIu64 ")",
-                             Offset, UnitContrib->getLength(), IndexLength);
-
+  if (!UnitContrib ||
+      UnitContrib->getLength() != (getLength() + getUnitLengthFieldByteSize()))
+    return false;
   auto *AbbrEntry = IndexEntry->getContribution(DW_SECT_ABBREV);
   if (!AbbrEntry)
-    return createStringError(errc::invalid_argument,
-                             "DWARF package unit at offset 0x%8.8" PRIx64
-                             " missing abbreviation column",
-                             Offset);
-
+    return false;
   AbbrOffset = AbbrEntry->getOffset();
-  return Error::success();
+  return true;
 }
 
 Error DWARFUnit::extractRangeList(uint64_t RangeListOffset,
@@ -796,7 +784,7 @@ void DWARFUnit::updateVariableDieMap(DWARFDie Die) {
 
   for (const DWARFLocationExpression &Location : *Locations) {
     uint8_t AddressSize = getAddressByteSize();
-    DataExtractor Data(Location.Expr, isLittleEndian(), AddressSize);
+    DataExtractor Data(Location.Expr, /*IsLittleEndian=*/true, AddressSize);
     DWARFExpression Expr(Data, AddressSize);
     auto It = Expr.begin();
     if (It == Expr.end())
@@ -840,7 +828,7 @@ void DWARFUnit::updateVariableDieMap(DWARFDie Die) {
   // no type), then we use a size of one to still allow symbolization of the
   // exact address.
   uint64_t GVSize = 1;
-  if (Die.getAttributeValueAsReferencedDie(DW_AT_type))
+  if (DWARFDie BaseType = Die.getAttributeValueAsReferencedDie(DW_AT_type))
     if (std::optional<uint64_t> Size = Die.getTypeSize(getAddressByteSize()))
       GVSize = *Size;
 

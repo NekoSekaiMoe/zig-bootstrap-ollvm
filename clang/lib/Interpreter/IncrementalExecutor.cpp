@@ -17,10 +17,8 @@
 #include "clang/Interpreter/PartialTranslationUnit.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupport.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
-#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
@@ -36,31 +34,22 @@ LLVM_ATTRIBUTE_USED void linkComponents() {
 }
 
 namespace clang {
-IncrementalExecutor::IncrementalExecutor(llvm::orc::ThreadSafeContext &TSC)
-    : TSCtx(TSC) {}
-
-llvm::Expected<std::unique_ptr<llvm::orc::LLJITBuilder>>
-IncrementalExecutor::createDefaultJITBuilder(
-    llvm::orc::JITTargetMachineBuilder JTMB) {
-  auto JITBuilder = std::make_unique<llvm::orc::LLJITBuilder>();
-  JITBuilder->setJITTargetMachineBuilder(std::move(JTMB));
-  JITBuilder->setPrePlatformSetup([](llvm::orc::LLJIT &J) {
-    // Try to enable debugging of JIT'd code (only works with JITLink for
-    // ELF and MachO).
-    consumeError(llvm::orc::enableDebuggerSupport(J));
-    return llvm::Error::success();
-  });
-  return std::move(JITBuilder);
-}
 
 IncrementalExecutor::IncrementalExecutor(llvm::orc::ThreadSafeContext &TSC,
-                                         llvm::orc::LLJITBuilder &JITBuilder,
-                                         llvm::Error &Err)
+                                         llvm::Error &Err,
+                                         const clang::TargetInfo &TI)
     : TSCtx(TSC) {
   using namespace llvm::orc;
   llvm::ErrorAsOutParameter EAO(&Err);
 
-  if (auto JitOrErr = JITBuilder.create())
+  auto JTMB = JITTargetMachineBuilder(TI.getTriple());
+  JTMB.addFeatures(TI.getTargetOpts().Features);
+  LLJITBuilder Builder;
+  Builder.setJITTargetMachineBuilder(JTMB);
+  // Enable debugging of JIT'd code (only works on JITLink for ELF and MachO).
+  Builder.setEnableDebuggerSupport(true);
+
+  if (auto JitOrErr = Builder.create())
     Jit = std::move(*JitOrErr);
   else {
     Err = JitOrErr.takeError();
@@ -118,4 +107,4 @@ IncrementalExecutor::getSymbolAddress(llvm::StringRef Name,
   return SymOrErr->getAddress();
 }
 
-} // namespace clang
+} // end namespace clang

@@ -8,32 +8,24 @@ pub const Feature = enum {
     @"32bit",
     @"64bit",
     d,
-    div32,
     f,
-    frecipe,
     la_global_with_abs,
     la_global_with_pcrel,
     la_local_with_abs,
-    lam_bh,
-    lamcas,
     lasx,
     lbt,
-    ld_seq_sa,
     lsx,
     lvz,
-    prefer_w_inst,
-    relax,
-    scq,
     ual,
 };
 
-pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
-pub const featureSetHas = CpuFeature.FeatureSetFns(Feature).featureSetHas;
-pub const featureSetHasAny = CpuFeature.FeatureSetFns(Feature).featureSetHasAny;
-pub const featureSetHasAll = CpuFeature.FeatureSetFns(Feature).featureSetHasAll;
+pub const featureSet = CpuFeature.feature_set_fns(Feature).featureSet;
+pub const featureSetHas = CpuFeature.feature_set_fns(Feature).featureSetHas;
+pub const featureSetHasAny = CpuFeature.feature_set_fns(Feature).featureSetHasAny;
+pub const featureSetHasAll = CpuFeature.feature_set_fns(Feature).featureSetHasAll;
 
 pub const all_features = blk: {
-    const len = @typeInfo(Feature).@"enum".fields.len;
+    const len = @typeInfo(Feature).Enum.fields.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
     result[@intFromEnum(Feature.@"32bit")] = .{
@@ -53,19 +45,9 @@ pub const all_features = blk: {
             .f,
         }),
     };
-    result[@intFromEnum(Feature.div32)] = .{
-        .llvm_name = "div32",
-        .description = "Assume div.w[u] and mod.w[u] can handle inputs that are not sign-extended",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@intFromEnum(Feature.f)] = .{
         .llvm_name = "f",
         .description = "'F' (Single-Precision Floating-Point)",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@intFromEnum(Feature.frecipe)] = .{
-        .llvm_name = "frecipe",
-        .description = "Support frecipe.{s/d} and frsqrte.{s/d} instructions.",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@intFromEnum(Feature.la_global_with_abs)] = .{
@@ -83,16 +65,6 @@ pub const all_features = blk: {
         .description = "Expand la.local as la.abs",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@intFromEnum(Feature.lam_bh)] = .{
-        .llvm_name = "lam-bh",
-        .description = "Support amswap[_db].{b/h} and amadd[_db].{b/h} instructions.",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@intFromEnum(Feature.lamcas)] = .{
-        .llvm_name = "lamcas",
-        .description = "Support amcas[_db].{b/h/w/d}.",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@intFromEnum(Feature.lasx)] = .{
         .llvm_name = "lasx",
         .description = "'LASX' (Loongson Advanced SIMD Extension)",
@@ -103,11 +75,6 @@ pub const all_features = blk: {
     result[@intFromEnum(Feature.lbt)] = .{
         .llvm_name = "lbt",
         .description = "'LBT' (Loongson Binary Translation Extension)",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@intFromEnum(Feature.ld_seq_sa)] = .{
-        .llvm_name = "ld-seq-sa",
-        .description = "Don't use load-load barrier (dbar 0x700).",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@intFromEnum(Feature.lsx)] = .{
@@ -122,21 +89,6 @@ pub const all_features = blk: {
         .description = "'LVZ' (Loongson Virtualization Extension)",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@intFromEnum(Feature.prefer_w_inst)] = .{
-        .llvm_name = "prefer-w-inst",
-        .description = "Prefer instructions with W suffix",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@intFromEnum(Feature.relax)] = .{
-        .llvm_name = "relax",
-        .description = "Enable Linker relaxation",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@intFromEnum(Feature.scq)] = .{
-        .llvm_name = "scq",
-        .description = "Support sc.q instruction",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@intFromEnum(Feature.ual)] = .{
         .llvm_name = "ual",
         .description = "Allow memory accesses to be unaligned",
@@ -145,34 +97,33 @@ pub const all_features = blk: {
     const ti = @typeInfo(Feature);
     for (&result, 0..) |*elem, i| {
         elem.index = i;
-        elem.name = ti.@"enum".fields[i].name;
+        elem.name = ti.Enum.fields[i].name;
     }
     break :blk result;
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
+    pub const generic = CpuModel{
         .name = "generic",
         .llvm_name = "generic",
         .features = featureSet(&[_]Feature{}),
     };
-    pub const generic_la32: CpuModel = .{
+    pub const generic_la32 = CpuModel{
         .name = "generic_la32",
         .llvm_name = "generic-la32",
         .features = featureSet(&[_]Feature{
             .@"32bit",
         }),
     };
-    pub const generic_la64: CpuModel = .{
+    pub const generic_la64 = CpuModel{
         .name = "generic_la64",
         .llvm_name = "generic-la64",
         .features = featureSet(&[_]Feature{
             .@"64bit",
-            .lsx,
             .ual,
         }),
     };
-    pub const la464: CpuModel = .{
+    pub const la464 = CpuModel{
         .name = "la464",
         .llvm_name = "la464",
         .features = featureSet(&[_]Feature{
@@ -183,24 +134,7 @@ pub const cpu = struct {
             .ual,
         }),
     };
-    pub const la664: CpuModel = .{
-        .name = "la664",
-        .llvm_name = "la664",
-        .features = featureSet(&[_]Feature{
-            .@"64bit",
-            .div32,
-            .frecipe,
-            .lam_bh,
-            .lamcas,
-            .lasx,
-            .lbt,
-            .ld_seq_sa,
-            .lvz,
-            .scq,
-            .ual,
-        }),
-    };
-    pub const loongarch64: CpuModel = .{
+    pub const loongarch64 = CpuModel{
         .name = "loongarch64",
         .llvm_name = "loongarch64",
         .features = featureSet(&[_]Feature{

@@ -18,24 +18,19 @@
 #include "llvm/Support/VirtualFileSystem.h"
 
 namespace clang {
-struct PartialTranslationUnit;
-class CompilerInstance;
-class CodeGenOptions;
-class TargetOptions;
 
 class IncrementalCUDADeviceParser : public IncrementalParser {
-  const std::list<PartialTranslationUnit> &PTUs;
-
 public:
   IncrementalCUDADeviceParser(
-      std::unique_ptr<CompilerInstance> DeviceInstance,
-      CompilerInstance &HostInstance,
+      Interpreter &Interp, std::unique_ptr<CompilerInstance> Instance,
+      IncrementalParser &HostParser, llvm::LLVMContext &LLVMCtx,
       llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> VFS,
-      llvm::Error &Err, const std::list<PartialTranslationUnit> &PTUs);
+      llvm::Error &Err);
 
-  llvm::Expected<TranslationUnitDecl *> Parse(llvm::StringRef Input) override;
+  llvm::Expected<PartialTranslationUnit &>
+  Parse(llvm::StringRef Input) override;
 
-  // Generate PTX for the last PTU.
+  // Generate PTX for the last PTU
   llvm::Expected<llvm::StringRef> GeneratePTX();
 
   // Generate fatbinary contents in memory
@@ -44,13 +39,11 @@ public:
   ~IncrementalCUDADeviceParser();
 
 protected:
-  std::unique_ptr<CompilerInstance> DeviceCI;
+  IncrementalParser &HostParser;
   int SMVersion;
   llvm::SmallString<1024> PTXCode;
   llvm::SmallVector<char, 1024> FatbinContent;
   llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> VFS;
-  CodeGenOptions &CodeGenOpts; // Intentionally a reference.
-  const TargetOptions &TargetOpts;
 };
 
 } // namespace clang

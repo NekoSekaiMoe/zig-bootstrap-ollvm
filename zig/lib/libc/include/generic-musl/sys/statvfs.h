@@ -23,8 +23,7 @@ struct statvfs {
 	unsigned long f_fsid;
 #endif
 	unsigned long f_flag, f_namemax;
-	unsigned int f_type;
-	int __reserved[5];
+	int __reserved[6];
 };
 
 int statvfs (const char *__restrict, struct statvfs *__restrict);

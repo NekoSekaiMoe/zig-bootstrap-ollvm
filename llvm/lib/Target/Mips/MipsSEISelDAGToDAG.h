@@ -20,12 +20,14 @@ namespace llvm {
 class MipsSEDAGToDAGISel : public MipsDAGToDAGISel {
 
 public:
-  explicit MipsSEDAGToDAGISel(MipsTargetMachine &TM, CodeGenOptLevel OL)
+  explicit MipsSEDAGToDAGISel(MipsTargetMachine &TM, CodeGenOpt::Level OL)
       : MipsDAGToDAGISel(TM, OL) {}
 
 private:
 
   bool runOnMachineFunction(MachineFunction &MF) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   void addDSPCtrlRegOperands(bool IsDef, MachineInstr &MI,
                              MachineFunction &MF);
@@ -95,7 +97,23 @@ private:
                     unsigned MinSizeInBits) const override;
   /// Select constant vector splats whose value fits in a given integer.
   bool selectVSplatCommon(SDValue N, SDValue &Imm, bool Signed,
-                          unsigned ImmBitSize) const override;
+                                  unsigned ImmBitSize) const;
+  /// Select constant vector splats whose value fits in a uimm1.
+  bool selectVSplatUimm1(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm2.
+  bool selectVSplatUimm2(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm3.
+  bool selectVSplatUimm3(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm4.
+  bool selectVSplatUimm4(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm5.
+  bool selectVSplatUimm5(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm6.
+  bool selectVSplatUimm6(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a uimm8.
+  bool selectVSplatUimm8(SDValue N, SDValue &Imm) const override;
+  /// Select constant vector splats whose value fits in a simm5.
+  bool selectVSplatSimm5(SDValue N, SDValue &Imm) const override;
   /// Select constant vector splats whose value is a power of 2.
   bool selectVSplatUimmPow2(SDValue N, SDValue &Imm) const override;
   /// Select constant vector splats whose value is the inverse of a
@@ -108,9 +126,6 @@ private:
   /// starting at bit zero.
   bool selectVSplatMaskR(SDValue N, SDValue &Imm) const override;
 
-  /// Select constant vector splats whose value is 1.
-  bool selectVSplatImmEq1(SDValue N) const override;
-
   bool trySelect(SDNode *Node) override;
 
   // Emits proper ABI for _mcount profiling calls.
@@ -120,18 +135,12 @@ private:
   void processFunctionAfterISel(MachineFunction &MF) override;
 
   bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                    InlineAsm::ConstraintCode ConstraintID,
+                                    unsigned ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
 };
 
-class MipsSEDAGToDAGISelLegacy : public MipsDAGToDAGISelLegacy {
-public:
-  explicit MipsSEDAGToDAGISelLegacy(MipsTargetMachine &TM, CodeGenOptLevel OL);
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
-};
-
 FunctionPass *createMipsSEISelDag(MipsTargetMachine &TM,
-                                  CodeGenOptLevel OptLevel);
+                                  CodeGenOpt::Level OptLevel);
 }
 
 #endif

@@ -111,7 +111,7 @@ static bool getARMLoadDeprecationInfo(MCInst &MI, const MCSubtargetInfo &STI,
   bool ListContainsPC = false, ListContainsLR = false;
   for (unsigned OI = 4, OE = MI.getNumOperands(); OI < OE; ++OI) {
     assert(MI.getOperand(OI).isReg() && "expected register");
-    switch (MI.getOperand(OI).getReg().id()) {
+    switch (MI.getOperand(OI).getReg()) {
     default:
       break;
     case ARM::LR:
@@ -359,9 +359,10 @@ static MCAsmInfo *createARMMCAsmInfo(const MCRegisterInfo &MRI,
 static MCStreamer *createELFStreamer(const Triple &T, MCContext &Ctx,
                                      std::unique_ptr<MCAsmBackend> &&MAB,
                                      std::unique_ptr<MCObjectWriter> &&OW,
-                                     std::unique_ptr<MCCodeEmitter> &&Emitter) {
+                                     std::unique_ptr<MCCodeEmitter> &&Emitter,
+                                     bool RelaxAll) {
   return createARMELFStreamer(
-      Ctx, std::move(MAB), std::move(OW), std::move(Emitter),
+      Ctx, std::move(MAB), std::move(OW), std::move(Emitter), false,
       (T.getArch() == Triple::thumb || T.getArch() == Triple::thumbeb),
       T.isAndroid());
 }
@@ -369,9 +370,10 @@ static MCStreamer *createELFStreamer(const Triple &T, MCContext &Ctx,
 static MCStreamer *
 createARMMachOStreamer(MCContext &Ctx, std::unique_ptr<MCAsmBackend> &&MAB,
                        std::unique_ptr<MCObjectWriter> &&OW,
-                       std::unique_ptr<MCCodeEmitter> &&Emitter) {
+                       std::unique_ptr<MCCodeEmitter> &&Emitter, bool RelaxAll,
+                       bool DWARFMustBeAtTheEnd) {
   return createMachOStreamer(Ctx, std::move(MAB), std::move(OW),
-                             std::move(Emitter), false);
+                             std::move(Emitter), false, DWARFMustBeAtTheEnd);
 }
 
 static MCInstPrinter *createARMMCInstPrinter(const Triple &T,

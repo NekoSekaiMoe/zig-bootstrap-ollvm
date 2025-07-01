@@ -8,8 +8,11 @@
 
 #include "llvm/Analysis/MemDerefPrinter.h"
 #include "llvm/Analysis/Loads.h"
+#include "llvm/Analysis/Passes.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -23,14 +26,14 @@ PreservedAnalyses MemDerefPrinterPass::run(Function &F,
   SmallVector<Value *, 4> Deref;
   SmallPtrSet<Value *, 4> DerefAndAligned;
 
-  const DataLayout &DL = F.getDataLayout();
+  const DataLayout &DL = F.getParent()->getDataLayout();
   for (auto &I : instructions(F)) {
     if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
       Value *PO = LI->getPointerOperand();
-      if (isDereferenceablePointer(PO, LI->getType(), DL, LI))
+      if (isDereferenceablePointer(PO, LI->getType(), DL))
         Deref.push_back(PO);
       if (isDereferenceableAndAlignedPointer(PO, LI->getType(), LI->getAlign(),
-                                             DL, LI))
+                                             DL))
         DerefAndAligned.insert(PO);
     }
   }

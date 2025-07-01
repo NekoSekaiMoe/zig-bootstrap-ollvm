@@ -24,12 +24,8 @@
 #ifndef _OSTHERMALNOTIFICATION_H_
 #define _OSTHERMALNOTIFICATION_H_
 
-#include <_bounds.h>
 #include <sys/cdefs.h>
 #include <Availability.h>
-#include <TargetConditionals.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 /*
 **  OSThermalNotification.h

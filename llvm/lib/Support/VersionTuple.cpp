@@ -85,8 +85,9 @@ bool VersionTuple::tryParse(StringRef input) {
   }
 
   // If we're not done, parse the micro version, \.[0-9]+
-  if (!input.consume_front("."))
+  if (input[0] != '.')
     return true;
+  input = input.substr(1);
   if (parseInt(input, micro))
     return true;
 
@@ -96,8 +97,9 @@ bool VersionTuple::tryParse(StringRef input) {
   }
 
   // If we're not done, parse the micro version, \.[0-9]+
-  if (!input.consume_front("."))
+  if (input[0] != '.')
     return true;
+  input = input.substr(1);
   if (parseInt(input, build))
     return true;
 

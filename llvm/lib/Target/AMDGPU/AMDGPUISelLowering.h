@@ -61,9 +61,6 @@ protected:
   SDValue LowerFROUND(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFFLOOR(SDValue Op, SelectionDAG &DAG) const;
 
-  static bool allowApproxFunc(const SelectionDAG &DAG, SDNodeFlags Flags);
-  static bool needsDenormHandlingF32(const SelectionDAG &DAG, SDValue Src,
-                                     SDNodeFlags Flags);
   SDValue getIsLtSmallestNormal(SelectionDAG &DAG, SDValue Op,
                                 SDNodeFlags Flags) const;
   SDValue getIsFinite(SelectionDAG &DAG, SDValue Op, SDNodeFlags Flags) const;
@@ -80,11 +77,7 @@ protected:
 
   SDValue lowerFEXPUnsafe(SDValue Op, const SDLoc &SL, SelectionDAG &DAG,
                           SDNodeFlags Flags) const;
-  SDValue lowerFEXP10Unsafe(SDValue Op, const SDLoc &SL, SelectionDAG &DAG,
-                            SDNodeFlags Flags) const;
   SDValue lowerFEXP(SDValue Op, SelectionDAG &DAG) const;
-
-  SDValue lowerCTLZResults(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerCTLZ_CTTZ(SDValue Op, SelectionDAG &DAG) const;
 
@@ -201,7 +194,7 @@ public:
                                NegatibleCost &Cost,
                                unsigned Depth) const override;
 
-  bool isNarrowingProfitable(SDNode *N, EVT SrcVT, EVT DestVT) const override;
+  bool isNarrowingProfitable(EVT SrcVT, EVT DestVT) const override;
 
   bool isDesirableToCommuteWithShift(const SDNode *N,
                                      CombineLevel Level) const override;
@@ -230,20 +223,6 @@ public:
   bool isCheapToSpeculateCtlz(Type *Ty) const override;
 
   bool isSDNodeAlwaysUniform(const SDNode *N) const override;
-
-  // FIXME: This hook should not exist
-  AtomicExpansionKind shouldCastAtomicLoadInIR(LoadInst *LI) const override {
-    return AtomicExpansionKind::None;
-  }
-
-  AtomicExpansionKind shouldCastAtomicStoreInIR(StoreInst *SI) const override {
-    return AtomicExpansionKind::None;
-  }
-
-  AtomicExpansionKind shouldCastAtomicRMWIInIR(AtomicRMWInst *) const override {
-    return AtomicExpansionKind::None;
-  }
-
   static CCAssignFn *CCAssignFnForCall(CallingConv::ID CC, bool IsVarArg);
   static CCAssignFn *CCAssignFnForReturn(CallingConv::ID CC, bool IsVarArg);
 
@@ -263,7 +242,9 @@ public:
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
 
-  SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerDYNAMIC_STACKALLOC(SDValue Op,
+                                  SelectionDAG &DAG) const;
+
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
   SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
   void ReplaceNodeResults(SDNode * N,
@@ -387,6 +368,14 @@ public:
   MVT getFenceOperandTy(const DataLayout &DL) const override {
     return MVT::i32;
   }
+
+  AtomicExpansionKind shouldExpandAtomicRMWInIR(AtomicRMWInst *) const override;
+
+  bool isConstantUnsignedBitfieldExtractLegal(unsigned Opc, LLT Ty1,
+                                              LLT Ty2) const override;
+
+  bool shouldSinkOperands(Instruction *I,
+                          SmallVectorImpl<Use *> &Ops) const override;
 };
 
 namespace AMDGPUISD {
@@ -394,6 +383,7 @@ namespace AMDGPUISD {
 enum NodeType : unsigned {
   // AMDIL ISD Opcodes
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
+  UMUL, // 32bit unsigned multiplication
   BRANCH_COND,
   // End AMDIL ISD Opcodes
 
@@ -401,7 +391,6 @@ enum NodeType : unsigned {
   CALL,
   TC_RETURN,
   TC_RETURN_GFX,
-  TC_RETURN_CHAIN,
   TRAP,
 
   // Masked control flow nodes.
@@ -415,18 +404,11 @@ enum NodeType : unsigned {
   // s_endpgm, but we may want to insert it in the middle of the block.
   ENDPGM_TRAP,
 
-  // "s_trap 2" equivalent on hardware that does not support it.
-  SIMULATED_TRAP,
-
   // Return to a shader part's epilog code.
   RETURN_TO_EPILOG,
 
   // Return with values from a non-entry function.
   RET_GLUE,
-
-  // Convert a unswizzled wave uniform stack address to an address compatible
-  // with a vector offset for use in stack access.
-  WAVE_ADDRESS,
 
   DWORDADDR,
   FRACT,
@@ -438,6 +420,7 @@ enum NodeType : unsigned {
   // This is SETCC with the full mask result which is used for a compare with a
   // result bit per item in the wavefront.
   SETCC,
+  SETREG,
 
   DENORM_MODE,
 
@@ -461,8 +444,6 @@ enum NodeType : unsigned {
   FMED3,
   SMED3,
   UMED3,
-  FMAXIMUM3,
-  FMINIMUM3,
   FDOT2,
   URECIP,
   DIV_SCALE,
@@ -512,6 +493,10 @@ enum NodeType : unsigned {
   CONST_ADDRESS,
   REGISTER_LOAD,
   REGISTER_STORE,
+  SAMPLE,
+  SAMPLEB,
+  SAMPLED,
+  SAMPLEL,
 
   // These cvt_f32_ubyte* nodes need to remain consecutive and in order.
   CVT_F32_UBYTE0,
@@ -544,11 +529,12 @@ enum NodeType : unsigned {
   CONST_DATA_PTR,
   PC_ADD_REL_OFFSET,
   LDS,
+  FPTRUNC_ROUND_UPWARD,
+  FPTRUNC_ROUND_DOWNWARD,
 
   DUMMY_CHAIN,
-
-  FIRST_MEMORY_OPCODE,
-  LOAD_D16_HI = FIRST_MEMORY_OPCODE,
+  FIRST_MEM_OPCODE_NUMBER = ISD::FIRST_TARGET_MEMORY_OPCODE,
+  LOAD_D16_HI,
   LOAD_D16_LO,
   LOAD_D16_HI_I8,
   LOAD_D16_HI_U8,
@@ -556,31 +542,24 @@ enum NodeType : unsigned {
   LOAD_D16_LO_U8,
 
   STORE_MSKOR,
+  LOAD_CONSTANT,
   TBUFFER_STORE_FORMAT,
   TBUFFER_STORE_FORMAT_D16,
   TBUFFER_LOAD_FORMAT,
   TBUFFER_LOAD_FORMAT_D16,
   DS_ORDERED_COUNT,
   ATOMIC_CMP_SWAP,
+  ATOMIC_LOAD_FMIN,
+  ATOMIC_LOAD_FMAX,
   BUFFER_LOAD,
   BUFFER_LOAD_UBYTE,
   BUFFER_LOAD_USHORT,
   BUFFER_LOAD_BYTE,
   BUFFER_LOAD_SHORT,
-  BUFFER_LOAD_TFE,
-  BUFFER_LOAD_UBYTE_TFE,
-  BUFFER_LOAD_USHORT_TFE,
-  BUFFER_LOAD_BYTE_TFE,
-  BUFFER_LOAD_SHORT_TFE,
   BUFFER_LOAD_FORMAT,
   BUFFER_LOAD_FORMAT_TFE,
   BUFFER_LOAD_FORMAT_D16,
   SBUFFER_LOAD,
-  SBUFFER_LOAD_BYTE,
-  SBUFFER_LOAD_UBYTE,
-  SBUFFER_LOAD_SHORT,
-  SBUFFER_LOAD_USHORT,
-  SBUFFER_PREFETCH_DATA,
   BUFFER_STORE,
   BUFFER_STORE_BYTE,
   BUFFER_STORE_SHORT,
@@ -603,8 +582,8 @@ enum NodeType : unsigned {
   BUFFER_ATOMIC_FADD,
   BUFFER_ATOMIC_FMIN,
   BUFFER_ATOMIC_FMAX,
-  BUFFER_ATOMIC_COND_SUB_U32,
-  LAST_MEMORY_OPCODE = BUFFER_ATOMIC_COND_SUB_U32,
+
+  LAST_AMDGPU_ISD_NUMBER
 };
 
 } // End namespace AMDGPUISD

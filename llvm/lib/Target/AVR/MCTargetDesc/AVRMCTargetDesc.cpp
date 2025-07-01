@@ -14,6 +14,7 @@
 #include "AVRELFStreamer.h"
 #include "AVRInstPrinter.h"
 #include "AVRMCAsmInfo.h"
+#include "AVRMCELFStreamer.h"
 #include "AVRTargetStreamer.h"
 #include "TargetInfo/AVRTargetInfo.h"
 
@@ -71,9 +72,10 @@ static MCInstPrinter *createAVRMCInstPrinter(const Triple &T,
 static MCStreamer *createMCStreamer(const Triple &T, MCContext &Context,
                                     std::unique_ptr<MCAsmBackend> &&MAB,
                                     std::unique_ptr<MCObjectWriter> &&OW,
-                                    std::unique_ptr<MCCodeEmitter> &&Emitter) {
+                                    std::unique_ptr<MCCodeEmitter> &&Emitter,
+                                    bool RelaxAll) {
   return createELFStreamer(Context, std::move(MAB), std::move(OW),
-                           std::move(Emitter));
+                           std::move(Emitter), RelaxAll);
 }
 
 static MCTargetStreamer *
@@ -83,7 +85,8 @@ createAVRObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
 
 static MCTargetStreamer *createMCAsmTargetStreamer(MCStreamer &S,
                                                    formatted_raw_ostream &OS,
-                                                   MCInstPrinter *InstPrint) {
+                                                   MCInstPrinter *InstPrint,
+                                                   bool isVerboseAsm) {
   return new AVRTargetAsmStreamer(S);
 }
 

@@ -25,7 +25,7 @@ using LoopVectorTy = SmallVector<Loop *, 8>;
 class LPMUpdater;
 
 /// This class represents a loop nest and can be used to query its properties.
-class LLVM_ABI LoopNest {
+class LLVM_EXTERNAL_VISIBILITY LoopNest {
 public:
   using InstrVectorTy = SmallVector<const Instruction *>;
 
@@ -217,8 +217,6 @@ public:
 
   PreservedAnalyses run(Loop &L, LoopAnalysisManager &AM,
                         LoopStandardAnalysisResults &AR, LPMUpdater &U);
-
-  static bool isRequired() { return true; }
 };
 
 } // namespace llvm

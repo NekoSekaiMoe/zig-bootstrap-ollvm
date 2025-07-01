@@ -17,6 +17,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/CodeGen.h"
 #include <functional>
+#include <vector>
 
 namespace llvm {
 
@@ -36,7 +37,7 @@ FunctionPass *createARMLowOverheadLoopsPass();
 FunctionPass *createARMBlockPlacementPass();
 Pass *createARMParallelDSPPass();
 FunctionPass *createARMISelDag(ARMBaseTargetMachine &TM,
-                               CodeGenOptLevel OptLevel);
+                               CodeGenOpt::Level OptLevel);
 FunctionPass *createA15SDOptimizerPass();
 FunctionPass *createARMLoadStoreOptimizationPass(bool PreAlloc = false);
 FunctionPass *createARMExpandPseudoPass();
@@ -64,7 +65,7 @@ void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
 void initializeARMBlockPlacementPass(PassRegistry &);
 void initializeARMBranchTargetsPass(PassRegistry &);
 void initializeARMConstantIslandsPass(PassRegistry &);
-void initializeARMDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeARMDAGToDAGISelPass(PassRegistry &);
 void initializeARMExpandPseudoPass(PassRegistry &);
 void initializeARMFixCortexA57AES1742098Pass(PassRegistry &);
 void initializeARMLoadStoreOptPass(PassRegistry &);

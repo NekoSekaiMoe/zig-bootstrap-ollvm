@@ -38,9 +38,9 @@
 #define LLVM_ANALYSIS_ALIASANALYSIS_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/MemoryLocation.h"
-#include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/ModRef.h"
@@ -52,14 +52,19 @@
 
 namespace llvm {
 
+class AnalysisUsage;
 class AtomicCmpXchgInst;
 class BasicBlock;
 class CatchPadInst;
 class CatchReturnInst;
 class DominatorTree;
 class FenceInst;
+class Function;
 class LoopInfo;
+class PreservedAnalyses;
 class TargetLibraryInfo;
+class Value;
+template <typename> class SmallPtrSetImpl;
 
 /// The possible results of an alias query.
 ///
@@ -144,35 +149,30 @@ static_assert(sizeof(AliasResult) == 4,
 /// << operator for AliasResult.
 raw_ostream &operator<<(raw_ostream &OS, AliasResult AR);
 
-/// Virtual base class for providers of capture analysis.
-struct CaptureAnalysis {
-  virtual ~CaptureAnalysis() = 0;
-
-  /// Check whether Object is not captured before instruction I. If OrAt is
-  /// true, captures by instruction I itself are also considered.
-  ///
-  /// If I is nullptr, then captures at any point will be considered.
-  virtual bool isNotCapturedBefore(const Value *Object, const Instruction *I,
-                                   bool OrAt) = 0;
+/// Virtual base class for providers of capture information.
+struct CaptureInfo {
+  virtual ~CaptureInfo() = 0;
+  virtual bool isNotCapturedBeforeOrAt(const Value *Object,
+                                       const Instruction *I) = 0;
 };
 
-/// Context-free CaptureAnalysis provider, which computes and caches whether an
+/// Context-free CaptureInfo provider, which computes and caches whether an
 /// object is captured in the function at all, but does not distinguish whether
 /// it was captured before or after the context instruction.
-class SimpleCaptureAnalysis final : public CaptureAnalysis {
+class SimpleCaptureInfo final : public CaptureInfo {
   SmallDenseMap<const Value *, bool, 8> IsCapturedCache;
 
 public:
-  bool isNotCapturedBefore(const Value *Object, const Instruction *I,
-                           bool OrAt) override;
+  bool isNotCapturedBeforeOrAt(const Value *Object,
+                               const Instruction *I) override;
 };
 
-/// Context-sensitive CaptureAnalysis provider, which computes and caches the
+/// Context-sensitive CaptureInfo provider, which computes and caches the
 /// earliest common dominator closure of all captures. It provides a good
 /// approximation to a precise "captures before" analysis.
-class EarliestEscapeAnalysis final : public CaptureAnalysis {
+class EarliestEscapeInfo final : public CaptureInfo {
   DominatorTree &DT;
-  const LoopInfo *LI;
+  const LoopInfo &LI;
 
   /// Map from identified local object to an instruction before which it does
   /// not escape, or nullptr if it never escapes. The "earliest" instruction
@@ -184,12 +184,15 @@ class EarliestEscapeAnalysis final : public CaptureAnalysis {
   /// This is used for cache invalidation purposes.
   DenseMap<Instruction *, TinyPtrVector<const Value *>> Inst2Obj;
 
-public:
-  EarliestEscapeAnalysis(DominatorTree &DT, const LoopInfo *LI = nullptr)
-      : DT(DT), LI(LI) {}
+  const SmallPtrSetImpl<const Value *> &EphValues;
 
-  bool isNotCapturedBefore(const Value *Object, const Instruction *I,
-                           bool OrAt) override;
+public:
+  EarliestEscapeInfo(DominatorTree &DT, const LoopInfo &LI,
+                     const SmallPtrSetImpl<const Value *> &EphValues)
+      : DT(DT), LI(LI), EphValues(EphValues) {}
+
+  bool isNotCapturedBeforeOrAt(const Value *Object,
+                               const Instruction *I) override;
 
   void removeInstruction(Instruction *I);
 };
@@ -239,23 +242,12 @@ class AAQueryInfo {
 public:
   using LocPair = std::pair<AACacheLoc, AACacheLoc>;
   struct CacheEntry {
-    /// Cache entry is neither an assumption nor does it use a (non-definitive)
-    /// assumption.
-    static constexpr int Definitive = -2;
-    /// Cache entry is not an assumption itself, but may be using an assumption
-    /// from higher up the stack.
-    static constexpr int AssumptionBased = -1;
-
     AliasResult Result;
-    /// Number of times a NoAlias assumption has been used, 0 for assumptions
-    /// that have not been used. Can also take one of the Definitive or
-    /// AssumptionBased values documented above.
+    /// Number of times a NoAlias assumption has been used.
+    /// 0 for assumptions that have not been used, -1 for definitive results.
     int NumAssumptionUses;
-
     /// Whether this is a definitive (non-assumption) result.
-    bool isDefinitive() const { return NumAssumptionUses == Definitive; }
-    /// Whether this is an assumption that has not been proven yet.
-    bool isAssumption() const { return NumAssumptionUses >= 0; }
+    bool isDefinitive() const { return NumAssumptionUses < 0; }
   };
 
   // Alias analysis result aggregration using which this query is performed.
@@ -265,7 +257,7 @@ public:
   using AliasCacheT = SmallDenseMap<LocPair, CacheEntry, 8>;
   AliasCacheT AliasCache;
 
-  CaptureAnalysis *CA;
+  CaptureInfo *CI;
 
   /// Query depth used to distinguish recursive queries.
   unsigned Depth = 0;
@@ -294,19 +286,15 @@ public:
   ///   store %l, ...
   bool MayBeCrossIteration = false;
 
-  /// Whether alias analysis is allowed to use the dominator tree, for use by
-  /// passes that lazily update the DT while performing AA queries.
-  bool UseDominatorTree = true;
-
-  AAQueryInfo(AAResults &AAR, CaptureAnalysis *CA) : AAR(AAR), CA(CA) {}
+  AAQueryInfo(AAResults &AAR, CaptureInfo *CI) : AAR(AAR), CI(CI) {}
 };
 
-/// AAQueryInfo that uses SimpleCaptureAnalysis.
+/// AAQueryInfo that uses SimpleCaptureInfo.
 class SimpleAAQueryInfo : public AAQueryInfo {
-  SimpleCaptureAnalysis CA;
+  SimpleCaptureInfo CI;
 
 public:
-  SimpleAAQueryInfo(AAResults &AAR) : AAQueryInfo(AAR, &CA) {}
+  SimpleAAQueryInfo(AAResults &AAR) : AAQueryInfo(AAR, &CI) {}
 };
 
 class BatchAAResults;
@@ -315,7 +303,7 @@ class AAResults {
 public:
   // Make these results default constructable and movable. We have to spell
   // these out because MSVC won't synthesize them.
-  AAResults(const TargetLibraryInfo &TLI);
+  AAResults(const TargetLibraryInfo &TLI) : TLI(TLI) {}
   AAResults(AAResults &&Arg);
   ~AAResults();
 
@@ -573,6 +561,8 @@ public:
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
                     AAQueryInfo &AAQI, const Instruction *CtxI = nullptr);
 
+  bool pointsToConstantMemory(const MemoryLocation &Loc, AAQueryInfo &AAQI,
+                              bool OrLocal = false);
   ModRefInfo getModRefInfoMask(const MemoryLocation &Loc, AAQueryInfo &AAQI,
                                bool IgnoreLocals = false);
   ModRefInfo getModRefInfo(const Instruction *I, const CallBase *Call2,
@@ -630,21 +620,17 @@ private:
 class BatchAAResults {
   AAResults &AA;
   AAQueryInfo AAQI;
-  SimpleCaptureAnalysis SimpleCA;
+  SimpleCaptureInfo SimpleCI;
 
 public:
-  BatchAAResults(AAResults &AAR) : AA(AAR), AAQI(AAR, &SimpleCA) {}
-  BatchAAResults(AAResults &AAR, CaptureAnalysis *CA)
-      : AA(AAR), AAQI(AAR, CA) {}
+  BatchAAResults(AAResults &AAR) : AA(AAR), AAQI(AAR, &SimpleCI) {}
+  BatchAAResults(AAResults &AAR, CaptureInfo *CI) : AA(AAR), AAQI(AAR, CI) {}
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
     return AA.alias(LocA, LocB, AAQI);
   }
   bool pointsToConstantMemory(const MemoryLocation &Loc, bool OrLocal = false) {
-    return isNoModRef(AA.getModRefInfoMask(Loc, AAQI, OrLocal));
-  }
-  bool pointsToConstantMemory(const Value *P, bool OrLocal = false) {
-    return pointsToConstantMemory(MemoryLocation::getBeforeOrAfter(P), OrLocal);
+    return AA.pointsToConstantMemory(Loc, AAQI, OrLocal);
   }
   ModRefInfo getModRefInfoMask(const MemoryLocation &Loc,
                                bool IgnoreLocals = false) {
@@ -671,9 +657,6 @@ public:
                  MemoryLocation(V2, LocationSize::precise(1))) ==
            AliasResult::MustAlias;
   }
-  bool isNoAlias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
-    return alias(LocA, LocB) == AliasResult::NoAlias;
-  }
   ModRefInfo callCapturesBefore(const Instruction *I,
                                 const MemoryLocation &MemLoc,
                                 DominatorTree *DT) {
@@ -684,9 +667,6 @@ public:
   void enableCrossIterationMode() {
     AAQI.MayBeCrossIteration = true;
   }
-
-  /// Disable the use of the dominator tree during alias analysis queries.
-  void disableDominatorTree() { AAQI.UseDominatorTree = false; }
 };
 
 /// Temporary typedef for legacy code that uses a generic \c AliasAnalysis
@@ -881,13 +861,6 @@ bool isIdentifiedObject(const Value *V);
 /// IdentifiedObjects.
 bool isIdentifiedFunctionLocal(const Value *V);
 
-/// Return true if we know V to the base address of the corresponding memory
-/// object.  This implies that any address less than V must be out of bounds
-/// for the underlying object.  Note that just being isIdentifiedObject() is
-/// not enough - For example, a negative offset from a noalias argument or call
-/// can be inbounds w.r.t the actual underlying object.
-bool isBaseOfObject(const Value *V);
-
 /// Returns true if the pointer is one which would have been considered an
 /// escape by isNonEscapingLocalObject.
 bool isEscapeSource(const Value *V);
@@ -899,19 +872,6 @@ bool isEscapeSource(const Value *V);
 /// captured prior to the unwind. Otherwise it is not visible even if captured.
 bool isNotVisibleOnUnwind(const Value *Object,
                           bool &RequiresNoCaptureBeforeUnwind);
-
-/// Return true if the Object is writable, in the sense that any location based
-/// on this pointer that can be loaded can also be stored to without trapping.
-/// Additionally, at the point Object is declared, stores can be introduced
-/// without data races. At later points, this is only the case if the pointer
-/// can not escape to a different thread.
-///
-/// If ExplicitlyDereferenceableOnly is set to true, this property only holds
-/// for the part of Object that is explicitly marked as dereferenceable, e.g.
-/// using the dereferenceable(N) attribute. It does not necessarily hold for
-/// parts that are only known to be dereferenceable due to the presence of
-/// loads.
-bool isWritableObject(const Value *Object, bool &ExplicitlyDereferenceableOnly);
 
 /// A manager for alias analyses.
 ///

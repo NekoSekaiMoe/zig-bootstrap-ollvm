@@ -6,12 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Generic COFF LinkGraph building code.
+// Generic COFF LinkGraph buliding code.
 //
 //===----------------------------------------------------------------------===//
 #include "COFFLinkGraphBuilder.h"
-
-#include <memory>
 
 #define DEBUG_TYPE "jitlink"
 
@@ -26,15 +24,12 @@ static Triple createTripleWithCOFFFormat(Triple T) {
 }
 
 COFFLinkGraphBuilder::COFFLinkGraphBuilder(
-    const object::COFFObjectFile &Obj,
-    std::shared_ptr<orc::SymbolStringPool> SSP, Triple TT,
-    SubtargetFeatures Features,
+    const object::COFFObjectFile &Obj, Triple TT, SubtargetFeatures Features,
     LinkGraph::GetEdgeKindNameFunction GetEdgeKindName)
-    : Obj(Obj),
-      G(std::make_unique<LinkGraph>(Obj.getFileName().str(), std::move(SSP),
-                                    createTripleWithCOFFFormat(std::move(TT)),
-                                    std::move(Features),
-                                    std::move(GetEdgeKindName))) {
+    : Obj(Obj), G(std::make_unique<LinkGraph>(
+                    Obj.getFileName().str(), createTripleWithCOFFFormat(TT),
+                    std::move(Features), getPointerSize(Obj),
+                    getEndianness(Obj), std::move(GetEdgeKindName))) {
   LLVM_DEBUG({
     dbgs() << "Created COFFLinkGraphBuilder for \"" << Obj.getFileName()
            << "\"\n";
@@ -42,6 +37,16 @@ COFFLinkGraphBuilder::COFFLinkGraphBuilder(
 }
 
 COFFLinkGraphBuilder::~COFFLinkGraphBuilder() = default;
+
+unsigned
+COFFLinkGraphBuilder::getPointerSize(const object::COFFObjectFile &Obj) {
+  return Obj.getBytesInAddress();
+}
+
+support::endianness
+COFFLinkGraphBuilder::getEndianness(const object::COFFObjectFile &Obj) {
+  return Obj.isLittleEndian() ? support::little : support::big;
+}
 
 uint64_t COFFLinkGraphBuilder::getSectionSize(const object::COFFObjectFile &Obj,
                                               const object::coff_section *Sec) {
@@ -156,7 +161,7 @@ Error COFFLinkGraphBuilder::graphifySections() {
     if (!GraphSec) {
       GraphSec = &G->createSection(SectionName, Prot);
       if ((*Sec)->Characteristics & COFF::IMAGE_SCN_LNK_REMOVE)
-        GraphSec->setMemLifetime(orc::MemLifetime::NoAlloc);
+        GraphSec->setMemLifetimePolicy(orc::MemLifetimePolicy::NoAlloc);
     }
     if (GraphSec->getMemProt() != Prot)
       return make_error<JITLinkError>("MemProt should match");
@@ -220,19 +225,18 @@ Error COFFLinkGraphBuilder::graphifySymbols() {
             " (" + toString(SecOrErr.takeError()) + ")");
       Sec = *SecOrErr;
     }
-    auto InternedSymbolName = G->intern(std::move(SymbolName));
 
     // Create jitlink symbol
     jitlink::Symbol *GSym = nullptr;
     if (Sym->isFileRecord())
       LLVM_DEBUG({
         dbgs() << "    " << SymIndex << ": Skipping FileRecord symbol \""
-               << InternedSymbolName << "\" in "
+               << SymbolName << "\" in "
                << getCOFFSectionName(SectionIndex, Sec, *Sym)
                << " (index: " << SectionIndex << ") \n";
       });
     else if (Sym->isUndefined()) {
-      GSym = createExternalSymbol(SymIndex, InternedSymbolName, *Sym, Sec);
+      GSym = createExternalSymbol(SymIndex, SymbolName, *Sym, Sec);
     } else if (Sym->isWeakExternal()) {
       auto *WeakExternal = Sym->getAux<object::coff_aux_weak_external>();
       COFFSymbolIndex TagIndex = WeakExternal->TagIndex;
@@ -241,7 +245,7 @@ Error COFFLinkGraphBuilder::graphifySymbols() {
           {SymIndex, TagIndex, Characteristics, SymbolName});
     } else {
       Expected<jitlink::Symbol *> NewGSym =
-          createDefinedSymbol(SymIndex, InternedSymbolName, *Sym, Sec);
+          createDefinedSymbol(SymIndex, SymbolName, *Sym, Sec);
       if (!NewGSym)
         return NewGSym.takeError();
       GSym = *NewGSym;
@@ -249,7 +253,7 @@ Error COFFLinkGraphBuilder::graphifySymbols() {
         LLVM_DEBUG({
           dbgs() << "    " << SymIndex
                  << ": Creating defined graph symbol for COFF symbol \""
-                 << InternedSymbolName << "\" in "
+                 << SymbolName << "\" in "
                  << getCOFFSectionName(SectionIndex, Sec, *Sym)
                  << " (index: " << SectionIndex << ") \n";
           dbgs() << "      " << *GSym << "\n";
@@ -288,13 +292,14 @@ Error COFFLinkGraphBuilder::handleDirectiveSection(StringRef Str) {
       if (From.empty() || To.empty())
         return make_error<JITLinkError>(
             "Invalid COFF /alternatename directive");
-      AlternateNames[G->intern(From)] = G->intern(To);
+      AlternateNames[From] = To;
       break;
     }
     case COFF_OPT_incl: {
-      auto Symbol = &G->addExternalSymbol(S, 0, false);
-      Symbol->setLive(true);
-      ExternalSymbols[Symbol->getName()] = Symbol;
+      auto DataCopy = G->allocateContent(S);
+      StringRef StrCopy(DataCopy.data(), DataCopy.size());
+      ExternalSymbols[StrCopy] = &G->addExternalSymbol(StrCopy, 0, false);
+      ExternalSymbols[StrCopy]->setLive(true);
       break;
     }
     case COFF_OPT_export:
@@ -326,8 +331,8 @@ Error COFFLinkGraphBuilder::flushWeakAliasRequests() {
               ? Scope::Default
               : Scope::Local;
 
-      auto NewSymbol = createAliasSymbol(G->intern(WeakExternal.SymbolName),
-                                         Linkage::Weak, S, *Target);
+      auto NewSymbol =
+          createAliasSymbol(WeakExternal.SymbolName, Linkage::Weak, S, *Target);
       if (!NewSymbol)
         return NewSymbol.takeError();
       setGraphSymbol(AliasSymbol->getSectionNumber(), WeakExternal.Alias,
@@ -348,44 +353,37 @@ Error COFFLinkGraphBuilder::flushWeakAliasRequests() {
 }
 
 Error COFFLinkGraphBuilder::handleAlternateNames() {
-  for (auto &KeyValue : AlternateNames) {
-    auto DefinedSymbolName = KeyValue.second;
-    auto ExternalSymbolsName = KeyValue.first;
-    if (DefinedSymbols.count(DefinedSymbolName) &&
-        ExternalSymbols.count(ExternalSymbolsName)) {
-      auto *Target = DefinedSymbols[DefinedSymbolName];
-      auto *Alias = ExternalSymbols[ExternalSymbolsName];
+  for (auto &KeyValue : AlternateNames)
+    if (DefinedSymbols.count(KeyValue.second) &&
+        ExternalSymbols.count(KeyValue.first)) {
+      auto *Target = DefinedSymbols[KeyValue.second];
+      auto *Alias = ExternalSymbols[KeyValue.first];
       G->makeDefined(*Alias, Target->getBlock(), Target->getOffset(),
                      Target->getSize(), Linkage::Weak, Scope::Local, false);
     }
-  }
   return Error::success();
 }
 
 Symbol *COFFLinkGraphBuilder::createExternalSymbol(
-    COFFSymbolIndex SymIndex, orc::SymbolStringPtr SymbolName,
+    COFFSymbolIndex SymIndex, StringRef SymbolName,
     object::COFFSymbolRef Symbol, const object::coff_section *Section) {
-  llvm::jitlink::Symbol *Sym = nullptr;
-  if (!ExternalSymbols.count(SymbolName)) {
-    Sym = &G->addExternalSymbol(*SymbolName, Symbol.getValue(), false);
-    ExternalSymbols[Sym->getName()] = Sym;
-  } else {
-    Sym = ExternalSymbols[SymbolName];
-  }
+  if (!ExternalSymbols.count(SymbolName))
+    ExternalSymbols[SymbolName] =
+        &G->addExternalSymbol(SymbolName, Symbol.getValue(), false);
 
   LLVM_DEBUG({
     dbgs() << "    " << SymIndex
            << ": Creating external graph symbol for COFF symbol \""
-           << Sym->getName() << "\" in "
+           << SymbolName << "\" in "
            << getCOFFSectionName(Symbol.getSectionNumber(), Section, Symbol)
            << " (index: " << Symbol.getSectionNumber() << ") \n";
   });
-  return Sym;
+  return ExternalSymbols[SymbolName];
 }
 
-Expected<Symbol *>
-COFFLinkGraphBuilder::createAliasSymbol(orc::SymbolStringPtr SymbolName,
-                                        Linkage L, Scope S, Symbol &Target) {
+Expected<Symbol *> COFFLinkGraphBuilder::createAliasSymbol(StringRef SymbolName,
+                                                           Linkage L, Scope S,
+                                                           Symbol &Target) {
   if (!Target.isDefined()) {
     // FIXME: Support this when there's a way to handle this.
     return make_error<JITLinkError>("Weak external symbol with external "
@@ -461,18 +459,16 @@ Error COFFLinkGraphBuilder::calculateImplicitSizeOfSymbols() {
 }
 
 Expected<Symbol *> COFFLinkGraphBuilder::createDefinedSymbol(
-    COFFSymbolIndex SymIndex, orc::SymbolStringPtr SymbolName,
+    COFFSymbolIndex SymIndex, StringRef SymbolName,
     object::COFFSymbolRef Symbol, const object::coff_section *Section) {
-
   if (Symbol.isCommon()) {
     // FIXME: correct alignment
     return &G->addDefinedSymbol(
         G->createZeroFillBlock(getCommonSection(), Symbol.getValue(),
                                orc::ExecutorAddr(), Symbol.getValue(), 0),
-        0, SymbolName, Symbol.getValue(), Linkage::Weak, Scope::Default,
+        0, SymbolName, Symbol.getValue(), Linkage::Strong, Scope::Default,
         false, false);
   }
-
   if (Symbol.isAbsolute())
     return &G->addAbsoluteSymbol(SymbolName,
                                  orc::ExecutorAddr(Symbol.getValue()), 0,
@@ -606,11 +602,11 @@ Expected<Symbol *> COFFLinkGraphBuilder::createCOMDATExportRequest(
 // Process the second symbol of COMDAT sequence.
 Expected<Symbol *>
 COFFLinkGraphBuilder::exportCOMDATSymbol(COFFSymbolIndex SymIndex,
-                                         orc::SymbolStringPtr SymbolName,
+                                         StringRef SymbolName,
                                          object::COFFSymbolRef Symbol) {
   Block *B = getGraphBlock(Symbol.getSectionNumber());
   auto &PendingComdatExport = PendingComdatExports[Symbol.getSectionNumber()];
-  // NOTE: ComdatDef->Length is the size of "section" not size of symbol.
+  // NOTE: ComdatDef->Legnth is the size of "section" not size of symbol.
   // We use zero symbol size to not reach out of bound of block when symbol
   // offset is non-zero.
   auto GSym = &G->addDefinedSymbol(
@@ -628,24 +624,6 @@ COFFLinkGraphBuilder::exportCOMDATSymbol(COFFSymbolIndex SymIndex,
   DefinedSymbols[SymbolName] = GSym;
   PendingComdatExport = std::nullopt;
   return GSym;
-}
-
-Symbol *GetImageBaseSymbol::operator()(LinkGraph &G) {
-  if (ImageBase)
-    return *ImageBase;
-
-  auto IBN = G.intern(ImageBaseName);
-  ImageBase = G.findExternalSymbolByName(IBN);
-  if (*ImageBase)
-    return *ImageBase;
-  ImageBase = G.findAbsoluteSymbolByName(IBN);
-  if (*ImageBase)
-    return *ImageBase;
-  ImageBase = G.findDefinedSymbolByName(IBN);
-  if (*ImageBase)
-    return *ImageBase;
-
-  return nullptr;
 }
 
 } // namespace jitlink

@@ -22,11 +22,11 @@ using namespace object;
 using SectionPred = std::function<bool(const Section &Sec)>;
 
 static bool isDebugSection(const Section &Sec) {
-  return Sec.Name.starts_with(".debug") || Sec.Name.starts_with("reloc..debug");
+  return Sec.Name.startswith(".debug");
 }
 
 static bool isLinkerSection(const Section &Sec) {
-  return Sec.Name.starts_with("reloc.") || Sec.Name == "linking";
+  return Sec.Name.startswith("reloc.") || Sec.Name == "linking";
 }
 
 static bool isNameSection(const Section &Sec) { return Sec.Name == "name"; }
@@ -38,23 +38,23 @@ static bool isCommentSection(const Section &Sec) {
 }
 
 static Error dumpSectionToFile(StringRef SecName, StringRef Filename,
-                               StringRef InputFilename, Object &Obj) {
+                               Object &Obj) {
   for (const Section &Sec : Obj.Sections) {
     if (Sec.Name == SecName) {
       ArrayRef<uint8_t> Contents = Sec.Contents;
       Expected<std::unique_ptr<FileOutputBuffer>> BufferOrErr =
           FileOutputBuffer::create(Filename, Contents.size());
       if (!BufferOrErr)
-        return createFileError(Filename, BufferOrErr.takeError());
+        return BufferOrErr.takeError();
       std::unique_ptr<FileOutputBuffer> Buf = std::move(*BufferOrErr);
       std::copy(Contents.begin(), Contents.end(), Buf->getBufferStart());
       if (Error E = Buf->commit())
-        return createFileError(Filename, std::move(E));
+        return E;
       return Error::success();
     }
   }
-  return createFileError(Filename, errc::invalid_argument,
-                         "section '%s' not found", SecName.str().c_str());
+  return createStringError(errc::invalid_argument, "section '%s' not found",
+                           SecName.str().c_str());
 }
 
 static void removeSections(const CommonConfig &Config, Object &Obj) {
@@ -115,9 +115,8 @@ static Error handleArgs(const CommonConfig &Config, Object &Obj) {
     StringRef SecName;
     StringRef FileName;
     std::tie(SecName, FileName) = Flag.split("=");
-    if (Error E =
-            dumpSectionToFile(SecName, FileName, Config.InputFilename, Obj))
-      return E;
+    if (Error E = dumpSectionToFile(SecName, FileName, Obj))
+      return createFileError(FileName, std::move(E));
   }
 
   removeSections(Config, Obj);

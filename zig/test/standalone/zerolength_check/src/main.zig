@@ -5,7 +5,6 @@ test {
     const source = foo();
 
     @memcpy(dest, source);
-    @memmove(dest, source);
     @memset(dest, 4);
     @memset(dest, undefined);
 

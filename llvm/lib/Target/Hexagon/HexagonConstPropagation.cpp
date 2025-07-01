@@ -2503,8 +2503,7 @@ APInt HexagonConstEvaluator::getCmpImm(unsigned Opc, unsigned OpX,
   }
 
   uint64_t Val = MO.getImm();
-  // TODO: Is implicitTrunc correct here?
-  return APInt(32, Val, Signed, /*implicitTrunc=*/true);
+  return APInt(32, Val, Signed);
 }
 
 void HexagonConstEvaluator::replaceWithNop(MachineInstr &MI) {
@@ -2861,7 +2860,8 @@ bool HexagonConstEvaluator::rewriteHexConstDefs(MachineInstr &MI,
   // For each defined register, if it is a constant, create an instruction
   //   NewR = const
   // and replace all uses of the defined register with NewR.
-  for (unsigned R : DefRegs) {
+  for (unsigned i = 0, n = DefRegs.size(); i < n; ++i) {
+    unsigned R = DefRegs[i];
     const LatticeCell &L = Inputs.get(R);
     if (L.isBottom())
       continue;

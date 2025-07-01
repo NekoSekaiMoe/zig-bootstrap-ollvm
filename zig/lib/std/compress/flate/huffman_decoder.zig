@@ -132,7 +132,7 @@ fn HuffmanDecoder(
                 if (n > max) max = n;
                 count[n] += 1;
             }
-            if (max == 0) // empty tree
+            if (max == 0) // emtpy tree
                 return;
 
             // check for an over-subscribed or incomplete set of lengths
@@ -255,7 +255,7 @@ test "encode/decode literals" {
 
     for (1..286) |j| { // for all different number of codes
         var enc: LiteralEncoder = .{};
-        // create frequencies
+        // create freqencies
         var freq = [_]u16{0} ** 286;
         freq[256] = 1; // ensure we have end of block code
         for (&freq, 1..) |*f, i| {
@@ -263,7 +263,7 @@ test "encode/decode literals" {
                 f.* = @intCast(i);
         }
 
-        // encoder from frequencies
+        // encoder from freqencies
         enc.generate(&freq, 15);
 
         // get code_lens from encoder

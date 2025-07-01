@@ -26,6 +26,7 @@ public:
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
 
+  bool hasFP(const MachineFunction &MF) const override;
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
                             RegScavenger *RS) const override;
 
@@ -34,9 +35,6 @@ public:
                                 MachineBasicBlock::iterator MI) const override {
     return MBB.erase(MI);
   }
-
-protected:
-  bool hasFPImpl(const MachineFunction &MF) const override;
 };
 }
 #endif

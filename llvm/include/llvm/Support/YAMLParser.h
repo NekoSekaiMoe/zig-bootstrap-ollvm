@@ -240,14 +240,9 @@ public:
 private:
   StringRef Value;
 
-  StringRef getDoubleQuotedValue(StringRef UnquotedValue,
+  StringRef unescapeDoubleQuoted(StringRef UnquotedValue,
+                                 StringRef::size_type Start,
                                  SmallVectorImpl<char> &Storage) const;
-
-  static StringRef getSingleQuotedValue(StringRef RawValue,
-                                        SmallVectorImpl<char> &Storage);
-
-  static StringRef getPlainValue(StringRef RawValue,
-                                 SmallVectorImpl<char> &Storage);
 };
 
 /// A block scalar node is an opaque datum that can be presented as a

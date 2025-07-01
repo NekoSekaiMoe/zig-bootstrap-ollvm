@@ -5,7 +5,7 @@ const SourceBytes = @import("literals.zig").SourceBytes;
 
 // https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files
 
-pub const ResourceType = enum {
+pub const Resource = enum {
     accelerators,
     bitmap,
     cursor,
@@ -48,7 +48,7 @@ pub const ResourceType = enum {
     manifest_num,
 
     const map = std.StaticStringMapWithEql(
-        ResourceType,
+        Resource,
         std.static_string_map.eqlAsciiIgnoreCase,
     ).initComptime(.{
         .{ "ACCELERATORS", .accelerators },
@@ -72,7 +72,7 @@ pub const ResourceType = enum {
         .{ "VXD", .vxd },
     });
 
-    pub fn fromString(bytes: SourceBytes) ResourceType {
+    pub fn fromString(bytes: SourceBytes) Resource {
         const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes);
         if (maybe_ordinal) |ordinal| {
             if (ordinal.ordinal >= 256) return .user_defined;
@@ -81,8 +81,8 @@ pub const ResourceType = enum {
         return map.get(bytes.slice) orelse .user_defined;
     }
 
-    // TODO: Some comptime validation that RT <-> ResourceType conversion is synced?
-    pub fn fromRT(rt: res.RT) ResourceType {
+    // TODO: Some comptime validation that RT <-> Resource conversion is synced?
+    pub fn fromRT(rt: res.RT) Resource {
         return switch (rt) {
             .ACCELERATOR => .accelerators,
             .ANICURSOR => .anicursor_num,
@@ -111,7 +111,7 @@ pub const ResourceType = enum {
         };
     }
 
-    pub fn canUseRawData(resource: ResourceType) bool {
+    pub fn canUseRawData(resource: Resource) bool {
         return switch (resource) {
             .user_defined,
             .html,
@@ -125,7 +125,7 @@ pub const ResourceType = enum {
         };
     }
 
-    pub fn nameForErrorDisplay(resource: ResourceType) []const u8 {
+    pub fn nameForErrorDisplay(resource: Resource) []const u8 {
         return switch (resource) {
             // zig fmt: off
             .accelerators, .bitmap, .cursor, .dialog, .dialogex, .dlginclude, .dlginit, .font,

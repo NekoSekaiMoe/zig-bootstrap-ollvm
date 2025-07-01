@@ -36,12 +36,18 @@
 #include <unistd.h>
 #endif
 
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <time.h>
 
-#include <dlfcn.h>
+#ifdef HAVE_DLFCN_H
+# include <dlfcn.h>
+#endif
 
+#ifdef HAVE_FCNTL_H
 # include <fcntl.h>
+#endif
 
 /// This function builds an error message into \p ErrMsg using the \p prefix
 /// string and the Unix error number given by \p errnum. If errnum is -1, the

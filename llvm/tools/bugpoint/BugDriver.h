@@ -25,6 +25,7 @@
 
 namespace llvm {
 
+class PassInfo;
 class Module;
 class GlobalVariable;
 class Function;

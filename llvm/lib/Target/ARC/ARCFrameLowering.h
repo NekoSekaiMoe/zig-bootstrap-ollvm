@@ -54,6 +54,8 @@ public:
   void processFunctionBeforeFrameFinalized(MachineFunction &MF,
                                            RegScavenger *RS) const override;
 
+  bool hasFP(const MachineFunction &MF) const override;
+
   MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I) const override;
@@ -61,9 +63,6 @@ public:
   bool assignCalleeSavedSpillSlots(
       llvm::MachineFunction &, const llvm::TargetRegisterInfo *,
       std::vector<llvm::CalleeSavedInfo> &) const override;
-
-protected:
-  bool hasFPImpl(const MachineFunction &MF) const override;
 
 private:
   void adjustStackToMatchRecords(MachineBasicBlock &MBB,

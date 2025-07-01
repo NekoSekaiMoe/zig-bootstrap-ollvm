@@ -643,7 +643,7 @@ static bool shouldNotRewriteImmediateMessageArgs(const ObjCMessageExpr *Msg,
 static bool rewriteToCharLiteral(const ObjCMessageExpr *Msg,
                                    const CharacterLiteral *Arg,
                                    const NSAPI &NS, Commit &commit) {
-  if (Arg->getKind() != CharacterLiteralKind::Ascii)
+  if (Arg->getKind() != CharacterLiteral::Ascii)
     return false;
   if (NS.isNSNumberLiteralSelector(NSAPI::NSNumberWithChar,
                                    Msg->getSelector())) {
@@ -697,7 +697,11 @@ static bool getLiteralInfo(SourceRange literalRange,
 
   struct Suff {
     static bool has(StringRef suff, StringRef &text) {
-      return text.consume_back(suff);
+      if (text.endswith(suff)) {
+        text = text.substr(0, text.size()-suff.size());
+        return true;
+      }
+      return false;
     }
   };
 
@@ -735,9 +739,9 @@ static bool getLiteralInfo(SourceRange literalRange,
   Info.F = UpperF ? "F" : "f";
 
   Info.Hex = Info.Octal = false;
-  if (text.starts_with("0x"))
+  if (text.startswith("0x"))
     Info.Hex = true;
-  else if (!isFloat && !isIntZero && text.starts_with("0"))
+  else if (!isFloat && !isIntZero && text.startswith("0"))
     Info.Octal = true;
 
   SourceLocation B = literalRange.getBegin();
@@ -1000,7 +1004,6 @@ static bool rewriteToNumericBoxedExpression(const ObjCMessageExpr *Msg,
     case CK_LValueToRValue:
     case CK_NoOp:
     case CK_UserDefinedConversion:
-    case CK_HLSLArrayRValue:
       break;
 
     case CK_IntegralCast: {
@@ -1083,10 +1086,6 @@ static bool rewriteToNumericBoxedExpression(const ObjCMessageExpr *Msg,
 
     case CK_BooleanToSignedIntegral:
       llvm_unreachable("OpenCL-specific cast in Objective-C?");
-
-    case CK_HLSLVectorTruncation:
-      llvm_unreachable("HLSL-specific cast in Objective-C?");
-      break;
 
     case CK_FloatingToFixedPoint:
     case CK_FixedPointToFloating:

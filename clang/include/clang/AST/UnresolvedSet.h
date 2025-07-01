@@ -47,7 +47,6 @@ public:
   // temporaries with defaulted ctors are not zero initialized.
   UnresolvedSetIterator() : iterator_adaptor_base(nullptr) {}
 
-  uint64_t getDeclID() const { return I->getDeclID(); }
   NamedDecl *getDecl() const { return I->getDecl(); }
   void setDecl(NamedDecl *ND) const { return I->setDecl(ND); }
   AccessSpecifier getAccess() const { return I->getAccess(); }
@@ -71,8 +70,9 @@ private:
   UnresolvedSetImpl(const UnresolvedSetImpl &) = default;
   UnresolvedSetImpl &operator=(const UnresolvedSetImpl &) = default;
 
-  UnresolvedSetImpl(UnresolvedSetImpl &&) = default;
-  UnresolvedSetImpl &operator=(UnresolvedSetImpl &&) = default;
+  // FIXME: Switch these to "= default" once MSVC supports generating move ops
+  UnresolvedSetImpl(UnresolvedSetImpl &&) {}
+  UnresolvedSetImpl &operator=(UnresolvedSetImpl &&) { return *this; }
 
 public:
   // We don't currently support assignment through this iterator, so we might

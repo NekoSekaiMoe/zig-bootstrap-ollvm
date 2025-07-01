@@ -24,18 +24,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/EHUtils.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/CodeGen/BasicBlockSectionUtils.h"
-#include "llvm/CodeGen/BasicBlockSectionsProfileReader.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
@@ -129,9 +128,6 @@ static bool isColdBlock(const MachineBasicBlock &MBB,
 }
 
 bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
-  // Do not split functions when -basic-block-sections=all is specified.
-  if (MF.getTarget().getBBSectionsType() == llvm::BasicBlockSection::All)
-    return false;
   // We target functions with profile data. Static information in the form
   // of exception handling code may be split to cold if user passes the
   // mfs-split-ehcode flag.
@@ -139,17 +135,21 @@ bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
   if (!UseProfileData && !SplitAllEHCode)
     return false;
 
-  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
-  if (!TII.isFunctionSafeToSplit(MF))
+  // TODO: We don't split functions where a section attribute has been set
+  // since the split part may not be placed in a contiguous region. It may also
+  // be more beneficial to augment the linker to ensure contiguous layout of
+  // split functions within the same section as specified by the attribute.
+  if (MF.getFunction().hasSection() ||
+      MF.getFunction().hasFnAttribute("implicit-section-name"))
     return false;
 
-  // Do not split functions with BasicBlockSections profiles as they will
-  // be split by the BasicBlockSections pass.
-  auto BBSectionsProfile =
-      getAnalysisIfAvailable<BasicBlockSectionsProfileReaderWrapperPass>();
-  if (BBSectionsProfile != nullptr &&
-      BBSectionsProfile->getBBSPR().isFunctionHot(MF.getName()))
+  // We don't want to proceed further for cold functions
+  // or functions of unknown hotness. Lukewarm functions have no prefix.
+  std::optional<StringRef> SectionPrefix = MF.getFunction().getSectionPrefix();
+  if (SectionPrefix &&
+      (*SectionPrefix == "unlikely" || *SectionPrefix == "unknown")) {
     return false;
+  }
 
   // Renumbering blocks here preserves the order of the blocks as
   // sortBasicBlocksAndUpdateBranches uses the numeric identifier to sort
@@ -161,7 +161,7 @@ bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
   MachineBlockFrequencyInfo *MBFI = nullptr;
   ProfileSummaryInfo *PSI = nullptr;
   if (UseProfileData) {
-    MBFI = &getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
+    MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
     PSI = &getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
     // If we don't have a good profile (sample profile is not deemed
     // as a "good profile") and the function is not hot, then early
@@ -183,8 +183,7 @@ bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
 
     if (MBB.isEHPad())
       LandingPads.push_back(&MBB);
-    else if (UseProfileData && isColdBlock(MBB, MBFI, PSI) &&
-             TII.isMBBSafeToSplitToCold(MBB) && !SplitAllEHCode)
+    else if (UseProfileData && isColdBlock(MBB, MBFI, PSI) && !SplitAllEHCode)
       MBB.setSectionID(MBBSectionID::ColdSectionID);
   }
 
@@ -196,7 +195,7 @@ bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
     // Here we have UseProfileData == true.
     bool HasHotLandingPads = false;
     for (const MachineBasicBlock *LP : LandingPads) {
-      if (!isColdBlock(*LP, MBFI, PSI) || !TII.isMBBSafeToSplitToCold(*LP))
+      if (!isColdBlock(*LP, MBFI, PSI))
         HasHotLandingPads = true;
     }
     if (!HasHotLandingPads) {
@@ -211,9 +210,8 @@ bool MachineFunctionSplitter::runOnMachineFunction(MachineFunction &MF) {
 
 void MachineFunctionSplitter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<MachineModuleInfoWrapperPass>();
-  AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
+  AU.addRequired<MachineBlockFrequencyInfo>();
   AU.addRequired<ProfileSummaryInfoWrapperPass>();
-  AU.addUsedIfAvailable<BasicBlockSectionsProfileReaderWrapperPass>();
 }
 
 char MachineFunctionSplitter::ID = 0;

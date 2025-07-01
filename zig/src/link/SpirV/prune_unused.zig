@@ -39,7 +39,6 @@ fn canPrune(op: Opcode) bool {
         .Arithmetic,
         .RelationalAndLogical,
         .Bit,
-        .Annotation,
         => true,
         else => switch (op) {
             .OpFunction,
@@ -167,7 +166,7 @@ const ModuleInfo = struct {
             return error.InvalidPhysicalFormat;
         }
 
-        return .{
+        return ModuleInfo{
             .functions = functions.unmanaged,
             .callee_store = callee_store.items,
             .result_id_to_code_offset = result_id_to_code_offset.unmanaged,
@@ -256,8 +255,9 @@ fn removeIdsFromMap(a: Allocator, map: anytype, info: ModuleInfo, alive_marker: 
     }
 }
 
-pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: std.Progress.Node) !void {
-    const sub_node = progress.start("Prune unused IDs", 0);
+pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: *std.Progress.Node) !void {
+    var sub_node = progress.start("Prune unused IDs", 0);
+    sub_node.activate();
     defer sub_node.end();
 
     var arena = std.heap.ArenaAllocator.init(parser.a);
@@ -274,7 +274,7 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: std.Pr
         .alive = try std.DynamicBitSetUnmanaged.initEmpty(a, info.result_id_to_code_offset.count()),
     };
 
-    // Mark initial stuff as alive
+    // Mark initial stuff as slive
     {
         var it = binary.iterateInstructions();
         while (it.next()) |inst| {

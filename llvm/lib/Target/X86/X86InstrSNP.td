@@ -17,31 +17,31 @@
 let SchedRW = [WriteSystem] in {
 // F3 0F 01 FF
 let Uses = [RAX], Defs = [EAX, EFLAGS] in
-def PSMASH: I<0x01, MRM_FF, (outs), (ins), "psmash", []>, TB, XS,
+def PSMASH: I<0x01, MRM_FF, (outs), (ins), "psmash", []>, XS,
             Requires<[In64BitMode]>;
 
 // F2 0F 01 FF
 let Uses = [RAX, RCX, RDX], Defs = [EAX, EFLAGS] in
 def PVALIDATE64: I<0x01, MRM_FF, (outs), (ins), "pvalidate",[]>,
-                 TB, XD, Requires<[In64BitMode]>;
+                 XD, Requires<[In64BitMode]>;
 
 let Uses = [EAX, ECX, EDX], Defs = [EAX, EFLAGS] in
 def PVALIDATE32: I<0x01, MRM_FF, (outs), (ins), "pvalidate",[]>,
-                 TB, XD, Requires<[Not64BitMode]>;
+                 XD, Requires<[Not64BitMode]>;
 
 // F2 0F 01 FE
 let Uses = [RAX, RCX], Defs = [EAX, EFLAGS] in
-def RMPUPDATE: I<0x01, MRM_FE, (outs), (ins), "rmpupdate", []>, TB, XD,
+def RMPUPDATE: I<0x01, MRM_FE, (outs), (ins), "rmpupdate", []>, XD,
                Requires<[In64BitMode]>;
 
 // F3 0F 01 FE
 let Uses = [RAX, RCX, RDX], Defs = [EAX, EFLAGS] in
-def RMPADJUST: I<0x01, MRM_FE, (outs), (ins), "rmpadjust", []>, TB, XS,
+def RMPADJUST: I<0x01, MRM_FE, (outs), (ins), "rmpadjust", []>, XS,
                Requires<[In64BitMode]>;
 
 // F3 0F 01 FD
 let Uses = [RAX, RDX], Defs = [RAX, RCX, RDX, EFLAGS] in
-def RMPQUERY: I<0x01, MRM_FD, (outs), (ins), "rmpquery", []>, TB, XS,
+def RMPQUERY: I<0x01, MRM_FD, (outs), (ins), "rmpquery", []>, XS,
                Requires<[In64BitMode]>;
 } // SchedRW
 

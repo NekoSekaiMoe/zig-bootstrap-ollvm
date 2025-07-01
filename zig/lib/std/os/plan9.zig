@@ -182,11 +182,12 @@ pub const SIG = struct {
     pub const TTOU = 20;
 };
 pub const sigset_t = c_long;
+pub const empty_sigset = 0;
 pub const siginfo_t = c_long;
-// TODO plan9 doesn't have sigaction_fn. Sigaction is not a union, but we include it here to be compatible.
+// TODO plan9 doesn't have sigaction_fn. Sigaction is not a union, but we incude it here to be compatible.
 pub const Sigaction = extern struct {
-    pub const handler_fn = *const fn (i32) callconv(.c) void;
-    pub const sigaction_fn = *const fn (i32, *const siginfo_t, ?*anyopaque) callconv(.c) void;
+    pub const handler_fn = *const fn (i32) callconv(.C) void;
+    pub const sigaction_fn = *const fn (i32, *const siginfo_t, ?*anyopaque) callconv(.C) void;
 
     handler: extern union {
         handler: ?handler_fn,
@@ -198,10 +199,6 @@ pub const Sigaction = extern struct {
 pub const AT = struct {
     pub const FDCWD = -100; // we just make up a constant; FDCWD and openat don't actually exist in plan9
 };
-// Plan 9 doesn't do signals.  This is just needed to get through start.zig.
-pub fn sigemptyset() sigset_t {
-    return 0;
-}
 // TODO implement sigaction
 // right now it is just a shim to allow using start.zig code
 pub fn sigaction(sig: u6, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) usize {
@@ -288,16 +285,16 @@ pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, _: mode_t) usize {
     if (dirfd == AT.FDCWD) { // openat(AT_FDCWD, ...) == open(...)
         return open(path, flags);
     }
-    var dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var total_path_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
-    const rc = fd2path(dirfd, &dir_path_buf, std.fs.max_path_bytes);
+    var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var total_path_buf: [std.fs.MAX_PATH_BYTES + 1]u8 = undefined;
+    const rc = fd2path(dirfd, &dir_path_buf, std.fs.MAX_PATH_BYTES);
     if (rc != 0) return rc;
     var fba = std.heap.FixedBufferAllocator.init(&total_path_buf);
     var alloc = fba.allocator();
     const dir_path = std.mem.span(@as([*:0]u8, @ptrCast(&dir_path_buf)));
-    const total_path = std.fs.path.join(alloc, &.{ dir_path, std.mem.span(path) }) catch unreachable; // the allocation shouldn't fail because it should not exceed max_path_bytes
+    const total_path = std.fs.path.join(alloc, &.{ dir_path, std.mem.span(path) }) catch unreachable; // the allocation shouldn't fail because it should not exceed MAX_PATH_BYTES
     fba.reset();
-    const total_path_z = alloc.dupeZ(u8, total_path) catch unreachable; // should not exceed max_path_bytes + 1
+    const total_path_z = alloc.dupeZ(u8, total_path) catch unreachable; // should not exceed MAX_PATH_BYTES + 1
     return open(total_path_z.ptr, flags);
 }
 
@@ -370,8 +367,8 @@ pub fn sbrk(n: usize) usize {
         bloc = @intFromPtr(&ExecData.end);
         bloc_max = @intFromPtr(&ExecData.end);
     }
-    const bl = std.mem.alignForward(usize, bloc, std.heap.pageSize());
-    const n_aligned = std.mem.alignForward(usize, n, std.heap.pageSize());
+    const bl = std.mem.alignForward(usize, bloc, std.mem.page_size);
+    const n_aligned = std.mem.alignForward(usize, n, std.mem.page_size);
     if (bl + n_aligned > bloc_max) {
         // we need to allocate
         if (brk_(bl + n_aligned) < 0) return 0;

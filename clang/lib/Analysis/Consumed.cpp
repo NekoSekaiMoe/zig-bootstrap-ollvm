@@ -141,7 +141,7 @@ static bool isCallableInState(const CallableWhenAttr *CWAttr,
 }
 
 static bool isConsumableType(const QualType &QT) {
-  if (QT->isPointerOrReferenceType())
+  if (QT->isPointerType() || QT->isReferenceType())
     return false;
 
   if (const CXXRecordDecl *RD = QT->getAsCXXRecordDecl())
@@ -151,7 +151,7 @@ static bool isConsumableType(const QualType &QT) {
 }
 
 static bool isAutoCastType(const QualType &QT) {
-  if (QT->isPointerOrReferenceType())
+  if (QT->isPointerType() || QT->isReferenceType())
     return false;
 
   if (const CXXRecordDecl *RD = QT->getAsCXXRecordDecl())
@@ -184,6 +184,10 @@ static bool isRValueRef(QualType ParamType) {
 
 static bool isTestingFunction(const FunctionDecl *FunDecl) {
   return FunDecl->hasAttr<TestTypestateAttr>();
+}
+
+static bool isPointerOrRef(QualType ParamType) {
+  return ParamType->isPointerType() || ParamType->isReferenceType();
 }
 
 static ConsumedState mapConsumableAttrState(const QualType QT) {
@@ -644,7 +648,7 @@ bool ConsumedStmtVisitor::handleCall(const CallExpr *Call, const Expr *ObjArg,
       setStateForVarOrTmp(StateMap, PInfo, mapReturnTypestateAttrState(RT));
     else if (isRValueRef(ParamType) || isConsumableType(ParamType))
       setStateForVarOrTmp(StateMap, PInfo, consumed::CS_Consumed);
-    else if (ParamType->isPointerOrReferenceType() &&
+    else if (isPointerOrRef(ParamType) &&
              (!ParamType->getPointeeType().isConstQualified() ||
               isSetOnReadPtrType(ParamType)))
       setStateForVarOrTmp(StateMap, PInfo, consumed::CS_Unknown);
@@ -767,7 +771,7 @@ void ConsumedStmtVisitor::VisitCXXBindTemporaryExpr(
 void ConsumedStmtVisitor::VisitCXXConstructExpr(const CXXConstructExpr *Call) {
   CXXConstructorDecl *Constructor = Call->getConstructor();
 
-  QualType ThisType = Constructor->getFunctionObjectParameterType();
+  QualType ThisType = Constructor->getThisType()->getPointeeType();
 
   if (!isConsumableType(ThisType))
     return;
@@ -1195,7 +1199,7 @@ void ConsumedAnalyzer::determineExpectedReturnState(AnalysisDeclContext &AC,
                                                     const FunctionDecl *D) {
   QualType ReturnType;
   if (const auto *Constructor = dyn_cast<CXXConstructorDecl>(D)) {
-    ReturnType = Constructor->getFunctionObjectParameterType();
+    ReturnType = Constructor->getThisType()->getPointeeType();
   } else
     ReturnType = D->getCallResultType();
 
@@ -1229,9 +1233,6 @@ bool ConsumedAnalyzer::splitState(const CFGBlock *CurrBlock,
 
   if (const auto *IfNode =
           dyn_cast_or_null<IfStmt>(CurrBlock->getTerminator().getStmt())) {
-    if (IfNode->isConsteval())
-      return false;
-
     const Expr *Cond = IfNode->getCond();
 
     PInfo = Visitor.getInfo(Cond);

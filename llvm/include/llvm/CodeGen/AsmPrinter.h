@@ -16,13 +16,14 @@
 #define LLVM_CODEGEN_ASMPRINTER_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/CodeGen/AsmPrinterHandler.h"
 #include "llvm/CodeGen/DwarfStringPoolEntry.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/StackMaps.h"
-#include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
@@ -33,18 +34,14 @@
 namespace llvm {
 
 class AddrLabelMap;
-class AsmPrinterHandler;
 class BasicBlock;
 class BlockAddress;
 class Constant;
 class ConstantArray;
-class ConstantPtrAuth;
 class DataLayout;
-class DebugHandlerBase;
 class DIE;
 class DIEAbbrev;
 class DwarfDebug;
-class EHStreamer;
 class GCMetadataPrinter;
 class GCStrategy;
 class GlobalAlias;
@@ -138,12 +135,29 @@ public:
     MCSymbol *BeginLabel, *EndLabel;
   };
 
-  MapVector<MBBSectionID, MBBSectionRange> MBBSectionRanges;
+  MapVector<unsigned, MBBSectionRange> MBBSectionRanges;
 
   /// Map global GOT equivalent MCSymbols to GlobalVariables and keep track of
   /// its number of uses by other globals.
   using GOTEquivUsePair = std::pair<const GlobalVariable *, unsigned>;
   MapVector<const MCSymbol *, GOTEquivUsePair> GlobalGOTEquivs;
+
+  /// struct HandlerInfo and Handlers permit users or target extended
+  /// AsmPrinter to add their own handlers.
+  struct HandlerInfo {
+    std::unique_ptr<AsmPrinterHandler> Handler;
+    StringRef TimerName;
+    StringRef TimerDescription;
+    StringRef TimerGroupName;
+    StringRef TimerGroupDescription;
+
+    HandlerInfo(std::unique_ptr<AsmPrinterHandler> Handler, StringRef TimerName,
+                StringRef TimerDescription, StringRef TimerGroupName,
+                StringRef TimerGroupDescription)
+        : Handler(std::move(Handler)), TimerName(TimerName),
+          TimerDescription(TimerDescription), TimerGroupName(TimerGroupName),
+          TimerGroupDescription(TimerGroupDescription) {}
+  };
 
   // Flags representing which CFI section is required for a function/module.
   enum class CFISection : unsigned {
@@ -158,7 +172,7 @@ private:
   /// Map a basic block section ID to the exception symbol associated with that
   /// section. Map entries are assigned and looked up via
   /// AsmPrinter::getMBBExceptionSym.
-  DenseMap<MBBSectionID, MCSymbol *> MBBSectionExceptionSyms;
+  DenseMap<unsigned, MCSymbol *> MBBSectionExceptionSyms;
 
   // The symbol used to represent the start of the current BB section of the
   // function. This is used to calculate the size of the BB section.
@@ -188,15 +202,9 @@ protected:
   /// For dso_local functions, the current $local alias for the function.
   MCSymbol *CurrentFnBeginLocal = nullptr;
 
-  /// A handle to the EH info emitter (if present).
-  // Only for EHStreamer subtypes, but some C++ compilers will incorrectly warn
-  // us if we declare that directly.
-  SmallVector<std::unique_ptr<AsmPrinterHandler>, 1> EHHandlers;
-
-  // A vector of all Debuginfo emitters we should use. Protected so that
-  // targets can add their own. This vector maintains ownership of the
-  // emitters.
-  SmallVector<std::unique_ptr<AsmPrinterHandler>, 2> Handlers;
+  /// A vector of all debug/EH info emitters we should use. This vector
+  /// maintains ownership of the emitters.
+  std::vector<HandlerInfo> Handlers;
   size_t NumUserHandlers = 0;
 
   StackMaps SM;
@@ -213,7 +221,7 @@ private:
 
   /// A handler that supports pseudo probe emission with embedded inline
   /// context.
-  std::unique_ptr<PseudoProbeHandler> PP;
+  PseudoProbeHandler *PP = nullptr;
 
   /// CFISection type the module needs i.e. either .eh_frame or .debug_frame.
   CFISection ModuleCFISection = CFISection::None;
@@ -228,8 +236,9 @@ private:
   /// split stack prologue.
   bool HasNoSplitStack = false;
 
-  /// True if debugging information is available in this module.
-  bool DbgInfoAvailable = false;
+  /// Raw FDOstream for outputting machine basic block frequncies if the
+  /// --mbb-profile-dump flag is set for downstream cost modelling applications
+  std::unique_ptr<raw_fd_ostream> MBBProfileDumpFileOutput;
 
 protected:
   explicit AsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer);
@@ -436,9 +445,6 @@ public:
   /// Get the CFISection type for the module.
   CFISection getModuleCFISectionType() const { return ModuleCFISection; }
 
-  /// Returns true if valid debug info is present.
-  bool hasDebugInfo() const { return DbgInfoAvailable; }
-
   bool needsSEHMoves();
 
   /// Since emitting CFI unwind information is entangled with supporting the
@@ -528,7 +534,10 @@ public:
   // Overridable Hooks
   //===------------------------------------------------------------------===//
 
-  void addAsmPrinterHandler(std::unique_ptr<AsmPrinterHandler> Handler);
+  void addAsmPrinterHandler(HandlerInfo Handler) {
+    Handlers.insert(Handlers.begin(), std::move(Handler));
+    NumUserHandlers++;
+  }
 
   // Targets can, or in the case of EmitInstruction, must implement these to
   // customize output.
@@ -580,13 +589,6 @@ public:
     emitGlobalConstant(DL, CV);
   }
 
-  virtual const MCExpr *lowerConstantPtrAuth(const ConstantPtrAuth &CPA) {
-    report_fatal_error("ptrauth constant lowering not implemented");
-  }
-
-  /// Lower the specified BlockAddress to an MCExpr.
-  virtual const MCExpr *lowerBlockAddressConstant(const BlockAddress &BA);
-
   /// Return true if the basic block has exactly one predecessor and the control
   /// transfer mechanism between the predecessor and this block is a
   /// fall-through.
@@ -596,26 +598,6 @@ public:
   /// Targets can override this to customize the output of IMPLICIT_DEF
   /// instructions in verbose mode.
   virtual void emitImplicitDef(const MachineInstr *MI) const;
-
-  /// getSubtargetInfo() cannot be used where this is needed because we don't
-  /// have a MachineFunction when we're lowering a GlobalIFunc, and
-  /// getSubtargetInfo requires one. Override the implementation in targets
-  /// that support the Mach-O IFunc lowering.
-  virtual const MCSubtargetInfo *getIFuncMCSubtargetInfo() const {
-    return nullptr;
-  }
-
-  virtual void emitMachOIFuncStubBody(Module &M, const GlobalIFunc &GI,
-                                      MCSymbol *LazyPointer) {
-    llvm_unreachable(
-        "Mach-O IFunc lowering is not yet supported on this target");
-  }
-
-  virtual void emitMachOIFuncStubHelperBody(Module &M, const GlobalIFunc &GI,
-                                            MCSymbol *LazyPointer) {
-    llvm_unreachable(
-        "Mach-O IFunc lowering is not yet supported on this target");
-  }
 
   /// Emit N NOP instructions.
   void emitNops(unsigned N);
@@ -632,7 +614,7 @@ public:
                                          StringRef Suffix) const;
 
   /// Return the MCSymbol for the specified ExternalSymbol.
-  MCSymbol *GetExternalSymbolSymbol(Twine Sym) const;
+  MCSymbol *GetExternalSymbolSymbol(StringRef Sym) const;
 
   /// Return the symbol for the specified jump table entry.
   MCSymbol *GetJTISymbol(unsigned JTID, bool isLinkerPrivate = false) const;
@@ -785,18 +767,6 @@ public:
   void emitDwarfDIE(const DIE &Die) const;
 
   //===------------------------------------------------------------------===//
-  // CodeView Helper Routines
-  //===------------------------------------------------------------------===//
-
-  /// Gets information required to create a CodeView debug symbol for a jump
-  /// table.
-  /// Return value is <Base Address, Base Offset, Branch Address, Entry Size>
-  virtual std::tuple<const MCSymbol *, uint64_t, const MCSymbol *,
-                     codeview::JumpTableEntrySize>
-  getCodeViewJumpTableInfo(int JTI, const MachineInstr *BranchInstr,
-                           const MCSymbol *BranchLabel) const;
-
-  //===------------------------------------------------------------------===//
   // Inline Asm Support
   //===------------------------------------------------------------------===//
 
@@ -870,9 +840,6 @@ private:
   /// This method emits a comment next to header for the current function.
   virtual void emitFunctionHeaderComment();
 
-  /// This method emits prefix-like data before the current function.
-  void emitFunctionPrefix(ArrayRef<const Constant *> Prefix);
-
   /// Emit a blob of inline asm to the output streamer.
   void
   emitInlineAsm(StringRef Str, const MCSubtargetInfo &STI,
@@ -893,15 +860,8 @@ private:
   // Internal Implementation Details
   //===------------------------------------------------------------------===//
 
-  void emitJumpTableImpl(const MachineJumpTableInfo &MJTI,
-                         ArrayRef<unsigned> JumpTableIndices,
-                         bool JTInDiffSection);
-  void emitJumpTableEntry(const MachineJumpTableInfo &MJTI,
+  void emitJumpTableEntry(const MachineJumpTableInfo *MJTI,
                           const MachineBasicBlock *MBB, unsigned uid) const;
-
-  void emitJumpTableSizesSection(const MachineJumpTableInfo &MJTI,
-                                 const Function &F) const;
-
   void emitLLVMUsedList(const ConstantArray *InitList);
   /// Emit llvm.ident metadata in an '.ident' directive.
   void emitModuleIdents(Module &M);
@@ -909,14 +869,13 @@ private:
   virtual void emitModuleCommandLines(Module &M);
 
   GCMetadataPrinter *getOrCreateGCPrinter(GCStrategy &S);
+  void emitGlobalAlias(Module &M, const GlobalAlias &GA);
   void emitGlobalIFunc(Module &M, const GlobalIFunc &GI);
 
-private:
   /// This method decides whether the specified basic block requires a label.
   bool shouldEmitLabelForBasicBlock(const MachineBasicBlock &MBB) const;
 
 protected:
-  virtual void emitGlobalAlias(const Module &M, const GlobalAlias &GA);
   virtual bool shouldEmitWeakSwiftAsyncExtendedFramePointerFlags() const {
     return false;
   }

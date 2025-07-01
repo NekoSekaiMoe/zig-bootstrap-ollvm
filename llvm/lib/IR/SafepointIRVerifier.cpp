@@ -289,7 +289,6 @@ static void PrintValueSet(raw_ostream &OS, IteratorTy Begin, IteratorTy End) {
 
 using AvailableValueSet = DenseSet<const Value *>;
 
-namespace {
 /// State we compute and track per basic block.
 struct BasicBlockState {
   // Set of values available coming in, before the phi nodes
@@ -306,7 +305,6 @@ struct BasicBlockState {
   // contribute to AvailableOut.
   bool Cleared = false;
 };
-} // namespace
 
 /// A given derived pointer can have multiple base pointers through phi/selects.
 /// This type indicates when the base pointer is exclusively constant

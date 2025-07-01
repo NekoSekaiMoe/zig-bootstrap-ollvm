@@ -25,6 +25,8 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -331,7 +333,6 @@ MSP430TargetLowering::MSP430TargetLowering(const TargetMachine &TM,
 
   setMinFunctionAlignment(Align(2));
   setPrefFunctionAlignment(Align(2));
-  setMaxAtomicSizeInBitsSupported(0);
 }
 
 SDValue MSP430TargetLowering::LowerOperation(SDValue Op,
@@ -525,7 +526,7 @@ static void AnalyzeArguments(CCState &State,
 
     if (!UsedStack && Parts == 2 && RegsLeft == 1) {
       // Special case for 32-bit register split, see EABI section 3.3.3
-      MCRegister Reg = State.AllocateReg(RegList);
+      unsigned Reg = State.AllocateReg(RegList);
       State.addLoc(CCValAssign::getReg(ValNo++, ArgVT, Reg, LocVT, LocInfo));
       RegsLeft -= 1;
 
@@ -533,7 +534,7 @@ static void AnalyzeArguments(CCState &State,
       CC_MSP430_AssignStack(ValNo++, ArgVT, LocVT, LocInfo, ArgFlags, State);
     } else if (Parts <= RegsLeft) {
       for (unsigned j = 0; j < Parts; j++) {
-        MCRegister Reg = State.AllocateReg(RegList);
+        unsigned Reg = State.AllocateReg(RegList);
         State.addLoc(CCValAssign::getReg(ValNo++, ArgVT, Reg, LocVT, LocInfo));
         RegsLeft--;
       }
@@ -723,8 +724,7 @@ MSP430TargetLowering::CanLowerReturn(CallingConv::ID CallConv,
                                      MachineFunction &MF,
                                      bool IsVarArg,
                                      const SmallVectorImpl<ISD::OutputArg> &Outs,
-                                     LLVMContext &Context,
-                                     const Type *RetTy) const {
+                                     LLVMContext &Context) const {
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, RVLocs, Context);
   return CCInfo.CheckReturn(Outs, RetCC_MSP430);
@@ -863,12 +863,11 @@ SDValue MSP430TargetLowering::LowerCCCCallTo(
 
       if (Flags.isByVal()) {
         SDValue SizeNode = DAG.getConstant(Flags.getByValSize(), dl, MVT::i16);
-        MemOp = DAG.getMemcpy(Chain, dl, PtrOff, Arg, SizeNode,
-                              Flags.getNonZeroByValAlign(),
-                              /*isVolatile*/ false,
-                              /*AlwaysInline=*/true,
-                              /*CI=*/nullptr, std::nullopt,
-                              MachinePointerInfo(), MachinePointerInfo());
+        MemOp = DAG.getMemcpy(
+            Chain, dl, PtrOff, Arg, SizeNode, Flags.getNonZeroByValAlign(),
+            /*isVolatile*/ false,
+            /*AlwaysInline=*/true,
+            /*isTailCall=*/false, MachinePointerInfo(), MachinePointerInfo());
       } else {
         MemOp = DAG.getStore(Chain, dl, Arg, PtrOff, MachinePointerInfo());
       }
@@ -965,7 +964,7 @@ SDValue MSP430TargetLowering::LowerShifts(SDValue Op,
   if (!isa<ConstantSDNode>(N->getOperand(1)))
     return Op;
 
-  uint64_t ShiftAmount = N->getConstantOperandVal(1);
+  uint64_t ShiftAmount = cast<ConstantSDNode>(N->getOperand(1))->getZExtValue();
 
   // Expand the stuff into sequence of shifts.
   SDValue Victim = N->getOperand(0);
@@ -1149,10 +1148,15 @@ SDValue MSP430TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   // but they are different from CMP.
   // FIXME: since we're doing a post-processing, use a pseudoinstr here, so
   // lowering & isel wouldn't diverge.
-  bool andCC = isNullConstant(RHS) && LHS.hasOneUse() &&
-               (LHS.getOpcode() == ISD::AND ||
-                (LHS.getOpcode() == ISD::TRUNCATE &&
-                 LHS.getOperand(0).getOpcode() == ISD::AND));
+  bool andCC = false;
+  if (ConstantSDNode *RHSC = dyn_cast<ConstantSDNode>(RHS)) {
+    if (RHSC->isZero() && LHS.hasOneUse() &&
+        (LHS.getOpcode() == ISD::AND ||
+         (LHS.getOpcode() == ISD::TRUNCATE &&
+          LHS.getOperand(0).getOpcode() == ISD::AND))) {
+      andCC = true;
+    }
+  }
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
   SDValue TargetCC;
   SDValue Flag = EmitCMP(LHS, RHS, TargetCC, CC, dl, DAG);
@@ -1164,8 +1168,8 @@ SDValue MSP430TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   bool Invert = false;
   bool Shift = false;
   bool Convert = true;
-  switch (TargetCC->getAsZExtVal()) {
-  default:
+  switch (cast<ConstantSDNode>(TargetCC)->getZExtValue()) {
+   default:
     Convert = false;
     break;
    case MSP430CC::COND_HS:
@@ -1189,7 +1193,7 @@ SDValue MSP430TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
      // C = ~Z for AND instruction, thus we can put Res = ~(SR & 1), however,
      // Res = (SR >> 1) & 1 is 1 word shorter.
      break;
-   }
+  }
   EVT VT = Op.getValueType();
   SDValue One  = DAG.getConstant(1, dl, VT);
   if (Convert) {
@@ -1265,7 +1269,7 @@ SDValue MSP430TargetLowering::LowerRETURNADDR(SDValue Op,
   if (verifyReturnAddressArgumentIsConstant(Op, DAG))
     return SDValue();
 
-  unsigned Depth = Op.getConstantOperandVal(0);
+  unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   SDLoc dl(Op);
   EVT PtrVT = Op.getValueType();
 
@@ -1291,7 +1295,7 @@ SDValue MSP430TargetLowering::LowerFRAMEADDR(SDValue Op,
 
   EVT VT = Op.getValueType();
   SDLoc dl(Op);  // FIXME probably not meaningful
-  unsigned Depth = Op.getConstantOperandVal(0);
+  unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl,
                                          MSP430::R4, VT);
   while (Depth--)

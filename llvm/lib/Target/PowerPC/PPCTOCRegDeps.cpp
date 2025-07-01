@@ -60,15 +60,23 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MCTargetDesc/PPCPredicates.h"
 #include "PPC.h"
+#include "PPCInstrBuilder.h"
 #include "PPCInstrInfo.h"
+#include "PPCMachineFunctionInfo.h"
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -86,12 +94,13 @@ namespace {
 
 protected:
     bool hasTOCLoReloc(const MachineInstr &MI) {
-      if (MI.getOpcode() == PPC::LDtocL || MI.getOpcode() == PPC::ADDItocL8 ||
+      if (MI.getOpcode() == PPC::LDtocL ||
+          MI.getOpcode() == PPC::ADDItocL ||
           MI.getOpcode() == PPC::LWZtocL)
         return true;
 
       for (const MachineOperand &MO : MI.operands()) {
-        if (MO.getTargetFlags() == PPCII::MO_TOC_LO)
+        if ((MO.getTargetFlags() & PPCII::MO_ACCESS_MASK) == PPCII::MO_TOC_LO)
           return true;
       }
 

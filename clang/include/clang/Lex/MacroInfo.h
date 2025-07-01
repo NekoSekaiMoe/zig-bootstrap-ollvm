@@ -325,18 +325,15 @@ protected:
   SourceLocation Loc;
 
   /// MacroDirective kind.
-  LLVM_PREFERRED_TYPE(Kind)
   unsigned MDKind : 2;
 
   /// True if the macro directive was loaded from a PCH file.
-  LLVM_PREFERRED_TYPE(bool)
   unsigned IsFromPCH : 1;
 
   // Used by VisibilityMacroDirective ----------------------------------------//
 
   /// Whether the macro has public visibility (when described in a
   /// module).
-  LLVM_PREFERRED_TYPE(bool)
   unsigned IsPublic : 1;
 
   MacroDirective(Kind K, SourceLocation Loc)
@@ -515,7 +512,7 @@ class ModuleMacro : public llvm::FoldingSetNode {
   friend class Preprocessor;
 
   /// The name defined by the macro.
-  const IdentifierInfo *II;
+  IdentifierInfo *II;
 
   /// The body of the #define, or nullptr if this is a #undef.
   MacroInfo *Macro;
@@ -529,7 +526,7 @@ class ModuleMacro : public llvm::FoldingSetNode {
   /// The number of modules whose macros are directly overridden by this one.
   unsigned NumOverrides;
 
-  ModuleMacro(Module *OwningModule, const IdentifierInfo *II, MacroInfo *Macro,
+  ModuleMacro(Module *OwningModule, IdentifierInfo *II, MacroInfo *Macro,
               ArrayRef<ModuleMacro *> Overrides)
       : II(II), Macro(Macro), OwningModule(OwningModule),
         NumOverrides(Overrides.size()) {
@@ -539,7 +536,7 @@ class ModuleMacro : public llvm::FoldingSetNode {
 
 public:
   static ModuleMacro *create(Preprocessor &PP, Module *OwningModule,
-                             const IdentifierInfo *II, MacroInfo *Macro,
+                             IdentifierInfo *II, MacroInfo *Macro,
                              ArrayRef<ModuleMacro *> Overrides);
 
   void Profile(llvm::FoldingSetNodeID &ID) const {
@@ -553,7 +550,7 @@ public:
   }
 
   /// Get the name of the macro.
-  const IdentifierInfo *getName() const { return II; }
+  IdentifierInfo *getName() const { return II; }
 
   /// Get the ID of the module that exports this macro.
   Module *getOwningModule() const { return OwningModule; }

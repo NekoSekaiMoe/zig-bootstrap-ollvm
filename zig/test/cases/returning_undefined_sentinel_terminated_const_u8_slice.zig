@@ -7,5 +7,5 @@ pub fn main() void {
 }
 
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

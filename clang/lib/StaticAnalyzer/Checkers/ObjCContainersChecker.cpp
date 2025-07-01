@@ -30,7 +30,12 @@ namespace {
 class ObjCContainersChecker : public Checker< check::PreStmt<CallExpr>,
                                              check::PostStmt<CallExpr>,
                                              check::PointerEscape> {
-  const BugType BT{this, "CFArray API", categories::CoreFoundationObjectiveC};
+  mutable std::unique_ptr<BugType> BT;
+  inline void initBugType() const {
+    if (!BT)
+      BT.reset(new BugType(this, "CFArray API",
+                           categories::CoreFoundationObjectiveC));
+  }
 
   inline SymbolRef getArraySym(const Expr *E, CheckerContext &C) const {
     SVal ArrayRef = C.getSVal(E);
@@ -82,7 +87,7 @@ void ObjCContainersChecker::checkPostStmt(const CallExpr *CE,
     return;
 
   // Add array size information to the state.
-  if (Name == "CFArrayCreate") {
+  if (Name.equals("CFArrayCreate")) {
     if (CE->getNumArgs() < 3)
       return;
     // Note, we can visit the Create method in the post-visit because
@@ -92,7 +97,7 @@ void ObjCContainersChecker::checkPostStmt(const CallExpr *CE,
     return;
   }
 
-  if (Name == "CFArrayGetCount") {
+  if (Name.equals("CFArrayGetCount")) {
     addSizeInfo(CE->getArg(0), CE, C);
     return;
   }
@@ -105,7 +110,7 @@ void ObjCContainersChecker::checkPreStmt(const CallExpr *CE,
     return;
 
   // Check the array access.
-  if (Name == "CFArrayGetValueAtIndex") {
+  if (Name.equals("CFArrayGetValueAtIndex")) {
     ProgramStateRef State = C.getState();
     // Retrieve the size.
     // Find out if we saw this array symbol before and have information about
@@ -135,9 +140,9 @@ void ObjCContainersChecker::checkPreStmt(const CallExpr *CE,
       ExplodedNode *N = C.generateErrorNode(StOutBound);
       if (!N)
         return;
-
+      initBugType();
       auto R = std::make_unique<PathSensitiveBugReport>(
-          BT, "Index is out of bounds", N);
+          *BT, "Index is out of bounds", N);
       R->addRange(IdxExpr->getSourceRange());
       bugreporter::trackExpressionValue(N, IdxExpr, *R,
                                         {bugreporter::TrackingKind::Thorough,

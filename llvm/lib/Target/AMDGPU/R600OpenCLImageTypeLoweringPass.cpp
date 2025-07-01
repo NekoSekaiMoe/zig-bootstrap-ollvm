@@ -31,7 +31,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -83,7 +82,7 @@ GetFunctionFromMDNode(MDNode *Node) {
   if (NumOps != NumKernelArgMDNodes + 1)
     return nullptr;
 
-  auto *F = mdconst::dyn_extract<Function>(Node->getOperand(0));
+  auto F = mdconst::dyn_extract<Function>(Node->getOperand(0));
   if (!F)
     return nullptr;
 
@@ -153,7 +152,7 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
     bool Modified = false;
 
     for (auto &Use : ImageArg.uses()) {
-      auto *Inst = dyn_cast<CallInst>(Use.getUser());
+      auto Inst = dyn_cast<CallInst>(Use.getUser());
       if (!Inst) {
         continue;
       }
@@ -164,11 +163,11 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
 
       Value *Replacement = nullptr;
       StringRef Name = F->getName();
-      if (Name.starts_with(GetImageResourceIDFunc)) {
+      if (Name.startswith(GetImageResourceIDFunc)) {
         Replacement = ConstantInt::get(Int32Type, ResourceID);
-      } else if (Name.starts_with(GetImageSizeFunc)) {
+      } else if (Name.startswith(GetImageSizeFunc)) {
         Replacement = &ImageSizeArg;
-      } else if (Name.starts_with(GetImageFormatFunc)) {
+      } else if (Name.startswith(GetImageFormatFunc)) {
         Replacement = &ImageFormatArg;
       } else {
         continue;
@@ -186,7 +185,7 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
     bool Modified = false;
 
     for (const auto &Use : SamplerArg.uses()) {
-      auto *Inst = dyn_cast<CallInst>(Use.getUser());
+      auto Inst = dyn_cast<CallInst>(Use.getUser());
       if (!Inst) {
         continue;
       }
@@ -218,7 +217,7 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
 
     bool Modified = false;
     InstsToErase.clear();
-    for (auto *ArgI = F->arg_begin(); ArgI != F->arg_end(); ++ArgI) {
+    for (auto ArgI = F->arg_begin(); ArgI != F->arg_end(); ++ArgI) {
       Argument &Arg = *ArgI;
       StringRef Type = ArgTypeFromMD(KernelMDNode, Arg.getArgNo());
 
@@ -244,8 +243,9 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
         Modified |= replaceSamplerUses(Arg, ResourceID);
       }
     }
-    for (auto *Inst : InstsToErase)
-      Inst->eraseFromParent();
+    for (unsigned i = 0; i < InstsToErase.size(); ++i) {
+      InstsToErase[i]->eraseFromParent();
+    }
 
     return Modified;
   }
@@ -287,10 +287,10 @@ class R600OpenCLImageTypeLoweringPass : public ModulePass {
     }
 
     // Create function with new signature and clone the old body into it.
-    auto *NewFT = FunctionType::get(FT->getReturnType(), ArgTypes, false);
-    auto *NewF = Function::Create(NewFT, F->getLinkage(), F->getName());
+    auto NewFT = FunctionType::get(FT->getReturnType(), ArgTypes, false);
+    auto NewF = Function::Create(NewFT, F->getLinkage(), F->getName());
     ValueToValueMapTy VMap;
-    auto *NewFArgIt = NewF->arg_begin();
+    auto NewFArgIt = NewF->arg_begin();
     for (auto &Arg: F->args()) {
       auto ArgName = Arg.getName();
       NewFArgIt->setName(ArgName);

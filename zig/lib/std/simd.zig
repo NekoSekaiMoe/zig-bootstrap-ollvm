@@ -1,7 +1,7 @@
 //! SIMD (Single Instruction; Multiple Data) convenience functions.
 //!
 //! May offer a potential boost in performance on some targets by performing
-//! the same operation on multiple elements at once.
+//! the same operations on multiple elements at once.
 //!
 //! Some functions are known to not work on MIPS.
 
@@ -10,62 +10,43 @@ const builtin = @import("builtin");
 
 pub fn suggestVectorLengthForCpu(comptime T: type, comptime cpu: std.Target.Cpu) ?comptime_int {
     // This is guesswork, if you have better suggestions can add it or edit the current here
+    // This can run in comptime only, but stage 1 fails at it, stage 2 can understand it
     const element_bit_size = @max(8, std.math.ceilPowerOfTwo(u16, @bitSizeOf(T)) catch unreachable);
     const vector_bit_size: u16 = blk: {
         if (cpu.arch.isX86()) {
-            if (T == bool and cpu.has(.x86, .prefer_mask_registers)) return 64;
-            if (builtin.zig_backend != .stage2_x86_64 and cpu.has(.x86, .avx512f) and !cpu.hasAny(.x86, &.{ .prefer_256_bit, .prefer_128_bit })) break :blk 512;
-            if (cpu.hasAny(.x86, &.{ .prefer_256_bit, .avx2 }) and !cpu.has(.x86, .prefer_128_bit)) break :blk 256;
-            if (cpu.has(.x86, .sse)) break :blk 128;
-            if (cpu.hasAny(.x86, &.{ .mmx, .@"3dnow" })) break :blk 64;
-        } else if (cpu.arch.isArm()) {
-            if (cpu.has(.arm, .neon)) break :blk 128;
+            if (T == bool and std.Target.x86.featureSetHas(cpu.features, .prefer_mask_registers)) return 64;
+            if (builtin.zig_backend != .stage2_x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx512f) and !std.Target.x86.featureSetHasAny(cpu.features, .{ .prefer_256_bit, .prefer_128_bit })) break :blk 512;
+            if (std.Target.x86.featureSetHasAny(cpu.features, .{ .prefer_256_bit, .avx2 }) and !std.Target.x86.featureSetHas(cpu.features, .prefer_128_bit)) break :blk 256;
+            if (std.Target.x86.featureSetHas(cpu.features, .sse)) break :blk 128;
+            if (std.Target.x86.featureSetHasAny(cpu.features, .{ .mmx, .@"3dnow" })) break :blk 64;
+        } else if (cpu.arch.isARM()) {
+            if (std.Target.arm.featureSetHas(cpu.features, .neon)) break :blk 128;
         } else if (cpu.arch.isAARCH64()) {
             // SVE allows up to 2048 bits in the specification, as of 2022 the most powerful machine has implemented 512-bit
             // I think is safer to just be on 128 until is more common
             // TODO: Check on this return when bigger values are more common
-            if (cpu.has(.aarch64, .sve)) break :blk 128;
-            if (cpu.has(.aarch64, .neon)) break :blk 128;
-        } else if (cpu.arch.isPowerPC()) {
-            if (cpu.has(.powerpc, .altivec)) break :blk 128;
+            if (std.Target.aarch64.featureSetHas(cpu.features, .sve)) break :blk 128;
+            if (std.Target.aarch64.featureSetHas(cpu.features, .neon)) break :blk 128;
+        } else if (cpu.arch.isPPC() or cpu.arch.isPPC64()) {
+            if (std.Target.powerpc.featureSetHas(cpu.features, .altivec)) break :blk 128;
         } else if (cpu.arch.isMIPS()) {
-            if (cpu.has(.mips, .msa)) break :blk 128;
+            if (std.Target.mips.featureSetHas(cpu.features, .msa)) break :blk 128;
             // TODO: Test MIPS capability to handle bigger vectors
             //       In theory MDMX and by extension mips3d have 32 registers of 64 bits which can use in parallel
             //       for multiple processing, but I don't know what's optimal here, if using
             //       the 2048 bits or using just 64 per vector or something in between
-            if (cpu.has(.mips, .mips3d)) break :blk 64;
+            if (std.Target.mips.featureSetHas(cpu.features, std.Target.mips.Feature.mips3d)) break :blk 64;
         } else if (cpu.arch.isRISCV()) {
-            // In RISC-V Vector Registers are length agnostic so there's no good way to determine the best size.
-            // The usual vector length in most RISC-V cpus is 256 bits, however it can get to multiple kB.
-            if (cpu.has(.riscv, .v)) {
-                inline for (.{
-                    .{ .zvl65536b, 65536 },
-                    .{ .zvl32768b, 32768 },
-                    .{ .zvl16384b, 16384 },
-                    .{ .zvl8192b, 8192 },
-                    .{ .zvl4096b, 4096 },
-                    .{ .zvl2048b, 2048 },
-                    .{ .zvl1024b, 1024 },
-                    .{ .zvl512b, 512 },
-                    .{ .zvl256b, 256 },
-                    .{ .zvl128b, 128 },
-                    .{ .zvl64b, 64 },
-                    .{ .zvl32b, 32 },
-                }) |mapping| {
-                    if (cpu.has(.riscv, mapping[0])) break :blk mapping[1];
-                }
-
-                break :blk 256;
-            }
+            // in risc-v the Vector Extension allows configurable vector sizes, but a standard size of 128 is a safe estimate
+            if (std.Target.riscv.featureSetHas(cpu.features, .v)) break :blk 128;
         } else if (cpu.arch.isSPARC()) {
             // TODO: Test Sparc capability to handle bigger vectors
             //       In theory Sparc have 32 registers of 64 bits which can use in parallel
             //       for multiple processing, but I don't know what's optimal here, if using
             //       the 2048 bits or using just 64 per vector or something in between
-            if (cpu.hasAny(.sparc, &.{ .vis, .vis2, .vis3 })) break :blk 64;
+            if (std.Target.sparc.featureSetHasAny(cpu.features, .{ .vis, .vis2, .vis3 })) break :blk 64;
         } else if (cpu.arch.isWasm()) {
-            if (cpu.has(.wasm, .simd128)) break :blk 128;
+            if (std.Target.wasm.featureSetHas(cpu.features, .simd128)) break :blk 128;
         }
         return null;
     };
@@ -81,7 +62,7 @@ pub fn suggestVectorLength(comptime T: type) ?comptime_int {
 }
 
 test "suggestVectorLengthForCpu works with signed and unsigned values" {
-    comptime var cpu = std.Target.Cpu.baseline(std.Target.Cpu.Arch.x86_64, builtin.os);
+    comptime var cpu = std.Target.Cpu.baseline(std.Target.Cpu.Arch.x86_64);
     comptime cpu.features.addFeature(@intFromEnum(std.Target.x86.Feature.avx512f));
     comptime cpu.features.populateDependencies(&std.Target.x86.all_features);
     const expected_len: usize = switch (builtin.zig_backend) {
@@ -96,8 +77,8 @@ test "suggestVectorLengthForCpu works with signed and unsigned values" {
 
 fn vectorLength(comptime VectorType: type) comptime_int {
     return switch (@typeInfo(VectorType)) {
-        .vector => |info| info.len,
-        .array => |info| info.len,
+        .Vector => |info| info.len,
+        .Array => |info| info.len,
         else => @compileError("Invalid type " ++ @typeName(VectorType)),
     };
 }
@@ -119,8 +100,8 @@ pub inline fn iota(comptime T: type, comptime len: usize) @Vector(len, T) {
         var out: [len]T = undefined;
         for (&out, 0..) |*element, i| {
             element.* = switch (@typeInfo(T)) {
-                .int => @as(T, @intCast(i)),
-                .float => @as(T, @floatFromInt(i)),
+                .Int => @as(T, @intCast(i)),
+                .Float => @as(T, @floatFromInt(i)),
                 else => @compileError("Can't use type " ++ @typeName(T) ++ " in iota."),
             };
         }
@@ -154,7 +135,7 @@ pub fn interlace(vecs: anytype) @Vector(vectorLength(@TypeOf(vecs[0])) * vecs.le
     //  The indices are correct. The problem seems to be with the @shuffle builtin.
     //  On MIPS, the test that interlaces small_base gives { 0, 2, 0, 0, 64, 255, 248, 200, 0, 0 }.
     //  Calling this with two inputs seems to work fine, but I'll let the compile error trigger for all inputs, just to be safe.
-    if (builtin.cpu.arch.isMIPS()) @compileError("TODO: Find out why interlace() doesn't work on MIPS");
+    comptime if (builtin.cpu.arch.isMIPS()) @compileError("TODO: Find out why interlace() doesn't work on MIPS");
 
     const VecType = @TypeOf(vecs[0]);
     const vecs_arr = @as([vecs.len]VecType, vecs);
@@ -222,6 +203,13 @@ pub fn extract(
 }
 
 test "vector patterns" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
+    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .aarch64) {
+        // https://github.com/ziglang/zig/issues/12012
+        return error.SkipZigTest;
+    }
+
     const base = @Vector(4, u32){ 10, 20, 30, 40 };
     const other_base = @Vector(4, u32){ 55, 66, 77, 88 };
 
@@ -237,7 +225,7 @@ test "vector patterns" {
     try std.testing.expectEqual([8]u32{ 10, 20, 30, 40, 55, 66, 77, 88 }, join(base, other_base));
     try std.testing.expectEqual([2]u32{ 20, 30 }, extract(base, 1, 2));
 
-    if (!builtin.cpu.arch.isMIPS()) {
+    if (comptime !builtin.cpu.arch.isMIPS()) {
         try std.testing.expectEqual([8]u32{ 10, 55, 20, 66, 30, 77, 40, 88 }, interlace(.{ base, other_base }));
 
         const small_braid = interlace(small_bases);
@@ -291,6 +279,8 @@ pub fn reverseOrder(vec: anytype) @TypeOf(vec) {
 }
 
 test "vector shifting" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
     const base = @Vector(4, u32){ 10, 20, 30, 40 };
 
     try std.testing.expectEqual([4]u32{ 30, 40, 999, 999 }, shiftElementsLeft(base, 2, 999));
@@ -355,6 +345,8 @@ pub fn countElementsWithValue(vec: anytype, value: std.meta.Child(@TypeOf(vec)))
 }
 
 test "vector searching" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
     const base = @Vector(8, u32){ 6, 4, 7, 4, 4, 2, 3, 7 };
 
     try std.testing.expectEqual(@as(?u3, 1), firstIndexOfValue(base, 4));
@@ -375,7 +367,7 @@ pub fn prefixScanWithFunc(
     comptime identity: std.meta.Child(@TypeOf(vec)),
 ) if (ErrorType == void) @TypeOf(vec) else ErrorType!@TypeOf(vec) {
     // I haven't debugged this, but it might be a cousin of sorts to what's going on with interlace.
-    if (builtin.cpu.arch.isMIPS()) @compileError("TODO: Find out why prefixScan doesn't work on MIPS");
+    comptime if (builtin.cpu.arch.isMIPS()) @compileError("TODO: Find out why prefixScan doesn't work on MIPS");
 
     const len = vectorLength(@TypeOf(vec));
 
@@ -402,18 +394,18 @@ pub fn prefixScan(comptime op: std.builtin.ReduceOp, comptime hop: isize, vec: a
     const Child = std.meta.Child(VecType);
 
     const identity = comptime switch (@typeInfo(Child)) {
-        .bool => switch (op) {
+        .Bool => switch (op) {
             .Or, .Xor => false,
             .And => true,
             else => @compileError("Invalid prefixScan operation " ++ @tagName(op) ++ " for vector of booleans."),
         },
-        .int => switch (op) {
+        .Int => switch (op) {
             .Max => std.math.minInt(Child),
             .Add, .Or, .Xor => 0,
             .Mul => 1,
             .And, .Min => std.math.maxInt(Child),
         },
-        .float => switch (op) {
+        .Float => switch (op) {
             .Max => -std.math.inf(Child),
             .Add => 0,
             .Mul => 1,
@@ -446,11 +438,11 @@ pub fn prefixScan(comptime op: std.builtin.ReduceOp, comptime hop: isize, vec: a
 }
 
 test "vector prefix scan" {
-    if ((builtin.cpu.arch == .armeb or builtin.cpu.arch == .thumbeb) and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/22060
-    if (builtin.cpu.arch == .aarch64_be and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21893
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .hexagon) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
 
-    if (builtin.cpu.arch.isMIPS()) return error.SkipZigTest;
+    if (comptime builtin.cpu.arch.isMIPS()) {
+        return error.SkipZigTest;
+    }
 
     const int_base = @Vector(4, i32){ 11, 23, 9, -21 };
     const float_base = @Vector(4, f32){ 2, 0.5, -10, 6.54321 };

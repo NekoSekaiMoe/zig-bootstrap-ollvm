@@ -69,7 +69,8 @@ private:
   void EmitSled(const MachineInstr &MI, SledKind Kind);
 
   // tblgen'erated function.
-  bool lowerPseudoInstExpansion(const MachineInstr *MI, MCInst &Inst);
+  bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
+                                   const MachineInstr *MI);
 
   // Emit PseudoReturn, PseudoReturn64, PseudoIndirectBranch,
   // and PseudoIndirectBranch64 as a JR, JR_MM, JALR, or JALR64 as appropriate
@@ -141,6 +142,8 @@ public:
   void emitFunctionBodyStart() override;
   void emitFunctionBodyEnd() override;
   void emitBasicBlockEnd(const MachineBasicBlock &MBB) override;
+  bool isBlockOnlyReachableByFallthrough(
+                                   const MachineBasicBlock* MBB) const override;
   bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
                        const char *ExtraCode, raw_ostream &O) override;
   bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNum,

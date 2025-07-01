@@ -14,10 +14,10 @@
 
 #include "WebAssemblyInstrInfo.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
+#include "Utils/WebAssemblyUtilities.h"
 #include "WebAssembly.h"
 #include "WebAssemblyMachineFunctionInfo.h"
 #include "WebAssemblySubtarget.h"
-#include "WebAssemblyUtilities.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
@@ -46,20 +46,18 @@ bool WebAssemblyInstrInfo::isReallyTriviallyReMaterializable(
   case WebAssembly::CONST_I64:
   case WebAssembly::CONST_F32:
   case WebAssembly::CONST_F64:
-    // TargetInstrInfo::isReallyTriviallyReMaterializable misses these
-    // because of the ARGUMENTS implicit def, so we manualy override it here.
+    // isReallyTriviallyReMaterializableGeneric misses these because of the
+    // ARGUMENTS implicit def, so we manualy override it here.
     return true;
   default:
-    return TargetInstrInfo::isReallyTriviallyReMaterializable(MI);
+    return false;
   }
 }
 
 void WebAssemblyInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                        MachineBasicBlock::iterator I,
                                        const DebugLoc &DL, MCRegister DestReg,
-                                       MCRegister SrcReg, bool KillSrc,
-                                       bool RenamableDest,
-                                       bool RenamableSrc) const {
+                                       MCRegister SrcReg, bool KillSrc) const {
   // This method is called by post-RA expansion, which expects only pregs to
   // exist. However we need to handle both here.
   auto &MRI = MBB.getParent()->getRegInfo();

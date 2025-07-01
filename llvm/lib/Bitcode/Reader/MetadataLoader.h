@@ -19,7 +19,6 @@
 #include <memory>
 
 namespace llvm {
-class BasicBlock;
 class BitcodeReaderValueList;
 class BitstreamCursor;
 class DISubprogram;

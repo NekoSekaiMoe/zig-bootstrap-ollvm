@@ -3,6 +3,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "vncoerce"
 
@@ -19,10 +20,6 @@ bool canCoerceMustAliasedValueToLoad(Value *StoredVal, Type *LoadTy,
   Type *StoredTy = StoredVal->getType();
 
   if (StoredTy == LoadTy)
-    return true;
-
-  if (isa<ScalableVectorType>(StoredTy) && isa<ScalableVectorType>(LoadTy) &&
-      DL.getTypeSizeInBits(StoredTy) == DL.getTypeSizeInBits(LoadTy))
     return true;
 
   // If the loaded/stored value is a first class array/struct, or scalable type,
@@ -87,8 +84,8 @@ Value *coerceAvailableValueToLoadType(Value *StoredVal, Type *LoadedTy,
   // If this is already the right type, just return it.
   Type *StoredValTy = StoredVal->getType();
 
-  TypeSize StoredValSize = DL.getTypeSizeInBits(StoredValTy);
-  TypeSize LoadedValSize = DL.getTypeSizeInBits(LoadedTy);
+  uint64_t StoredValSize = DL.getTypeSizeInBits(StoredValTy).getFixedValue();
+  uint64_t LoadedValSize = DL.getTypeSizeInBits(LoadedTy).getFixedValue();
 
   // If the store and reload are the same size, we can always reuse it.
   if (StoredValSize == LoadedValSize) {
@@ -122,8 +119,7 @@ Value *coerceAvailableValueToLoadType(Value *StoredVal, Type *LoadedTy,
   // If the loaded value is smaller than the available value, then we can
   // extract out a piece from it.  If the available value is too small, then we
   // can't do anything.
-  assert(!StoredValSize.isScalable() &&
-         TypeSize::isKnownGE(StoredValSize, LoadedValSize) &&
+  assert(StoredValSize >= LoadedValSize &&
          "canCoerceMustAliasedValueToLoad fail");
 
   // Convert source pointers to integers, which can be manipulated.
@@ -308,13 +304,6 @@ static Value *getStoreValueForLoadHelper(Value *SrcVal, unsigned Offset,
     return SrcVal;
   }
 
-  // Return scalable values directly to avoid needing to bitcast to integer
-  // types, as we do not support non-zero Offsets.
-  if (isa<ScalableVectorType>(LoadTy)) {
-    assert(Offset == 0 && "Expected a zero offset for scalable types");
-    return SrcVal;
-  }
-
   uint64_t StoreSize =
       (DL.getTypeSizeInBits(SrcVal->getType()).getFixedValue() + 7) / 8;
   uint64_t LoadSize = (DL.getTypeSizeInBits(LoadTy).getFixedValue() + 7) / 8;
@@ -345,15 +334,11 @@ static Value *getStoreValueForLoadHelper(Value *SrcVal, unsigned Offset,
 
 Value *getValueForLoad(Value *SrcVal, unsigned Offset, Type *LoadTy,
                        Instruction *InsertPt, const DataLayout &DL) {
+
 #ifndef NDEBUG
-  TypeSize SrcValSize = DL.getTypeStoreSize(SrcVal->getType());
-  TypeSize LoadSize = DL.getTypeStoreSize(LoadTy);
-  assert(SrcValSize.isScalable() == LoadSize.isScalable());
-  assert((SrcValSize.isScalable() || Offset + LoadSize <= SrcValSize) &&
-         "Expected Offset + LoadSize <= SrcValSize");
-  assert(
-      (!SrcValSize.isScalable() || (Offset == 0 && LoadSize == SrcValSize)) &&
-      "Expected scalable type sizes to match");
+  unsigned SrcValSize = DL.getTypeStoreSize(SrcVal->getType()).getFixedValue();
+  unsigned LoadSize = DL.getTypeStoreSize(LoadTy).getFixedValue();
+  assert(Offset + LoadSize <= SrcValSize);
 #endif
   IRBuilder<> Builder(InsertPt);
   SrcVal = getStoreValueForLoadHelper(SrcVal, Offset, LoadTy, Builder, DL);

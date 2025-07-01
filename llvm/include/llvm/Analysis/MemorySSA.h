@@ -108,12 +108,15 @@
 namespace llvm {
 
 template <class GraphType> struct GraphTraits;
+class BasicBlock;
 class Function;
-class Loop;
+class Instruction;
 class LLVMContext;
 class MemoryAccess;
 class MemorySSAWalker;
 class Module;
+class Use;
+class Value;
 class raw_ostream;
 
 namespace MSSAHelpers {
@@ -218,8 +221,8 @@ protected:
   inline unsigned getID() const;
 
   MemoryAccess(LLVMContext &C, unsigned Vty, DeleteValueTy DeleteValue,
-               BasicBlock *BB, AllocInfo AllocInfo)
-      : DerivedUser(Type::getVoidTy(C), Vty, AllocInfo, DeleteValue),
+               BasicBlock *BB, unsigned NumOperands)
+      : DerivedUser(Type::getVoidTy(C), Vty, nullptr, NumOperands, DeleteValue),
         Block(BB) {}
 
   // Use deleteValue() to delete a generic MemoryAccess.
@@ -280,8 +283,8 @@ protected:
 
   MemoryUseOrDef(LLVMContext &C, MemoryAccess *DMA, unsigned Vty,
                  DeleteValueTy DeleteValue, Instruction *MI, BasicBlock *BB,
-                 AllocInfo AllocInfo)
-      : MemoryAccess(C, Vty, DeleteValue, BB, AllocInfo),
+                 unsigned NumOperands)
+      : MemoryAccess(C, Vty, DeleteValue, BB, NumOperands),
         MemoryInstruction(MI) {
     setDefiningAccess(DMA);
   }
@@ -307,16 +310,15 @@ private:
 /// MemoryUse's is exactly the set of Instructions for which
 /// AliasAnalysis::getModRefInfo returns "Ref".
 class MemoryUse final : public MemoryUseOrDef {
-  constexpr static IntrusiveOperandsAllocMarker AllocMarker{1};
-
 public:
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(MemoryAccess);
 
   MemoryUse(LLVMContext &C, MemoryAccess *DMA, Instruction *MI, BasicBlock *BB)
-      : MemoryUseOrDef(C, DMA, MemoryUseVal, deleteMe, MI, BB, AllocMarker) {}
+      : MemoryUseOrDef(C, DMA, MemoryUseVal, deleteMe, MI, BB,
+                       /*NumOperands=*/1) {}
 
   // allocate space for exactly one operand
-  void *operator new(size_t S) { return User::operator new(S, AllocMarker); }
+  void *operator new(size_t S) { return User::operator new(S, 1); }
   void operator delete(void *Ptr) { User::operator delete(Ptr); }
 
   static bool classof(const Value *MA) {
@@ -368,8 +370,6 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryUse, MemoryAccess)
 /// associated with them. This use points to the nearest reaching
 /// MemoryDef/MemoryPhi.
 class MemoryDef final : public MemoryUseOrDef {
-  constexpr static IntrusiveOperandsAllocMarker AllocMarker{2};
-
 public:
   friend class MemorySSA;
 
@@ -377,11 +377,12 @@ public:
 
   MemoryDef(LLVMContext &C, MemoryAccess *DMA, Instruction *MI, BasicBlock *BB,
             unsigned Ver)
-      : MemoryUseOrDef(C, DMA, MemoryDefVal, deleteMe, MI, BB, AllocMarker),
+      : MemoryUseOrDef(C, DMA, MemoryDefVal, deleteMe, MI, BB,
+                       /*NumOperands=*/2),
         ID(Ver) {}
 
   // allocate space for exactly two operands
-  void *operator new(size_t S) { return User::operator new(S, AllocMarker); }
+  void *operator new(size_t S) { return User::operator new(S, 2); }
   void operator delete(void *Ptr) { User::operator delete(Ptr); }
 
   static bool classof(const Value *MA) {
@@ -476,10 +477,8 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryUseOrDef, MemoryAccess)
 /// Because MemoryUse's do not generate new definitions, they do not have this
 /// issue.
 class MemoryPhi final : public MemoryAccess {
-  constexpr static HungOffOperandsAllocMarker AllocMarker{};
-
   // allocate space for exactly zero operands
-  void *operator new(size_t S) { return User::operator new(S, AllocMarker); }
+  void *operator new(size_t S) { return User::operator new(S); }
 
 public:
   void operator delete(void *Ptr) { User::operator delete(Ptr); }
@@ -488,7 +487,7 @@ public:
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(MemoryAccess);
 
   MemoryPhi(LLVMContext &C, BasicBlock *BB, unsigned Ver, unsigned NumPreds = 0)
-      : MemoryAccess(C, MemoryPhiVal, deleteMe, BB, AllocMarker), ID(Ver),
+      : MemoryAccess(C, MemoryPhiVal, deleteMe, BB, 0), ID(Ver),
         ReservedSpace(NumPreds) {
     allocHungoffUses(ReservedSpace);
   }
@@ -693,7 +692,7 @@ inline void MemoryUseOrDef::resetOptimized() {
     cast<MemoryUse>(this)->resetOptimized();
 }
 
-template <> struct OperandTraits<MemoryPhi> : public HungoffOperandTraits {};
+template <> struct OperandTraits<MemoryPhi> : public HungoffOperandTraits<2> {};
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryPhi, MemoryAccess)
 
 /// Encapsulates MemorySSA, including all data associated with memory
@@ -701,7 +700,6 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryPhi, MemoryAccess)
 class MemorySSA {
 public:
   MemorySSA(Function &, AliasAnalysis *, DominatorTree *);
-  MemorySSA(Loop &, AliasAnalysis *, DominatorTree *);
 
   // MemorySSA must remain where it's constructed; Walkers it creates store
   // pointers to it.
@@ -802,11 +800,10 @@ protected:
   // Used by Memory SSA dumpers and wrapper pass
   friend class MemorySSAUpdater;
 
-  template <typename IterT>
   void verifyOrderingDominationAndDefUses(
-      IterT Blocks, VerificationLevel = VerificationLevel::Fast) const;
-  template <typename IterT> void verifyDominationNumbers(IterT Blocks) const;
-  template <typename IterT> void verifyPrevDefInPhis(IterT Blocks) const;
+      Function &F, VerificationLevel = VerificationLevel::Fast) const;
+  void verifyDominationNumbers(const Function &F) const;
+  void verifyPrevDefInPhis(Function &F) const;
 
   // This is used by the use optimizer and updater.
   AccessList *getWritableBlockAccesses(const BasicBlock *BB) const {
@@ -850,8 +847,7 @@ private:
   class OptimizeUses;
 
   CachingWalker *getWalkerImpl();
-  template <typename IterT>
-  void buildMemorySSA(BatchAAResults &BAA, IterT Blocks);
+  void buildMemorySSA(BatchAAResults &BAA);
 
   void prepareForMoveTo(MemoryAccess *, BasicBlock *);
   void verifyUseInDefs(MemoryAccess *, MemoryAccess *) const;
@@ -875,8 +871,7 @@ private:
   void renumberBlock(const BasicBlock *) const;
   AliasAnalysis *AA = nullptr;
   DominatorTree *DT;
-  Function *F = nullptr;
-  Loop *L = nullptr;
+  Function &F;
 
   // Memory SSA mappings
   DenseMap<const Value *, MemoryAccess *> ValueToMemoryAccess;
@@ -937,7 +932,7 @@ public:
   struct Result {
     Result(std::unique_ptr<MemorySSA> &&MSSA) : MSSA(std::move(MSSA)) {}
 
-    MemorySSA &getMSSA() { return *MSSA; }
+    MemorySSA &getMSSA() { return *MSSA.get(); }
 
     std::unique_ptr<MemorySSA> MSSA;
 
@@ -958,8 +953,6 @@ public:
       : OS(OS), EnsureOptimizedUses(EnsureOptimizedUses) {}
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-
-  static bool isRequired() { return true; }
 };
 
 /// Printer pass for \c MemorySSA via the walker.
@@ -971,14 +964,11 @@ public:
   explicit MemorySSAWalkerPrinterPass(raw_ostream &OS) : OS(OS) {}
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-
-  static bool isRequired() { return true; }
 };
 
 /// Verifier pass for \c MemorySSA.
 struct MemorySSAVerifierPass : PassInfoMixin<MemorySSAVerifierPass> {
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-  static bool isRequired() { return true; }
 };
 
 /// Legacy analysis pass which computes \c MemorySSA.
@@ -1269,7 +1259,7 @@ private:
     if (WalkingPhi && Location.Ptr) {
       PHITransAddr Translator(
           const_cast<Value *>(Location.Ptr),
-          OriginalAccess->getBlock()->getDataLayout(), nullptr);
+          OriginalAccess->getBlock()->getModule()->getDataLayout(), nullptr);
 
       if (Value *Addr =
               Translator.translateValue(OriginalAccess->getBlock(),

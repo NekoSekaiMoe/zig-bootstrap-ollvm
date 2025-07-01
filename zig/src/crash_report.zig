@@ -8,22 +8,15 @@ const windows = std.os.windows;
 const posix = std.posix;
 const native_os = builtin.os.tag;
 
-const Zcu = @import("Zcu.zig");
+const Module = @import("Module.zig");
 const Sema = @import("Sema.zig");
-const InternPool = @import("InternPool.zig");
 const Zir = std.zig.Zir;
-const Decl = Zcu.Decl;
-const dev = @import("dev.zig");
+const Decl = Module.Decl;
 
 /// To use these crash report diagnostics, publish this panic in your main file
 /// and add `pub const enable_segfault_handler = false;` to your `std_options`.
 /// You will also need to call initialize() on startup, preferably as the very first operation in your program.
-pub const panic = if (build_options.enable_debug_extensions)
-    std.debug.FullPanic(compilerPanic)
-else if (dev.env == .bootstrap)
-    std.debug.simple_panic
-else
-    std.debug.FullPanic(std.debug.defaultPanic);
+pub const panic = if (build_options.enable_debug_extensions) compilerPanic else std.builtin.default_panic;
 
 /// Install signal handlers to identify crashes and report diagnostics.
 pub fn initialize() void {
@@ -82,52 +75,41 @@ fn dumpStatusReport() !void {
 
     const stderr = io.getStdErr().writer();
     const block: *Sema.Block = anal.block;
-    const zcu = anal.sema.pt.zcu;
-
-    const file, const src_base_node = Zcu.LazySrcLoc.resolveBaseNode(block.src_base_inst, zcu) orelse {
-        const file = zcu.fileByIndex(block.src_base_inst.resolveFile(&zcu.intern_pool));
-        try stderr.print("Analyzing lost instruction in file '{}'. This should not happen!\n\n", .{file.path.fmt(zcu.comp)});
-        return;
-    };
+    const mod = anal.sema.mod;
+    const block_src_decl = mod.declPtr(block.src_decl);
 
     try stderr.writeAll("Analyzing ");
-    try stderr.print("Analyzing '{}'\n", .{file.path.fmt(zcu.comp)});
+    try writeFullyQualifiedDeclWithFile(mod, block_src_decl, stderr);
+    try stderr.writeAll("\n");
 
     print_zir.renderInstructionContext(
         allocator,
         anal.body,
         anal.body_index,
-        file,
-        src_base_node,
+        mod.namespacePtr(block.namespace).file_scope,
+        block_src_decl.src_node,
         6, // indent
         stderr,
     ) catch |err| switch (err) {
         error.OutOfMemory => try stderr.writeAll("  <out of memory dumping zir>\n"),
         else => |e| return e,
     };
-    try stderr.print(
-        \\    For full context, use the command
-        \\      zig ast-check -t {}
-        \\
-        \\
-    , .{file.path.fmt(zcu.comp)});
+    try stderr.writeAll("    For full context, use the command\n      zig ast-check -t ");
+    try writeFilePath(mod.namespacePtr(block.namespace).file_scope, stderr);
+    try stderr.writeAll("\n\n");
 
     var parent = anal.parent;
     while (parent) |curr| {
         fba.reset();
-        const cur_block_file = zcu.fileByIndex(curr.block.src_base_inst.resolveFile(&zcu.intern_pool));
-        try stderr.print("  in {}\n", .{cur_block_file.path.fmt(zcu.comp)});
-        _, const cur_block_src_base_node = Zcu.LazySrcLoc.resolveBaseNode(curr.block.src_base_inst, zcu) orelse {
-            try stderr.writeAll("    > [lost instruction; this should not happen]\n");
-            parent = curr.parent;
-            continue;
-        };
-        try stderr.writeAll("    > ");
+        try stderr.writeAll("  in ");
+        const curr_block_src_decl = mod.declPtr(curr.block.src_decl);
+        try writeFullyQualifiedDeclWithFile(mod, curr_block_src_decl, stderr);
+        try stderr.writeAll("\n    > ");
         print_zir.renderSingleInstruction(
             allocator,
             curr.body[curr.body_index],
-            cur_block_file,
-            cur_block_src_base_node,
+            mod.namespacePtr(curr.block.namespace).file_scope,
+            curr_block_src_decl.src_node,
             6, // indent
             stderr,
         ) catch |err| switch (err) {
@@ -144,12 +126,30 @@ fn dumpStatusReport() !void {
 
 var crash_heap: [16 * 4096]u8 = undefined;
 
-pub fn compilerPanic(msg: []const u8, maybe_ret_addr: ?usize) noreturn {
-    @branchHint(.cold);
+fn writeFilePath(file: *Module.File, writer: anytype) !void {
+    if (file.mod.root.root_dir.path) |path| {
+        try writer.writeAll(path);
+        try writer.writeAll(std.fs.path.sep_str);
+    }
+    if (file.mod.root.sub_path.len > 0) {
+        try writer.writeAll(file.mod.root.sub_path);
+        try writer.writeAll(std.fs.path.sep_str);
+    }
+    try writer.writeAll(file.sub_file_path);
+}
+
+fn writeFullyQualifiedDeclWithFile(mod: *Module, decl: *Decl, writer: anytype) !void {
+    try writeFilePath(decl.getFileScope(mod), writer);
+    try writer.writeAll(": ");
+    try decl.renderFullyQualifiedDebugName(mod, writer);
+}
+
+pub fn compilerPanic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, maybe_ret_addr: ?usize) noreturn {
     PanicSwitch.preDispatch();
+    @setCold(true);
     const ret_addr = maybe_ret_addr orelse @returnAddress();
     const stack_ctx: StackContext = .{ .current = .{ .ret_addr = ret_addr } };
-    PanicSwitch.dispatch(@errorReturnTrace(), stack_ctx, msg);
+    PanicSwitch.dispatch(error_return_trace, stack_ctx, msg);
 }
 
 /// Attaches a global SIGSEGV handler
@@ -161,15 +161,18 @@ pub fn attachSegfaultHandler() void {
         _ = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         return;
     }
-    const act: posix.Sigaction = .{
+    var act: posix.Sigaction = .{
         .handler = .{ .sigaction = handleSegfaultPosix },
-        .mask = posix.sigemptyset(),
+        .mask = posix.empty_sigset,
         .flags = (posix.SA.SIGINFO | posix.SA.RESTART | posix.SA.RESETHAND),
     };
-    debug.updateSegfaultHandler(&act);
+
+    debug.updateSegfaultHandler(&act) catch {
+        @panic("unable to install segfault handler, maybe adjust have_segfault_handling_support in std/debug.zig");
+    };
 }
 
-fn handleSegfaultPosix(sig: i32, info: *const posix.siginfo_t, ctx_ptr: ?*anyopaque) callconv(.c) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const posix.siginfo_t, ctx_ptr: ?*anyopaque) callconv(.C) noreturn {
     // TODO: use alarm() here to prevent infinite loops
     PanicSwitch.preDispatch();
 
@@ -208,7 +211,7 @@ const WindowsSegfaultMessage = union(enum) {
     illegal_instruction: void,
 };
 
-fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(.winapi) c_long {
+fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
     switch (info.ExceptionRecord.ExceptionCode) {
         windows.EXCEPTION_DATATYPE_MISALIGNMENT => handleSegfaultWindowsExtra(info, .{ .literal = "Unaligned Memory Access" }),
         windows.EXCEPTION_ACCESS_VIOLATION => handleSegfaultWindowsExtra(info, .segfault),
@@ -259,7 +262,7 @@ const StackContext = union(enum) {
     current: struct {
         ret_addr: ?usize,
     },
-    exception: *debug.ThreadContext,
+    exception: *const debug.ThreadContext,
     not_supported: void,
 
     pub fn dumpStackTrace(ctx: @This()) void {
@@ -307,6 +310,9 @@ const PanicSwitch = struct {
     /// In recoverable cases, the program will not abort
     /// until all panicking threads have dumped their traces.
     var panicking = std.atomic.Value(u8).init(0);
+
+    // Locked to avoid interleaving panic messages from multiple threads.
+    var panic_mutex = std.Thread.Mutex{};
 
     /// Tracks the state of the current panic.  If the code within the
     /// panic triggers a secondary panic, this allows us to recover.
@@ -375,7 +381,7 @@ const PanicSwitch = struct {
 
         state.recover_stage = .release_ref_count;
 
-        std.debug.lockStdErr();
+        panic_mutex.lock();
 
         state.recover_stage = .release_mutex;
 
@@ -435,7 +441,7 @@ const PanicSwitch = struct {
     noinline fn releaseMutex(state: *volatile PanicState) noreturn {
         state.recover_stage = .abort;
 
-        std.debug.unlockStdErr();
+        panic_mutex.unlock();
 
         goTo(releaseRefCount, .{state});
     }

@@ -15,12 +15,18 @@
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/CodeGen/TargetSchedule.h"
-#include "llvm/Support/BranchProbability.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "si-pre-emit-peephole"
+
+static unsigned SkipThreshold;
+
+static cl::opt<unsigned, true> SkipThresholdFlag(
+    "amdgpu-skip-threshold", cl::Hidden,
+    cl::desc(
+        "Number of instructions before jumping over divergent control flow"),
+    cl::location(SkipThreshold), cl::init(12));
 
 namespace {
 
@@ -35,8 +41,7 @@ private:
                             MachineBasicBlock *&TrueMBB,
                             MachineBasicBlock *&FalseMBB,
                             SmallVectorImpl<MachineOperand> &Cond);
-  bool mustRetainExeczBranch(const MachineInstr &Branch,
-                             const MachineBasicBlock &From,
+  bool mustRetainExeczBranch(const MachineBasicBlock &From,
                              const MachineBasicBlock &To) const;
   bool removeExeczBranch(MachineInstr &MI, MachineBasicBlock &SrcMBB);
 
@@ -166,7 +171,7 @@ bool SIPreEmitPeephole::optimizeVccBranch(MachineInstr &MI) const {
   if (A->getOpcode() == AndN2)
     MaskValue = ~MaskValue;
 
-  if (!ReadsCond && A->registerDefIsDead(AMDGPU::SCC, /*TRI=*/nullptr)) {
+  if (!ReadsCond && A->registerDefIsDead(AMDGPU::SCC)) {
     if (!MI.killsRegister(CondReg, TRI)) {
       // Replace AND with MOV
       if (MaskValue == 0) {
@@ -230,7 +235,7 @@ bool SIPreEmitPeephole::optimizeVccBranch(MachineInstr &MI) const {
         TII->get(IsVCCZ ? AMDGPU::S_CBRANCH_EXECZ : AMDGPU::S_CBRANCH_EXECNZ));
   }
 
-  MI.removeOperand(MI.findRegisterUseOperandIdx(CondReg, TRI, false /*Kill*/));
+  MI.removeOperand(MI.findRegisterUseOperandIdx(CondReg, false /*Kill*/, TRI));
   MI.addImplicitDefUseOperands(*MBB.getParent());
 
   return true;
@@ -299,58 +304,11 @@ bool SIPreEmitPeephole::getBlockDestinations(
   return true;
 }
 
-namespace {
-class BranchWeightCostModel {
-  const SIInstrInfo &TII;
-  const TargetSchedModel &SchedModel;
-  BranchProbability BranchProb;
-  static constexpr uint64_t BranchNotTakenCost = 1;
-  uint64_t BranchTakenCost;
-  uint64_t ThenCyclesCost = 0;
-
-public:
-  BranchWeightCostModel(const SIInstrInfo &TII, const MachineInstr &Branch,
-                        const MachineBasicBlock &Succ)
-      : TII(TII), SchedModel(TII.getSchedModel()) {
-    const MachineBasicBlock &Head = *Branch.getParent();
-    const auto *FromIt = find(Head.successors(), &Succ);
-    assert(FromIt != Head.succ_end());
-
-    BranchProb = Head.getSuccProbability(FromIt);
-    if (BranchProb.isUnknown())
-      BranchProb = BranchProbability::getZero();
-    BranchTakenCost = SchedModel.computeInstrLatency(&Branch);
-  }
-
-  bool isProfitable(const MachineInstr &MI) {
-    if (TII.isWaitcnt(MI.getOpcode()))
-      return false;
-
-    ThenCyclesCost += SchedModel.computeInstrLatency(&MI);
-
-    // Consider `P = N/D` to be the probability of execz being false (skipping
-    // the then-block) The transformation is profitable if always executing the
-    // 'then' block is cheaper than executing sometimes 'then' and always
-    // executing s_cbranch_execz:
-    // * ThenCost <= P*ThenCost + (1-P)*BranchTakenCost + P*BranchNotTakenCost
-    // * (1-P) * ThenCost <= (1-P)*BranchTakenCost + P*BranchNotTakenCost
-    // * (D-N)/D * ThenCost <= (D-N)/D * BranchTakenCost + N/D *
-    // BranchNotTakenCost
-    uint64_t Numerator = BranchProb.getNumerator();
-    uint64_t Denominator = BranchProb.getDenominator();
-    return (Denominator - Numerator) * ThenCyclesCost <=
-           ((Denominator - Numerator) * BranchTakenCost +
-            Numerator * BranchNotTakenCost);
-  }
-};
-
 bool SIPreEmitPeephole::mustRetainExeczBranch(
-    const MachineInstr &Branch, const MachineBasicBlock &From,
-    const MachineBasicBlock &To) const {
-  assert(is_contained(Branch.getParent()->successors(), &From));
-  BranchWeightCostModel CostModel{*TII, Branch, From};
-
+    const MachineBasicBlock &From, const MachineBasicBlock &To) const {
+  unsigned NumInstr = 0;
   const MachineFunction *MF = From.getParent();
+
   for (MachineFunction::const_iterator MBBI(&From), ToI(&To), End = MF->end();
        MBBI != End && MBBI != ToI; ++MBBI) {
     const MachineBasicBlock &MBB = *MBBI;
@@ -362,32 +320,26 @@ bool SIPreEmitPeephole::mustRetainExeczBranch(
       if (MI.isConditionalBranch())
         return true;
 
-      if (MI.isUnconditionalBranch() &&
-          TII->getBranchDestBlock(MI) != MBB.getNextNode())
-        return true;
-
-      if (MI.isMetaInstruction())
-        continue;
-
       if (TII->hasUnwantedEffectsWhenEXECEmpty(MI))
         return true;
 
-      if (!CostModel.isProfitable(MI))
+      // These instructions are potentially expensive even if EXEC = 0.
+      if (TII->isSMRD(MI) || TII->isVMEM(MI) || TII->isFLAT(MI) ||
+          TII->isDS(MI) || MI.getOpcode() == AMDGPU::S_WAITCNT)
+        return true;
+
+      ++NumInstr;
+      if (NumInstr >= SkipThreshold)
         return true;
     }
   }
 
   return false;
 }
-} // namespace
 
 // Returns true if the skip branch instruction is removed.
 bool SIPreEmitPeephole::removeExeczBranch(MachineInstr &MI,
                                           MachineBasicBlock &SrcMBB) {
-
-  if (!TII->getSchedModel().hasInstrSchedModel())
-    return false;
-
   MachineBasicBlock *TrueMBB = nullptr;
   MachineBasicBlock *FalseMBB = nullptr;
   SmallVector<MachineOperand, 1> Cond;
@@ -396,11 +348,8 @@ bool SIPreEmitPeephole::removeExeczBranch(MachineInstr &MI,
     return false;
 
   // Consider only the forward branches.
-  if (SrcMBB.getNumber() >= TrueMBB->getNumber())
-    return false;
-
-  // Consider only when it is legal and profitable
-  if (mustRetainExeczBranch(MI, *FalseMBB, *TrueMBB))
+  if ((SrcMBB.getNumber() >= TrueMBB->getNumber()) ||
+      mustRetainExeczBranch(*FalseMBB, *TrueMBB))
     return false;
 
   LLVM_DEBUG(dbgs() << "Removing the execz branch: " << MI);
@@ -445,7 +394,8 @@ bool SIPreEmitPeephole::runOnMachineFunction(MachineFunction &MF) {
     // and limit the distance to 20 instructions for compile time purposes.
     // Note: this needs to work on bundles as S_SET_GPR_IDX* instructions
     // may be bundled with the instructions they modify.
-    for (auto &MI : make_early_inc_range(MBB.instrs())) {
+    for (auto &MI :
+         make_early_inc_range(make_range(MBB.instr_begin(), MBB.instr_end()))) {
       if (Count == Threshold)
         SetGPRMI = nullptr;
       else

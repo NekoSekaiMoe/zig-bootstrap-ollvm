@@ -1,7 +1,7 @@
 export fn entry() void {
     _ = async amain();
 }
-fn amain() callconv(.@"async") void {
+fn amain() callconv(.Async) void {
     return error.ShouldBeCompileError;
 }
 

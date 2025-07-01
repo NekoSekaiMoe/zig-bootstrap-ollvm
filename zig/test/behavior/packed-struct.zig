@@ -123,6 +123,7 @@ test "correct sizeOf and offsets in packed structs" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const PStruct = packed struct {
         bool_a: bool,
@@ -190,6 +191,7 @@ test "nested packed structs" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const S1 = packed struct { a: u8, b: u8, c: u8 };
 
@@ -255,6 +257,7 @@ test "nested packed struct unaligned" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
     if (native_endian != .little) return error.SkipZigTest; // Byte aligned packed struct field pointers have not been implemented yet
 
     const S1 = packed struct {
@@ -466,7 +469,6 @@ test "load pointer from packed struct" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const A = struct {
         index: u16,
@@ -616,8 +618,6 @@ test "@intFromPtr on a packed struct field unaligned and nested" {
 }
 
 test "packed struct fields modification" {
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
     // Originally reported at https://github.com/ziglang/zig/issues/16615
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
@@ -646,7 +646,6 @@ test "optional pointer in packed struct" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const T = packed struct { ptr: ?*const u8 };
     var n: u8 = 0;
@@ -662,7 +661,6 @@ test "nested packed struct field access test" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_x86_64 and builtin.target.ofmt != .elf and builtin.target.ofmt != .macho) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const Vec2 = packed struct {
         x: f32,
@@ -812,7 +810,6 @@ test "nested packed struct at non-zero offset 2" {
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO packed structs larger than 64 bits
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         const Pair = packed struct(u40) {
@@ -888,11 +885,11 @@ test "runtime init of unnamed packed struct type" {
     }{ .x = z }).m();
 }
 
-test "packed struct passed to callconv(.c) function" {
+test "packed struct passed to callconv(.C) function" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const S = struct {
         const Packed = packed struct {
@@ -902,7 +899,7 @@ test "packed struct passed to callconv(.c) function" {
             d: u46 = 0,
         };
 
-        fn foo(p: Packed, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) callconv(.c) bool {
+        fn foo(p: Packed, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) callconv(.C) bool {
             return p.a == 12345 and p.b == true and p.c == true and p.d == 0 and a1 == 5 and a2 == 4 and a3 == 3 and a4 == 2 and a5 == 1;
         }
     };
@@ -940,7 +937,7 @@ test "packed struct initialized in bitcast" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const T = packed struct { val: u8 };
     var val: u8 = 123;
@@ -977,7 +974,7 @@ test "pointer to container level packed struct field" {
 test "store undefined to packed result location" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     var x: u4 = 0;
     _ = &x;
@@ -986,6 +983,8 @@ test "store undefined to packed result location" {
 }
 
 test "bitcast back and forth" {
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+
     // Originally reported at https://github.com/ziglang/zig/issues/9914
     const S = packed struct { one: u6, two: u1 };
     const s = S{ .one = 0b110101, .two = 0b1 };
@@ -1044,8 +1043,6 @@ test "modify nested packed struct aligned field" {
 }
 
 test "assigning packed struct inside another packed struct" {
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
     // Originally reported at https://github.com/ziglang/zig/issues/9674
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
@@ -1102,8 +1099,6 @@ test "packed struct acts as a namespace" {
 }
 
 test "pointer loaded correctly from packed struct" {
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
     const RAM = struct {
         data: [0xFFFF + 1]u8,
         fn new() !@This() {
@@ -1164,6 +1159,7 @@ test "assignment to non-byte-aligned field in packed struct" {
 }
 
 test "packed struct field pointer aligned properly" {
+    if (builtin.zig_backend == .stage2_x86) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1177,9 +1173,9 @@ test "packed struct field pointer aligned properly" {
     };
 
     var f1: *align(16) Foo = @alignCast(@as(*align(1) Foo, @ptrCast(&Foo.buffer[0])));
-    try expect(@typeInfo(@TypeOf(f1)).pointer.alignment == 16);
+    try expect(@typeInfo(@TypeOf(f1)).Pointer.alignment == 16);
     try expect(@intFromPtr(f1) == @intFromPtr(&f1.a));
-    try expect(@typeInfo(@TypeOf(&f1.a)).pointer.alignment == 16);
+    try expect(@typeInfo(@TypeOf(&f1.a)).Pointer.alignment == 16);
 }
 
 test "load flag from packed struct in union" {
@@ -1187,7 +1183,6 @@ test "load flag from packed struct in union" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const A = packed struct {
         a: bool,
@@ -1261,7 +1256,7 @@ test "2-byte packed struct argument in C calling convention" {
         x: u15 = 0,
         y: u1 = 0,
 
-        fn foo(s: @This()) callconv(.c) i32 {
+        fn foo(s: @This()) callconv(.C) i32 {
             return s.x;
         }
         fn bar(s: @This()) !void {
@@ -1278,111 +1273,4 @@ test "2-byte packed struct argument in C calling convention" {
         s.x += 1;
         try S.bar(s);
     }
-}
-
-test "packed struct contains optional pointer" {
-    const foo: packed struct {
-        a: ?*@This() = null,
-    } = .{};
-    try expect(foo.a == null);
-}
-
-test "packed struct equality" {
-    const Foo = packed struct {
-        a: u4,
-        b: u4,
-    };
-
-    const S = struct {
-        fn doTest(x: Foo, y: Foo) !void {
-            try expect(x == y);
-            try expect(!(x != y));
-        }
-    };
-
-    const x: Foo = .{ .a = 1, .b = 2 };
-    const y: Foo = .{ .b = 2, .a = 1 };
-
-    try S.doTest(x, y);
-    comptime try S.doTest(x, y);
-}
-
-test "packed struct equality ignores padding bits" {
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-
-    const S = packed struct { b: bool };
-    var s: S = undefined;
-    s.b = true;
-    try std.testing.expect(s != S{ .b = false });
-    try std.testing.expect(s == S{ .b = true });
-}
-
-test "packed struct with signed field" {
-    var s: packed struct {
-        a: i2,
-        b: u6,
-    } = .{ .a = -1, .b = 42 };
-    s = s;
-    try expect(s.a == -1);
-    try expect(s.b == 42);
-}
-
-test "assign packed struct initialized with RLS to packed struct literal field" {
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isWasm()) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-
-    const Inner = packed struct { x: u17 };
-    const Outer = packed struct { inner: Inner, x: u15 };
-
-    var x: u15 = undefined;
-    x = 23385;
-    var inner: Inner = undefined;
-    inner = .{ .x = x };
-    const outer = Outer{ .x = x, .inner = inner };
-    try expect(outer.inner.x == x);
-    try expect(outer.x == x);
-}
-
-test "byte-aligned packed relocation" {
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
-
-    const S = struct {
-        var global: u8 align(2) = 0;
-        var packed_value: packed struct { x: u8, y: *align(2) u8 } = .{ .x = 111, .y = &global };
-    };
-    try expect(S.packed_value.x == 111);
-    try expect(S.packed_value.y == &S.global);
-}
-
-test "packed struct store of comparison result" {
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-
-    const S1 = packed struct {
-        val1: u3,
-        val2: u3,
-    };
-    const S2 = packed struct {
-        a: bool,
-        b: bool,
-    };
-
-    var A: S1 = .{ .val1 = 1, .val2 = 1 };
-    A.val2 += 1;
-    try expectEqual(1, A.val1);
-    try expectEqual(2, A.val2);
-    try expect((A.val2 & 1) != 1);
-    const result1: S2 = .{ .a = (A.val2 & 1) != 1, .b = (A.val1 & 1) != 1 };
-    try expect(result1.a);
-    try expect(!result1.b);
-
-    try expect((A.val2 == 3) == false);
-    try expect((A.val2 == 2) == true);
-    const result2: S2 = .{ .a = !(A.val2 == 3), .b = (A.val1 == 2) };
-    try expect(result2.a);
-    try expect(!result2.b);
 }

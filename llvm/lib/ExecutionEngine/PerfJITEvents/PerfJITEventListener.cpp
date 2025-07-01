@@ -60,10 +60,6 @@ class PerfJITEventListener : public JITEventListener {
 public:
   PerfJITEventListener();
   ~PerfJITEventListener() {
-    // Lock a mutex to correctly synchronize with prior calls to
-    // `notifyObjectLoaded` and `notifyFreeingObject` that happened on other
-    // threads to prevent tsan from complaining.
-    std::lock_guard<sys::Mutex> Guard(Mutex);
     if (MarkerAddr)
       CloseMarker();
   }
@@ -199,9 +195,10 @@ PerfJITEventListener::PerfJITEventListener()
   // Need to open ourselves, because we need to hand the FD to OpenMarker() and
   // raw_fd_ostream doesn't expose the FD.
   using sys::fs::openFileForWrite;
-  if (auto EC = openFileForReadWrite(Filename, DumpFd, sys::fs::CD_CreateNew,
-                                     sys::fs::OF_None)) {
-    errs() << "could not open JIT dump file " << Filename << ": "
+  if (auto EC =
+          openFileForReadWrite(FilenameBuf.str(), DumpFd,
+			       sys::fs::CD_CreateNew, sys::fs::OF_None)) {
+    errs() << "could not open JIT dump file " << FilenameBuf.str() << ": "
            << EC.message() << "\n";
     return;
   }
@@ -278,7 +275,7 @@ void PerfJITEventListener::notifyObjectLoaded(
             SectionIndex = SectOrErr.get()->getIndex();
 
     // According to spec debugging info has to come before loading the
-    // corresponding code load.
+    // corresonding code load.
     DILineInfoTable Lines = Context->getLineInfoForAddressRange(
         {*AddrOrErr, SectionIndex}, Size, FileLineInfoKind::AbsoluteFilePath);
 
@@ -450,7 +447,7 @@ void PerfJITEventListener::NotifyDebug(uint64_t CodeAddr,
   rec.CodeAddr = CodeAddr;
   rec.NrEntry = Lines.size();
 
-  // compute total size of record (variable due to filenames)
+  // compute total size size of record (variable due to filenames)
   DILineInfoTable::iterator Begin = Lines.begin();
   DILineInfoTable::iterator End = Lines.end();
   for (DILineInfoTable::iterator It = Begin; It != End; ++It) {

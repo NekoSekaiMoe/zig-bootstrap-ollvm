@@ -31,7 +31,7 @@ namespace llvm {
 class raw_ostream;
 class Triple;
 
-const unsigned MAX_SUBTARGET_WORDS = 5;
+const unsigned MAX_SUBTARGET_WORDS = 4;
 const unsigned MAX_SUBTARGET_FEATURES = MAX_SUBTARGET_WORDS * 64;
 
 /// Container class for subtarget features.
@@ -60,17 +60,23 @@ public:
   }
 
   constexpr FeatureBitset &set(unsigned I) {
-    Bits[I / 64] |= uint64_t(1) << (I % 64);
+    // GCC <6.2 crashes if this is written in a single statement.
+    uint64_t NewBits = Bits[I / 64] | (uint64_t(1) << (I % 64));
+    Bits[I / 64] = NewBits;
     return *this;
   }
 
   constexpr FeatureBitset &reset(unsigned I) {
-    Bits[I / 64] &= ~(uint64_t(1) << (I % 64));
+    // GCC <6.2 crashes if this is written in a single statement.
+    uint64_t NewBits = Bits[I / 64] & ~(uint64_t(1) << (I % 64));
+    Bits[I / 64] = NewBits;
     return *this;
   }
 
   constexpr FeatureBitset &flip(unsigned I) {
-    Bits[I / 64] ^= uint64_t(1) << (I % 64);
+    // GCC <6.2 crashes if this is written in a single statement.
+    uint64_t NewBits = Bits[I / 64] ^ (uint64_t(1) << (I % 64));
+    Bits[I / 64] = NewBits;
     return *this;
   }
 
@@ -107,8 +113,9 @@ public:
   }
 
   constexpr FeatureBitset &operator&=(const FeatureBitset &RHS) {
-    for (unsigned I = 0, E = Bits.size(); I != E; ++I)
+    for (unsigned I = 0, E = Bits.size(); I != E; ++I) {
       Bits[I] &= RHS.Bits[I];
+    }
     return *this;
   }
   constexpr FeatureBitset operator&(const FeatureBitset &RHS) const {

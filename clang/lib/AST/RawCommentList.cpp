@@ -15,6 +15,8 @@
 #include "clang/AST/CommentParser.h"
 #include "clang/AST/CommentSema.h"
 #include "clang/Basic/CharInfo.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Allocator.h"
 
 using namespace clang;
@@ -139,8 +141,8 @@ RawComment::RawComment(const SourceManager &SourceMgr, SourceRange SR,
     Kind = K.first;
     IsTrailingComment |= K.second;
 
-    IsAlmostTrailingComment =
-        RawText.starts_with("//<") || RawText.starts_with("/*<");
+    IsAlmostTrailingComment = RawText.startswith("//<") ||
+                                 RawText.startswith("/*<");
   } else {
     Kind = RCK_Merged;
     IsTrailingComment =

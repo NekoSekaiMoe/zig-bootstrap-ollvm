@@ -4,31 +4,31 @@ pub const ConfigurationTable = @import("tables/configuration_table.zig").Configu
 pub const SystemTable = @import("tables/system_table.zig").SystemTable;
 pub const TableHeader = @import("tables/table_header.zig").TableHeader;
 
-pub const EventNotify = *const fn (event: Event, ctx: *anyopaque) callconv(cc) void;
+pub const EfiEventNotify = *const fn (event: Event, ctx: *anyopaque) callconv(cc) void;
 
 pub const TimerDelay = enum(u32) {
-    timer_cancel,
-    timer_periodic,
-    timer_relative,
+    TimerCancel,
+    TimerPeriodic,
+    TimerRelative,
 };
 
 pub const MemoryType = enum(u32) {
-    reserved_memory_type,
-    loader_code,
-    loader_data,
-    boot_services_code,
-    boot_services_data,
-    runtime_services_code,
-    runtime_services_data,
-    conventional_memory,
-    unusable_memory,
-    acpi_reclaim_memory,
-    acpi_memory_nvs,
-    memory_mapped_io,
-    memory_mapped_io_port_space,
-    pal_code,
-    persistent_memory,
-    max_memory_type,
+    ReservedMemoryType,
+    LoaderCode,
+    LoaderData,
+    BootServicesCode,
+    BootServicesData,
+    RuntimeServicesCode,
+    RuntimeServicesData,
+    ConventionalMemory,
+    UnusableMemory,
+    ACPIReclaimMemory,
+    ACPIMemoryNVS,
+    MemoryMappedIO,
+    MemoryMappedIOPortSpace,
+    PalCode,
+    PersistentMemory,
+    MaxMemoryType,
     _,
 };
 
@@ -60,9 +60,9 @@ pub const MemoryDescriptor = extern struct {
 };
 
 pub const LocateSearchType = enum(u32) {
-    all_handles,
-    by_register_notify,
-    by_protocol,
+    AllHandles,
+    ByRegisterNotify,
+    ByProtocol,
 };
 
 pub const OpenProtocolAttributes = packed struct(u32) {
@@ -82,38 +82,38 @@ pub const ProtocolInformationEntry = extern struct {
     open_count: u32,
 };
 
-pub const InterfaceType = enum(u32) {
-    efi_native_interface,
+pub const EfiInterfaceType = enum(u32) {
+    EfiNativeInterface,
 };
 
 pub const AllocateType = enum(u32) {
-    allocate_any_pages,
-    allocate_max_address,
-    allocate_address,
+    AllocateAnyPages,
+    AllocateMaxAddress,
+    AllocateAddress,
 };
 
-pub const PhysicalAddress = u64;
+pub const EfiPhysicalAddress = u64;
 
 pub const CapsuleHeader = extern struct {
-    capsule_guid: Guid align(8),
-    header_size: u32,
+    capsuleGuid: Guid align(8),
+    headerSize: u32,
     flags: u32,
-    capsule_image_size: u32,
+    capsuleImageSize: u32,
 };
 
 pub const UefiCapsuleBlockDescriptor = extern struct {
     length: u64,
     address: extern union {
-        data_block: PhysicalAddress,
-        continuation_pointer: PhysicalAddress,
+        dataBlock: EfiPhysicalAddress,
+        continuationPointer: EfiPhysicalAddress,
     },
 };
 
 pub const ResetType = enum(u32) {
-    reset_cold,
-    reset_warm,
-    reset_shutdown,
-    reset_platform_specific,
+    ResetCold,
+    ResetWarm,
+    ResetShutdown,
+    ResetPlatformSpecific,
 };
 
 pub const global_variable align(8) = Guid{

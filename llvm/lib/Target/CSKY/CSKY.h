@@ -23,11 +23,11 @@ class FunctionPass;
 class PassRegistry;
 
 FunctionPass *createCSKYISelDag(CSKYTargetMachine &TM,
-                                CodeGenOptLevel OptLevel);
+                                CodeGenOpt::Level OptLevel);
 FunctionPass *createCSKYConstantIslandPass();
 
 void initializeCSKYConstantIslandsPass(PassRegistry &);
-void initializeCSKYDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeCSKYDAGToDAGISelPass(PassRegistry &);
 
 } // namespace llvm
 

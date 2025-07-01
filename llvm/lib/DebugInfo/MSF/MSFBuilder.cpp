@@ -16,7 +16,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/TimeProfiler.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -249,8 +248,6 @@ uint32_t MSFBuilder::computeDirectoryByteSize() const {
 }
 
 Expected<MSFLayout> MSFBuilder::generateLayout() {
-  llvm::TimeTraceScope timeScope("MSF: Generate layout");
-
   SuperBlock *SB = Allocator.Allocate<SuperBlock>();
   MSFLayout L;
   L.SB = SB;
@@ -339,8 +336,6 @@ static void commitFpm(WritableBinaryStream &MsfBuffer, const MSFLayout &Layout,
 
 Expected<FileBufferByteStream> MSFBuilder::commit(StringRef Path,
                                                   MSFLayout &Layout) {
-  llvm::TimeTraceScope timeScope("Commit MSF");
-
   Expected<MSFLayout> L = generateLayout();
   if (!L)
     return L.takeError();
@@ -386,7 +381,7 @@ Expected<FileBufferByteStream> MSFBuilder::commit(StringRef Path,
     return std::move(EC);
 
   FileBufferByteStream Buffer(std::move(*OutFileOrError),
-                              llvm::endianness::little);
+                              llvm::support::little);
   BinaryStreamWriter Writer(Buffer);
 
   if (auto EC = Writer.writeObject(*Layout.SB))

@@ -34,7 +34,8 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                    const InputInfoList &Inputs,
                                    const ArgList &Args,
                                    const char *LinkingOutput) const {
-  const auto &ToolChain = static_cast<const Fuchsia &>(getToolChain());
+  const toolchains::Fuchsia &ToolChain =
+      static_cast<const toolchains::Fuchsia &>(getToolChain());
   const Driver &D = ToolChain.getDriver();
 
   const llvm::Triple &Triple = ToolChain.getEffectiveTriple();
@@ -54,9 +55,6 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   CmdArgs.push_back("-z");
   CmdArgs.push_back("now");
-
-  CmdArgs.push_back("-z");
-  CmdArgs.push_back("start-stop-visibility=hidden");
 
   const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
   if (llvm::sys::path::filename(Exec).equals_insensitive("ld.lld") ||
@@ -119,11 +117,8 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(Dyld));
   }
 
-  if (Triple.isRISCV64()) {
+  if (ToolChain.getArch() == llvm::Triple::riscv64)
     CmdArgs.push_back("-X");
-    if (Args.hasArg(options::OPT_mno_relax))
-      CmdArgs.push_back("--no-relax");
-  }
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
@@ -135,33 +130,20 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  Args.addAllArgs(CmdArgs, {options::OPT_L, options::OPT_u});
+  Args.AddAllArgs(CmdArgs, options::OPT_L);
+  Args.AddAllArgs(CmdArgs, options::OPT_u);
 
   ToolChain.AddFilePathLibArgs(Args, CmdArgs);
 
   if (D.isUsingLTO()) {
     assert(!Inputs.empty() && "Must have at least one input.");
-    // Find the first filename InputInfo object.
-    auto Input = llvm::find_if(
-        Inputs, [](const InputInfo &II) -> bool { return II.isFilename(); });
-    if (Input == Inputs.end())
-      // For a very rare case, all of the inputs to the linker are
-      // InputArg. If that happens, just use the first InputInfo.
-      Input = Inputs.begin();
-
-    addLTOOptions(ToolChain, Args, CmdArgs, Output, *Input,
+    addLTOOptions(ToolChain, Args, CmdArgs, Output, Inputs[0],
                   D.getLTOMode() == LTOK_Thin);
   }
 
   addLinkerCompressDebugSectionsOption(ToolChain, Args, CmdArgs);
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
 
-  // Sample these options first so they are claimed even under -nostdlib et al.
-  bool NoLibc = Args.hasArg(options::OPT_nolibc);
-  bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
-                             !Args.hasArg(options::OPT_static);
-  bool Pthreads = Args.hasArg(options::OPT_pthread, options::OPT_pthreads);
-  bool SplitStack = Args.hasArg(options::OPT_fsplit_stack);
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
                    options::OPT_r)) {
     if (Args.hasArg(options::OPT_static))
@@ -169,6 +151,8 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     if (D.CCCIsCXX()) {
       if (ToolChain.ShouldLinkCXXStdlib(Args)) {
+        bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
+                                   !Args.hasArg(options::OPT_static);
         CmdArgs.push_back("--push-state");
         CmdArgs.push_back("--as-needed");
         if (OnlyLibstdcxxStatic)
@@ -192,13 +176,14 @@ void fuchsia::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
 
-    if (Pthreads)
+    if (Args.hasArg(options::OPT_pthread) ||
+        Args.hasArg(options::OPT_pthreads))
       CmdArgs.push_back("-lpthread");
 
-    if (SplitStack)
+    if (Args.hasArg(options::OPT_fsplit_stack))
       CmdArgs.push_back("--wrap=pthread_create");
 
-    if (!NoLibc)
+    if (!Args.hasArg(options::OPT_nolibc))
       CmdArgs.push_back("-lc");
   }
 
@@ -232,7 +217,7 @@ void fuchsia::StaticLibTool::ConstructJob(Compilation &C, const JobAction &JA,
 
   for (const auto &II : Inputs) {
     if (II.isFilename()) {
-      CmdArgs.push_back(II.getFilename());
+       CmdArgs.push_back(II.getFilename());
     }
   }
 
@@ -257,20 +242,22 @@ void fuchsia::StaticLibTool::ConstructJob(Compilation &C, const JobAction &JA,
 Fuchsia::Fuchsia(const Driver &D, const llvm::Triple &Triple,
                  const ArgList &Args)
     : ToolChain(D, Triple, Args) {
-  getProgramPaths().push_back(getDriver().Dir);
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != D.Dir)
+    getProgramPaths().push_back(D.Dir);
 
   if (!D.SysRoot.empty()) {
     SmallString<128> P(D.SysRoot);
     llvm::sys::path::append(P, "lib");
-    getFilePaths().push_back(std::string(P));
+    getFilePaths().push_back(std::string(P.str()));
   }
 
   auto FilePaths = [&](const Multilib &M) -> std::vector<std::string> {
     std::vector<std::string> FP;
-    if (std::optional<std::string> Path = getStdlibPath()) {
-      SmallString<128> P(*Path);
+    for (const std::string &Path : getStdlibPaths()) {
+      SmallString<128> P(Path);
       llvm::sys::path::append(P, M.gccSuffix());
-      FP.push_back(std::string(P));
+      FP.push_back(std::string(P.str()));
     }
     return FP;
   };
@@ -327,7 +314,7 @@ Fuchsia::Fuchsia(const Driver &D, const llvm::Triple &Triple,
 
   Multilibs.setFilePathsCallback(FilePaths);
 
-  if (Multilibs.select(D, Flags, SelectedMultilibs)) {
+  if (Multilibs.select(Flags, SelectedMultilibs)) {
     // Ensure that -print-multi-directory only outputs one multilib directory.
     Multilib LastSelected = SelectedMultilibs.back();
     SelectedMultilibs = {LastSelected};
@@ -346,14 +333,16 @@ std::string Fuchsia::ComputeEffectiveClangTriple(const ArgList &Args,
   return Triple.str();
 }
 
-Tool *Fuchsia::buildLinker() const { return new tools::fuchsia::Linker(*this); }
+Tool *Fuchsia::buildLinker() const {
+  return new tools::fuchsia::Linker(*this);
+}
 
 Tool *Fuchsia::buildStaticLibTool() const {
   return new tools::fuchsia::StaticLibTool(*this);
 }
 
-ToolChain::RuntimeLibType
-Fuchsia::GetRuntimeLibType(const ArgList &Args) const {
+ToolChain::RuntimeLibType Fuchsia::GetRuntimeLibType(
+    const ArgList &Args) const {
   if (Arg *A = Args.getLastArg(clang::driver::options::OPT_rtlib_EQ)) {
     StringRef Value = A->getValue();
     if (Value != "compiler-rt")
@@ -364,12 +353,13 @@ Fuchsia::GetRuntimeLibType(const ArgList &Args) const {
   return ToolChain::RLT_CompilerRT;
 }
 
-ToolChain::CXXStdlibType Fuchsia::GetCXXStdlibType(const ArgList &Args) const {
+ToolChain::CXXStdlibType
+Fuchsia::GetCXXStdlibType(const ArgList &Args) const {
   if (Arg *A = Args.getLastArg(options::OPT_stdlib_EQ)) {
     StringRef Value = A->getValue();
     if (Value != "libc++")
       getDriver().Diag(diag::err_drv_invalid_stdlib_name)
-          << A->getAsString(Args);
+        << A->getAsString(Args);
   }
 
   return ToolChain::CST_Libcxx;
@@ -433,23 +423,13 @@ void Fuchsia::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
     if (Version.empty())
       return;
 
-    // First add the per-target multilib include dir.
-    if (!SelectedMultilibs.empty() && !SelectedMultilibs.back().isDefault()) {
-      const Multilib &M = SelectedMultilibs.back();
-      SmallString<128> TargetDir(Path);
-      llvm::sys::path::append(TargetDir, Target, M.gccSuffix(), "c++", Version);
-      if (getVFS().exists(TargetDir)) {
-        addSystemInclude(DriverArgs, CC1Args, TargetDir);
-      }
-    }
-
-    // Second add the per-target include dir.
+    // First add the per-target include path.
     SmallString<128> TargetDir(Path);
     llvm::sys::path::append(TargetDir, Target, "c++", Version);
     if (getVFS().exists(TargetDir))
       addSystemInclude(DriverArgs, CC1Args, TargetDir);
 
-    // Third the generic one.
+    // Second add the generic one.
     SmallString<128> Dir(Path);
     llvm::sys::path::append(Dir, "c++", Version);
     addSystemInclude(DriverArgs, CC1Args, Dir);

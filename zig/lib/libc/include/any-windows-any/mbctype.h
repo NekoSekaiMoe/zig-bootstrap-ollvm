@@ -14,13 +14,20 @@ extern "C" {
 #endif
 
 #ifndef _mbctype
-  _CRTIMP unsigned char * __cdecl __p__mbctype(void);
-#define _mbctype (__p__mbctype())
+#ifdef _MSVCRT_
+  extern unsigned char _mbctype[257];
+#else
+  extern unsigned char ** __MINGW_IMP_SYMBOL(_mbctype);
+#define _mbctype (* __MINGW_IMP_SYMBOL(_mbctype))
 #endif
-
+#endif
 #ifndef _mbcasemap
-  _CRTIMP unsigned char * __cdecl __p__mbcasemap(void);
-#define _mbcasemap (__p__mbcasemap())
+#ifdef _MSVCRT_
+  extern unsigned char *_mbcasemap;
+#else
+  extern unsigned char ** __MINGW_IMP_SYMBOL(_mbcasemap);
+#define _mbcasemap (* __MINGW_IMP_SYMBOL(_mbcasemap))
+#endif
 #endif
 
   extern pthreadmbcinfo __ptmbcinfo;

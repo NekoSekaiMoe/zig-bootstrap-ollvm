@@ -34,8 +34,10 @@
 #include "llvm/CodeGen/LiveInterval.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 
 using namespace llvm;
@@ -55,8 +57,8 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    AU.addPreserved<LiveIntervalsWrapperPass>();
-    AU.addPreserved<SlotIndexesWrapperPass>();
+    AU.addPreserved<LiveIntervals>();
+    AU.addPreserved<SlotIndexes>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
@@ -86,7 +88,7 @@ private:
   };
 
   /// Map OldSubReg -> { RC, NewSubReg }. Used as in/out container.
-  using SubRegMap = SmallDenseMap<unsigned, SubRegInfo>;
+  typedef SmallDenseMap<unsigned, SubRegInfo> SubRegMap;
 
   /// Given register class RC and the set of used subregs as keys in the SubRegs
   /// map return new register class and indexes of right-shifted subregs as
@@ -99,16 +101,17 @@ private:
   /// find new regclass such that:
   ///   1. It has subregs obtained by shifting each OldSubReg by RShift number
   ///      of bits to the right. Every "shifted" subreg should have the same
-  ///      SubRegRC. If CoverSubregIdx is not zero it's a subreg that "covers"
-  ///      all other subregs in pairs. Basically such subreg becomes a whole
-  ///      register.
+  ///      SubRegRC. SubRegRC can be null, in this case it initialized using
+  ///      getSubRegisterClass. If CoverSubregIdx is not zero it's a subreg that
+  ///      "covers" all other subregs in pairs. Basically such subreg becomes a
+  ///      whole register.
   ///   2. Resulting register class contains registers of minimal size but not
   ///      less than RegNumBits.
   ///
   /// SubRegs is map of OldSubReg -> [SubRegRC, NewSubReg] and is used as in/out
   /// parameter:
   ///   OldSubReg - input parameter,
-  ///   SubRegRC  - input parameter (cannot be null),
+  ///   SubRegRC  - in/out, should be changed for unknown regclass,
   ///   NewSubReg - output, contains shifted subregs on return.
   const TargetRegisterClass *
   getRegClassWithShiftedSubregs(const TargetRegisterClass *RC, unsigned RShift,
@@ -225,7 +228,19 @@ GCNRewritePartialRegUses::getRegClassWithShiftedSubregs(
   BitVector ClassMask(getAllocatableAndAlignedRegClassMask(RCAlign));
   for (auto &[OldSubReg, SRI] : SubRegs) {
     auto &[SubRegRC, NewSubReg] = SRI;
-    assert(SubRegRC);
+
+    // Register class may be unknown, for example:
+    //   undef %0.sub4:sgpr_1024 = S_MOV_B32 01
+    //   %0.sub5:sgpr_1024 = S_MOV_B32 02
+    //   %1:vreg_64 = COPY %0.sub4_sub5
+    // Register classes for subregs 'sub4' and 'sub5' are known from the
+    // description of destination operand of S_MOV_B32 instruction but the
+    // class for the subreg 'sub4_sub5' isn't specified by the COPY instruction.
+    if (!SubRegRC)
+      SubRegRC = TRI->getSubRegisterClass(RC, OldSubReg);
+
+    if (!SubRegRC)
+      return nullptr;
 
     LLVM_DEBUG(dbgs() << "  " << TRI->getSubRegIndexName(OldSubReg) << ':'
                       << TRI->getRegClassName(SubRegRC)
@@ -233,8 +248,6 @@ GCNRewritePartialRegUses::getRegClassWithShiftedSubregs(
                       << " -> ");
 
     if (OldSubReg == CoverSubregIdx) {
-      // Covering subreg will become a full register, RC should be allocatable.
-      assert(SubRegRC->isAllocatable());
       NewSubReg = AMDGPU::NoSubRegister;
       LLVM_DEBUG(dbgs() << "whole reg");
     } else {
@@ -395,7 +408,7 @@ void GCNRewritePartialRegUses::updateLiveIntervals(Register OldReg,
   }
   if (NewLI.empty())
     NewLI.assign(OldLI, Allocator);
-  assert(NewLI.verify(MRI));
+  NewLI.verify(MRI);
   LIS->removeInterval(OldReg);
 }
 
@@ -408,42 +421,33 @@ GCNRewritePartialRegUses::getOperandRegClass(MachineOperand &MO) const {
 
 bool GCNRewritePartialRegUses::rewriteReg(Register Reg) const {
   auto Range = MRI->reg_nodbg_operands(Reg);
-  if (Range.empty() || any_of(Range, [](MachineOperand &MO) {
-        return MO.getSubReg() == AMDGPU::NoSubRegister; // Whole reg used. [1]
-      }))
+  if (Range.begin() == Range.end())
     return false;
+
+  for (MachineOperand &MO : Range) {
+    if (MO.getSubReg() == AMDGPU::NoSubRegister) // Whole reg used, quit.
+      return false;
+  }
 
   auto *RC = MRI->getRegClass(Reg);
   LLVM_DEBUG(dbgs() << "Try to rewrite partial reg " << printReg(Reg, TRI)
                     << ':' << TRI->getRegClassName(RC) << '\n');
 
-  // Collect used subregs and their reg classes infered from instruction
+  // Collect used subregs and constrained reg classes infered from instruction
   // operands.
   SubRegMap SubRegs;
-  for (MachineOperand &MO : Range) {
-    const unsigned SubReg = MO.getSubReg();
-    assert(SubReg != AMDGPU::NoSubRegister); // Due to [1].
-    LLVM_DEBUG(dbgs() << "  " << TRI->getSubRegIndexName(SubReg) << ':');
-
-    const auto [I, Inserted] = SubRegs.try_emplace(SubReg);
-    const TargetRegisterClass *&SubRegRC = I->second.RC;
-
-    if (Inserted)
-      SubRegRC = TRI->getSubRegisterClass(RC, SubReg);
-
-    if (SubRegRC) {
-      if (const TargetRegisterClass *OpDescRC = getOperandRegClass(MO)) {
-        LLVM_DEBUG(dbgs() << TRI->getRegClassName(SubRegRC) << " & "
-                          << TRI->getRegClassName(OpDescRC) << " = ");
-        SubRegRC = TRI->getCommonSubClass(SubRegRC, OpDescRC);
+  for (MachineOperand &MO : MRI->reg_nodbg_operands(Reg)) {
+    assert(MO.getSubReg() != AMDGPU::NoSubRegister);
+    auto *OpDescRC = getOperandRegClass(MO);
+    const auto [I, Inserted] = SubRegs.try_emplace(MO.getSubReg(), OpDescRC);
+    if (!Inserted && OpDescRC) {
+      SubRegInfo &SRI = I->second;
+      SRI.RC = SRI.RC ? TRI->getCommonSubClass(SRI.RC, OpDescRC) : OpDescRC;
+      if (!SRI.RC) {
+        LLVM_DEBUG(dbgs() << "  Couldn't find common target regclass\n");
+        return false;
       }
     }
-
-    if (!SubRegRC) {
-      LLVM_DEBUG(dbgs() << "couldn't find target regclass\n");
-      return false;
-    }
-    LLVM_DEBUG(dbgs() << TRI->getRegClassName(SubRegRC) << '\n');
   }
 
   auto *NewRC = getMinSizeReg(RC, SubRegs);
@@ -480,8 +484,7 @@ bool GCNRewritePartialRegUses::runOnMachineFunction(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
   TRI = static_cast<const SIRegisterInfo *>(MRI->getTargetRegisterInfo());
   TII = MF.getSubtarget().getInstrInfo();
-  auto *LISWrapper = getAnalysisIfAvailable<LiveIntervalsWrapperPass>();
-  LIS = LISWrapper ? &LISWrapper->getLIS() : nullptr;
+  LIS = getAnalysisIfAvailable<LiveIntervals>();
   bool Changed = false;
   for (size_t I = 0, E = MRI->getNumVirtRegs(); I < E; ++I) {
     Changed |= rewriteReg(Register::index2VirtReg(I));

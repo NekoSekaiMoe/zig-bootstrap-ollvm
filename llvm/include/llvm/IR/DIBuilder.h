@@ -38,9 +38,6 @@ namespace llvm {
   class Module;
   class Value;
   class DbgAssignIntrinsic;
-  class DbgRecord;
-
-  using DbgInstPtr = PointerUnion<Instruction *, DbgRecord *>;
 
   class DIBuilder {
     Module &M;
@@ -92,15 +89,27 @@ namespace llvm {
     /// Create an \a temporary node and track it in \a UnresolvedNodes.
     void trackIfUnresolved(MDNode *N);
 
-    /// Internal helper. Track metadata if untracked and insert \p DVR.
-    void insertDbgVariableRecord(DbgVariableRecord *DVR,
-                                 InsertPosition InsertPt);
+    /// Internal helper for insertDeclare.
+    Instruction *insertDeclare(llvm::Value *Storage, DILocalVariable *VarInfo,
+                               DIExpression *Expr, const DILocation *DL,
+                               BasicBlock *InsertBB, Instruction *InsertBefore);
+
+    /// Internal helper for insertLabel.
+    Instruction *insertLabel(DILabel *LabelInfo, const DILocation *DL,
+                             BasicBlock *InsertBB, Instruction *InsertBefore);
 
     /// Internal helper with common code used by insertDbg{Value,Addr}Intrinsic.
     Instruction *insertDbgIntrinsic(llvm::Function *Intrinsic, llvm::Value *Val,
                                     DILocalVariable *VarInfo,
                                     DIExpression *Expr, const DILocation *DL,
-                                    InsertPosition InsertPt);
+                                    BasicBlock *InsertBB,
+                                    Instruction *InsertBefore);
+
+    /// Internal helper for insertDbgValueIntrinsic.
+    Instruction *
+    insertDbgValueIntrinsic(llvm::Value *Val, DILocalVariable *VarInfo,
+                            DIExpression *Expr, const DILocation *DL,
+                            BasicBlock *InsertBB, Instruction *InsertBefore);
 
   public:
     /// Construct a builder for a module.
@@ -207,13 +216,9 @@ namespace llvm {
     /// \param SizeInBits  Size of the type.
     /// \param Encoding    DWARF encoding code, e.g., dwarf::DW_ATE_float.
     /// \param Flags       Optional DWARF attributes, e.g., DW_AT_endianity.
-    /// \param NumExtraInhabitants The number of extra inhabitants of the type.
-    /// An extra inhabitant is a bit pattern that does not represent a valid
-    /// value for instances of a given type. This is used by the Swift language.
     DIBasicType *createBasicType(StringRef Name, uint64_t SizeInBits,
                                  unsigned Encoding,
-                                 DINode::DIFlags Flags = DINode::FlagZero,
-                                 uint32_t NumExtraInhabitants = 0);
+                                 DINode::DIFlags Flags = DINode::FlagZero);
 
     /// Create debugging information entry for a string
     /// type.
@@ -257,13 +262,6 @@ namespace llvm {
                       std::optional<unsigned> DWARFAddressSpace = std::nullopt,
                       StringRef Name = "", DINodeArray Annotations = nullptr);
 
-    /// Create a __ptrauth qualifier.
-    DIDerivedType *createPtrAuthQualifiedType(DIType *FromTy, unsigned Key,
-                                              bool IsAddressDiscriminated,
-                                              unsigned ExtraDiscriminator,
-                                              bool IsaPointer,
-                                              bool authenticatesNullValues);
-
     /// Create debugging information entry for a pointer to member.
     /// \param PointeeTy Type pointed to by this pointer.
     /// \param SizeInBits  Size.
@@ -295,24 +293,6 @@ namespace llvm {
                                  uint32_t AlignInBits = 0,
                                  DINode::DIFlags Flags = DINode::FlagZero,
                                  DINodeArray Annotations = nullptr);
-
-    /// Create debugging information entry for a template alias.
-    /// \param Ty          Original type.
-    /// \param Name        Alias name.
-    /// \param File        File where this type is defined.
-    /// \param LineNo      Line number.
-    /// \param Context     The surrounding context for the alias.
-    /// \param TParams     The template arguments.
-    /// \param AlignInBits Alignment. (optional)
-    /// \param Flags       Flags to describe inheritance attribute (optional),
-    ///                    e.g. private.
-    /// \param Annotations Annotations. (optional)
-    DIDerivedType *createTemplateAlias(DIType *Ty, StringRef Name, DIFile *File,
-                                       unsigned LineNo, DIScope *Context,
-                                       DINodeArray TParams,
-                                       uint32_t AlignInBits = 0,
-                                       DINode::DIFlags Flags = DINode::FlagZero,
-                                       DINodeArray Annotations = nullptr);
 
     /// Create debugging information entry for a 'friend'.
     DIDerivedType *createFriend(DIType *Ty, DIType *FriendTy);
@@ -396,12 +376,11 @@ namespace llvm {
     /// \param Ty         Type of the static member.
     /// \param Flags      Flags to encode member attribute, e.g. private.
     /// \param Val        Const initializer of the member.
-    /// \param Tag        DWARF tag of the static member.
     /// \param AlignInBits  Member alignment.
     DIDerivedType *createStaticMemberType(DIScope *Scope, StringRef Name,
                                           DIFile *File, unsigned LineNo,
                                           DIType *Ty, DINode::DIFlags Flags,
-                                          Constant *Val, unsigned Tag,
+                                          Constant *Val,
                                           uint32_t AlignInBits = 0);
 
     /// Create debugging information entry for Objective-C
@@ -445,7 +424,6 @@ namespace llvm {
     /// \param OffsetInBits Member offset.
     /// \param Flags        Flags to encode member attribute, e.g. private
     /// \param Elements     class members.
-    /// \param RunTimeLang  Optional parameter, Objective-C runtime version.
     /// \param VTableHolder Debug info of the base class that contains vtable
     ///                     for this type. This is used in
     ///                     DW_AT_containing_type. See DWARF documentation
@@ -456,8 +434,8 @@ namespace llvm {
         DIScope *Scope, StringRef Name, DIFile *File, unsigned LineNumber,
         uint64_t SizeInBits, uint32_t AlignInBits, uint64_t OffsetInBits,
         DINode::DIFlags Flags, DIType *DerivedFrom, DINodeArray Elements,
-        unsigned RunTimeLang = 0, DIType *VTableHolder = nullptr,
-        MDNode *TemplateParms = nullptr, StringRef UniqueIdentifier = "");
+        DIType *VTableHolder = nullptr, MDNode *TemplateParms = nullptr,
+        StringRef UniqueIdentifier = "");
 
     /// Create debugging information entry for a struct.
     /// \param Scope        Scope in which this struct is defined.
@@ -470,17 +448,11 @@ namespace llvm {
     /// \param Elements     Struct elements.
     /// \param RunTimeLang  Optional parameter, Objective-C runtime version.
     /// \param UniqueIdentifier A unique identifier for the struct.
-    /// \param Specification The type that this type completes. This is used by
-    /// Swift to represent generic types.
-    /// \param NumExtraInhabitants The number of extra inhabitants of the type.
-    /// An extra inhabitant is a bit pattern that does not represent a valid
-    /// value for instances of a given type. This is used by the Swift language.
     DICompositeType *createStructType(
         DIScope *Scope, StringRef Name, DIFile *File, unsigned LineNumber,
         uint64_t SizeInBits, uint32_t AlignInBits, DINode::DIFlags Flags,
         DIType *DerivedFrom, DINodeArray Elements, unsigned RunTimeLang = 0,
-        DIType *VTableHolder = nullptr, StringRef UniqueIdentifier = "",
-        DIType *Specification = nullptr, uint32_t NumExtraInhabitants = 0);
+        DIType *VTableHolder = nullptr, StringRef UniqueIdentifier = "");
 
     /// Create debugging information entry for an union.
     /// \param Scope        Scope in which this union is defined.
@@ -606,15 +578,13 @@ namespace llvm {
     /// \param AlignInBits    Member alignment.
     /// \param Elements       Enumeration elements.
     /// \param UnderlyingType Underlying type of a C++11/ObjC fixed enum.
-    /// \param RunTimeLang  Optional parameter, Objective-C runtime version.
     /// \param UniqueIdentifier A unique identifier for the enum.
-    /// \param IsScoped Boolean flag indicate if this is C++11/ObjC 'enum
-    /// class'.
+    /// \param IsScoped Boolean flag indicate if this is C++11/ObjC 'enum class'.
     DICompositeType *createEnumerationType(
         DIScope *Scope, StringRef Name, DIFile *File, unsigned LineNumber,
         uint64_t SizeInBits, uint32_t AlignInBits, DINodeArray Elements,
-        DIType *UnderlyingType, unsigned RunTimeLang = 0,
-        StringRef UniqueIdentifier = "", bool IsScoped = false);
+        DIType *UnderlyingType, StringRef UniqueIdentifier = "", bool IsScoped = false);
+
     /// Create debugging information entry for a set.
     /// \param Scope          Scope in which this set is defined.
     /// \param Name           Set name.
@@ -644,9 +614,9 @@ namespace llvm {
     /// Create a uniqued clone of \p Ty with FlagArtificial set.
     static DIType *createArtificialType(DIType *Ty);
 
-    /// Create a uniqued clone of \p Ty with FlagObjectPointer set.
-    /// If \p Implicit is true, also set FlagArtificial.
-    static DIType *createObjectPointerType(DIType *Ty, bool Implicit);
+    /// Create a uniqued clone of \p Ty with FlagObjectPointer and
+    /// FlagArtificial set.
+    static DIType *createObjectPointerType(DIType *Ty);
 
     /// Create a permanent forward-declared type.
     DICompositeType *createForwardDecl(unsigned Tag, StringRef Name,
@@ -764,7 +734,7 @@ namespace llvm {
     /// Create a new descriptor for the specified
     /// variable which has a complex address expression for its address.
     /// \param Addr        An array of complex address operations.
-    DIExpression *createExpression(ArrayRef<uint64_t> Addr = {});
+    DIExpression *createExpression(ArrayRef<uint64_t> Addr = std::nullopt);
 
     /// Create an expression for a variable that does not have an address, but
     /// does have a constant value.
@@ -947,9 +917,9 @@ namespace llvm {
     /// \param Expr        A complex location expression.
     /// \param DL          Debug info location.
     /// \param InsertAtEnd Location for the new intrinsic.
-    DbgInstPtr insertDeclare(llvm::Value *Storage, DILocalVariable *VarInfo,
-                             DIExpression *Expr, const DILocation *DL,
-                             BasicBlock *InsertAtEnd);
+    Instruction *insertDeclare(llvm::Value *Storage, DILocalVariable *VarInfo,
+                               DIExpression *Expr, const DILocation *DL,
+                               BasicBlock *InsertAtEnd);
 
     /// Insert a new llvm.dbg.assign intrinsic call.
     /// \param LinkedInstr   Instruction with a DIAssignID to link with the new
@@ -965,38 +935,59 @@ namespace llvm {
     /// \param DL            Debug info location, usually: (line: 0,
     ///                      column: 0, scope: var-decl-scope). See
     ///                      getDebugValueLoc.
-    DbgInstPtr insertDbgAssign(Instruction *LinkedInstr, Value *Val,
-                               DILocalVariable *SrcVar, DIExpression *ValExpr,
-                               Value *Addr, DIExpression *AddrExpr,
-                               const DILocation *DL);
+    DbgAssignIntrinsic *insertDbgAssign(Instruction *LinkedInstr, Value *Val,
+                                        DILocalVariable *SrcVar,
+                                        DIExpression *ValExpr, Value *Addr,
+                                        DIExpression *AddrExpr,
+                                        const DILocation *DL);
 
     /// Insert a new llvm.dbg.declare intrinsic call.
     /// \param Storage      llvm::Value of the variable
     /// \param VarInfo      Variable's debug info descriptor.
     /// \param Expr         A complex location expression.
     /// \param DL           Debug info location.
-    /// \param InsertPt     Location for the new intrinsic.
-    DbgInstPtr insertDeclare(llvm::Value *Storage, DILocalVariable *VarInfo,
-                             DIExpression *Expr, const DILocation *DL,
-                             InsertPosition InsertPt);
+    /// \param InsertBefore Location for the new intrinsic.
+    Instruction *insertDeclare(llvm::Value *Storage, DILocalVariable *VarInfo,
+                               DIExpression *Expr, const DILocation *DL,
+                               Instruction *InsertBefore);
 
     /// Insert a new llvm.dbg.label intrinsic call.
     /// \param LabelInfo    Label's debug info descriptor.
     /// \param DL           Debug info location.
     /// \param InsertBefore Location for the new intrinsic.
-    DbgInstPtr insertLabel(DILabel *LabelInfo, const DILocation *DL,
-                           InsertPosition InsertPt);
+    Instruction *insertLabel(DILabel *LabelInfo, const DILocation *DL,
+                             Instruction *InsertBefore);
+
+    /// Insert a new llvm.dbg.label intrinsic call.
+    /// \param LabelInfo    Label's debug info descriptor.
+    /// \param DL           Debug info location.
+    /// \param InsertAtEnd Location for the new intrinsic.
+    Instruction *insertLabel(DILabel *LabelInfo, const DILocation *DL,
+                             BasicBlock *InsertAtEnd);
 
     /// Insert a new llvm.dbg.value intrinsic call.
     /// \param Val          llvm::Value of the variable
     /// \param VarInfo      Variable's debug info descriptor.
     /// \param Expr         A complex location expression.
     /// \param DL           Debug info location.
-    /// \param InsertPt     Location for the new intrinsic.
-    DbgInstPtr insertDbgValueIntrinsic(llvm::Value *Val,
-                                       DILocalVariable *VarInfo,
-                                       DIExpression *Expr, const DILocation *DL,
-                                       InsertPosition InsertPt);
+    /// \param InsertAtEnd Location for the new intrinsic.
+    Instruction *insertDbgValueIntrinsic(llvm::Value *Val,
+                                         DILocalVariable *VarInfo,
+                                         DIExpression *Expr,
+                                         const DILocation *DL,
+                                         BasicBlock *InsertAtEnd);
+
+    /// Insert a new llvm.dbg.value intrinsic call.
+    /// \param Val          llvm::Value of the variable
+    /// \param VarInfo      Variable's debug info descriptor.
+    /// \param Expr         A complex location expression.
+    /// \param DL           Debug info location.
+    /// \param InsertBefore Location for the new intrinsic.
+    Instruction *insertDbgValueIntrinsic(llvm::Value *Val,
+                                         DILocalVariable *VarInfo,
+                                         DIExpression *Expr,
+                                         const DILocation *DL,
+                                         Instruction *InsertBefore);
 
     /// Replace the vtable holder in the given type.
     ///

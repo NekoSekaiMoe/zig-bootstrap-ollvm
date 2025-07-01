@@ -30,7 +30,6 @@
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/MachineSizeOpts.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/SlotIndexes.h"
 #include "llvm/CodeGen/StackMaps.h"
@@ -38,7 +37,6 @@
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Config/llvm-config.h"
-#include "llvm/IR/ProfileSummary.h"
 #include "llvm/IR/Statepoint.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/MC/MCRegisterInfo.h"
@@ -59,39 +57,14 @@ using namespace llvm;
 
 #define DEBUG_TYPE "regalloc"
 
-AnalysisKey LiveIntervalsAnalysis::Key;
-
-LiveIntervalsAnalysis::Result
-LiveIntervalsAnalysis::run(MachineFunction &MF,
-                           MachineFunctionAnalysisManager &MFAM) {
-  return Result(MF, MFAM.getResult<SlotIndexesAnalysis>(MF),
-                MFAM.getResult<MachineDominatorTreeAnalysis>(MF));
-}
-
-PreservedAnalyses
-LiveIntervalsPrinterPass::run(MachineFunction &MF,
-                              MachineFunctionAnalysisManager &MFAM) {
-  OS << "Live intervals for machine function: " << MF.getName() << ":\n";
-  MFAM.getResult<LiveIntervalsAnalysis>(MF).print(OS);
-  return PreservedAnalyses::all();
-}
-
-char LiveIntervalsWrapperPass::ID = 0;
-char &llvm::LiveIntervalsID = LiveIntervalsWrapperPass::ID;
-INITIALIZE_PASS_BEGIN(LiveIntervalsWrapperPass, "liveintervals",
-                      "Live Interval Analysis", false, false)
-INITIALIZE_PASS_DEPENDENCY(MachineDominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(SlotIndexesWrapperPass)
-INITIALIZE_PASS_END(LiveIntervalsWrapperPass, "liveintervals",
-                    "Live Interval Analysis", false, true)
-
-bool LiveIntervalsWrapperPass::runOnMachineFunction(MachineFunction &MF) {
-  LIS.Indexes = &getAnalysis<SlotIndexesWrapperPass>().getSI();
-  LIS.DomTree = &getAnalysis<MachineDominatorTreeWrapperPass>().getDomTree();
-  LIS.analyze(MF);
-  LLVM_DEBUG(dump());
-  return false;
-}
+char LiveIntervals::ID = 0;
+char &llvm::LiveIntervalsID = LiveIntervals::ID;
+INITIALIZE_PASS_BEGIN(LiveIntervals, "liveintervals", "Live Interval Analysis",
+                      false, false)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
+INITIALIZE_PASS_END(LiveIntervals, "liveintervals",
+                "Live Interval Analysis", false, false)
 
 #ifndef NDEBUG
 static cl::opt<bool> EnablePrecomputePhysRegs(
@@ -110,38 +83,24 @@ cl::opt<bool> UseSegmentSetForPhysRegs(
 
 } // end namespace llvm
 
-void LiveIntervalsWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
+void LiveIntervals::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesCFG();
-  AU.addPreserved<LiveVariablesWrapperPass>();
+  AU.addPreserved<LiveVariables>();
   AU.addPreservedID(MachineLoopInfoID);
   AU.addRequiredTransitiveID(MachineDominatorsID);
   AU.addPreservedID(MachineDominatorsID);
-  AU.addPreserved<SlotIndexesWrapperPass>();
-  AU.addRequiredTransitive<SlotIndexesWrapperPass>();
+  AU.addPreserved<SlotIndexes>();
+  AU.addRequiredTransitive<SlotIndexes>();
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
-LiveIntervalsWrapperPass::LiveIntervalsWrapperPass() : MachineFunctionPass(ID) {
-  initializeLiveIntervalsWrapperPassPass(*PassRegistry::getPassRegistry());
+LiveIntervals::LiveIntervals() : MachineFunctionPass(ID) {
+  initializeLiveIntervalsPass(*PassRegistry::getPassRegistry());
 }
 
-LiveIntervals::~LiveIntervals() { clear(); }
+LiveIntervals::~LiveIntervals() { delete LICalc; }
 
-bool LiveIntervals::invalidate(
-    MachineFunction &MF, const PreservedAnalyses &PA,
-    MachineFunctionAnalysisManager::Invalidator &Inv) {
-  auto PAC = PA.getChecker<LiveIntervalsAnalysis>();
-
-  if (!PAC.preserved() && !PAC.preservedSet<AllAnalysesOn<MachineFunction>>())
-    return true;
-
-  // LiveIntervals holds pointers to these results, so check for their
-  // invalidation.
-  return Inv.invalidate<SlotIndexesAnalysis>(MF, PA) ||
-         Inv.invalidate<MachineDominatorTreeAnalysis>(MF, PA);
-}
-
-void LiveIntervals::clear() {
+void LiveIntervals::releaseMemory() {
   // Free the live intervals themselves.
   for (unsigned i = 0, e = VirtRegIntervals.size(); i != e; ++i)
     delete VirtRegIntervals[Register::index2VirtReg(i)];
@@ -158,14 +117,16 @@ void LiveIntervals::clear() {
   VNInfoAllocator.Reset();
 }
 
-void LiveIntervals::analyze(MachineFunction &fn) {
+bool LiveIntervals::runOnMachineFunction(MachineFunction &fn) {
   MF = &fn;
   MRI = &MF->getRegInfo();
   TRI = MF->getSubtarget().getRegisterInfo();
   TII = MF->getSubtarget().getInstrInfo();
+  Indexes = &getAnalysis<SlotIndexes>();
+  DomTree = &getAnalysis<MachineDominatorTree>();
 
   if (!LICalc)
-    LICalc = std::make_unique<LiveIntervalCalc>();
+    LICalc = new LiveIntervalCalc();
 
   // Allocate space for all virtual registers.
   VirtRegIntervals.resize(MRI->getNumVirtRegs());
@@ -180,9 +141,11 @@ void LiveIntervals::analyze(MachineFunction &fn) {
     for (unsigned i = 0, e = TRI->getNumRegUnits(); i != e; ++i)
       getRegUnit(i);
   }
+  LLVM_DEBUG(dump());
+  return false;
 }
 
-void LiveIntervals::print(raw_ostream &OS) const {
+void LiveIntervals::print(raw_ostream &OS, const Module* ) const {
   OS << "********** INTERVALS **********\n";
 
   // Dump the regunits.
@@ -214,10 +177,6 @@ void LiveIntervals::printInstrs(raw_ostream &OS) const {
 LLVM_DUMP_METHOD void LiveIntervals::dumpInstrs() const {
   printInstrs(dbgs());
 }
-#endif
-
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-LLVM_DUMP_METHOD void LiveIntervals::dump() const { print(dbgs()); }
 #endif
 
 LiveInterval *LiveIntervals::createInterval(Register reg) {
@@ -744,12 +703,7 @@ void LiveIntervals::addKillFlags(const VirtRegMap *VRM) {
     // Find the regunit intervals for the assigned register. They may overlap
     // the virtual register live range, cancelling any kills.
     RU.clear();
-    LaneBitmask ArtificialLanes;
-    for (MCRegUnitMaskIterator UI(PhysReg, TRI); UI.isValid(); ++UI) {
-      auto [Unit, Bitmask] = *UI;
-      // Record lane mask for all artificial RegUnits for this physreg.
-      if (TRI->isArtificialRegUnit(Unit))
-        ArtificialLanes |= Bitmask;
+    for (MCRegUnit Unit : TRI->regunits(PhysReg)) {
       const LiveRange &RURange = getRegUnit(Unit);
       if (RURange.empty())
         continue;
@@ -801,11 +755,7 @@ void LiveIntervals::addKillFlags(const VirtRegMap *VRM) {
         LaneBitmask DefinedLanesMask;
         if (LI.hasSubRanges()) {
           // Compute a mask of lanes that are defined.
-          // Artificial regunits are not independently allocatable so the
-          // register allocator cannot have used them to represent any other
-          // values. That's why we mark them as 'defined' here, as this
-          // otherwise prevents kill flags from being added.
-          DefinedLanesMask = ArtificialLanes;
+          DefinedLanesMask = LaneBitmask::getNone();
           for (const LiveInterval::SubRange &SR : LI.subranges())
             for (const LiveRange::Segment &Segment : SR.segments) {
               if (Segment.start >= RI->end)
@@ -900,27 +850,19 @@ LiveIntervals::hasPHIKill(const LiveInterval &LI, const VNInfo *VNI) const {
 
 float LiveIntervals::getSpillWeight(bool isDef, bool isUse,
                                     const MachineBlockFrequencyInfo *MBFI,
-                                    const MachineInstr &MI,
-                                    ProfileSummaryInfo *PSI) {
-  return getSpillWeight(isDef, isUse, MBFI, MI.getParent(), PSI);
+                                    const MachineInstr &MI) {
+  return getSpillWeight(isDef, isUse, MBFI, MI.getParent());
 }
 
 float LiveIntervals::getSpillWeight(bool isDef, bool isUse,
                                     const MachineBlockFrequencyInfo *MBFI,
-                                    const MachineBasicBlock *MBB,
-                                    ProfileSummaryInfo *PSI) {
-  float Weight = isDef + isUse;
-  const auto *MF = MBB->getParent();
-  // When optimizing for size we only consider the codesize impact of spilling
-  // the register, not the runtime impact.
-  if (PSI && llvm::shouldOptimizeForSize(MF, PSI, MBFI))
-    return Weight;
-  return Weight * MBFI->getBlockFreqRelativeToEntryBlock(MBB);
+                                    const MachineBasicBlock *MBB) {
+  return (isDef + isUse) * MBFI->getBlockFreqRelativeToEntryBlock(MBB);
 }
 
 LiveRange::Segment
 LiveIntervals::addSegmentToEndOfBlock(Register Reg, MachineInstr &startInst) {
-  LiveInterval &Interval = getOrCreateEmptyInterval(Reg);
+  LiveInterval &Interval = createEmptyInterval(Reg);
   VNInfo *VN = Interval.getNextValue(
       SlotIndex(getInstructionIndex(startInst).getRegSlot()),
       getVNInfoAllocator());
@@ -1080,10 +1022,10 @@ public:
           for (LiveInterval::SubRange &S : LI.subranges()) {
             if ((S.LaneMask & LaneMask).none())
               continue;
-            updateRange(S, VirtRegOrUnit(Reg), S.LaneMask);
+            updateRange(S, Reg, S.LaneMask);
           }
         }
-        updateRange(LI, VirtRegOrUnit(Reg), LaneBitmask::getNone());
+        updateRange(LI, Reg, LaneBitmask::getNone());
         // If main range has a hole and we are moving a subrange use across
         // the hole updateRange() cannot properly handle it since it only
         // gets the LiveRange and not the whole LiveInterval. As a result
@@ -1110,7 +1052,7 @@ public:
       // precomputed live range.
       for (MCRegUnit Unit : TRI.regunits(Reg.asMCReg()))
         if (LiveRange *LR = getRegUnitLI(Unit))
-          updateRange(*LR, VirtRegOrUnit(Unit), LaneBitmask::getNone());
+          updateRange(*LR, Unit, LaneBitmask::getNone());
     }
     if (hasRegMask)
       updateRegMaskSlots();
@@ -1119,27 +1061,26 @@ public:
 private:
   /// Update a single live range, assuming an instruction has been moved from
   /// OldIdx to NewIdx.
-  void updateRange(LiveRange &LR, VirtRegOrUnit VRegOrUnit,
-                   LaneBitmask LaneMask) {
+  void updateRange(LiveRange &LR, Register Reg, LaneBitmask LaneMask) {
     if (!Updated.insert(&LR).second)
       return;
     LLVM_DEBUG({
       dbgs() << "     ";
-      if (VRegOrUnit.isVirtualReg()) {
-        dbgs() << printReg(VRegOrUnit.asVirtualReg());
+      if (Reg.isVirtual()) {
+        dbgs() << printReg(Reg);
         if (LaneMask.any())
           dbgs() << " L" << PrintLaneMask(LaneMask);
       } else {
-        dbgs() << printRegUnit(VRegOrUnit.asMCRegUnit(), &TRI);
+        dbgs() << printRegUnit(Reg, &TRI);
       }
       dbgs() << ":\t" << LR << '\n';
     });
     if (SlotIndex::isEarlierInstr(OldIdx, NewIdx))
       handleMoveDown(LR);
     else
-      handleMoveUp(LR, VRegOrUnit, LaneMask);
+      handleMoveUp(LR, Reg, LaneMask);
     LLVM_DEBUG(dbgs() << "        -->\t" << LR << '\n');
-    assert(LR.verify());
+    LR.verify();
   }
 
   /// Update LR to reflect an instruction has been moved downwards from OldIdx
@@ -1317,8 +1258,7 @@ private:
 
   /// Update LR to reflect an instruction has been moved upwards from OldIdx
   /// to NewIdx (NewIdx < OldIdx).
-  void handleMoveUp(LiveRange &LR, VirtRegOrUnit VRegOrUnit,
-                    LaneBitmask LaneMask) {
+  void handleMoveUp(LiveRange &LR, Register Reg, LaneBitmask LaneMask) {
     LiveRange::iterator E = LR.end();
     // Segment going into OldIdx.
     LiveRange::iterator OldIdxIn = LR.find(OldIdx.getBaseIndex());
@@ -1342,7 +1282,7 @@ private:
       SlotIndex DefBeforeOldIdx
         = std::max(OldIdxIn->start.getDeadSlot(),
                    NewIdx.getRegSlot(OldIdxIn->end.isEarlyClobber()));
-      OldIdxIn->end = findLastUseBefore(DefBeforeOldIdx, VRegOrUnit, LaneMask);
+      OldIdxIn->end = findLastUseBefore(DefBeforeOldIdx, Reg, LaneMask);
 
       // Did we have a Def at OldIdx? If not we are done now.
       OldIdxOut = std::next(OldIdxIn);
@@ -1500,12 +1440,11 @@ private:
   }
 
   // Return the last use of reg between NewIdx and OldIdx.
-  SlotIndex findLastUseBefore(SlotIndex Before, VirtRegOrUnit VRegOrUnit,
+  SlotIndex findLastUseBefore(SlotIndex Before, Register Reg,
                               LaneBitmask LaneMask) {
-    if (VRegOrUnit.isVirtualReg()) {
+    if (Reg.isVirtual()) {
       SlotIndex LastUse = Before;
-      for (MachineOperand &MO :
-           MRI.use_nodbg_operands(VRegOrUnit.asVirtualReg())) {
+      for (MachineOperand &MO : MRI.use_nodbg_operands(Reg)) {
         if (MO.isUndef())
           continue;
         unsigned SubReg = MO.getSubReg();
@@ -1548,7 +1487,7 @@ private:
       // Check if MII uses Reg.
       for (MIBundleOperands MO(*MII); MO.isValid(); ++MO)
         if (MO->isReg() && !MO->isUndef() && MO->getReg().isPhysical() &&
-            TRI.hasRegUnit(MO->getReg(), VRegOrUnit.asMCRegUnit()))
+            TRI.hasRegUnit(MO->getReg(), Reg))
           return Idx.getRegSlot();
     }
     // Didn't reach Before. It must be the first instruction in the block.
@@ -1597,7 +1536,8 @@ void LiveIntervals::handleMoveIntoNewBundle(MachineInstr &BundleStart,
 
   // Fix up dead defs
   const SlotIndex Index = getInstructionIndex(BundleStart);
-  for (MachineOperand &MO : BundleStart.operands()) {
+  for (unsigned Idx = 0, E = BundleStart.getNumOperands(); Idx != E; ++Idx) {
+    MachineOperand &MO = BundleStart.getOperand(Idx);
     if (!MO.isReg())
       continue;
     Register Reg = MO.getReg();
@@ -1717,7 +1657,7 @@ LiveIntervals::repairIntervalsInRange(MachineBasicBlock *MBB,
   Indexes->repairIndexesInRange(MBB, Begin, End);
 
   // Make sure a live interval exists for all register operands in the range.
-  SmallVector<Register> RegsToRepair(OrigRegs);
+  SmallVector<Register> RegsToRepair(OrigRegs.begin(), OrigRegs.end());
   for (MachineBasicBlock::iterator I = End; I != Begin;) {
     --I;
     MachineInstr &MI = *I;
@@ -1726,31 +1666,17 @@ LiveIntervals::repairIntervalsInRange(MachineBasicBlock *MBB,
     for (const MachineOperand &MO : MI.operands()) {
       if (MO.isReg() && MO.getReg().isVirtual()) {
         Register Reg = MO.getReg();
+        // If the new instructions refer to subregs but the old instructions did
+        // not, throw away any old live interval so it will be recomputed with
+        // subranges.
         if (MO.getSubReg() && hasInterval(Reg) &&
-            MRI->shouldTrackSubRegLiveness(Reg)) {
-          LiveInterval &LI = getInterval(Reg);
-          if (!LI.hasSubRanges()) {
-            // If the new instructions refer to subregs but the old instructions
-            // did not, throw away any old live interval so it will be
-            // recomputed with subranges.
-            removeInterval(Reg);
-          } else if (MO.isDef()) {
-            // Similarly if a subreg def has no precise subrange match then
-            // assume we need to recompute all subranges.
-            unsigned SubReg = MO.getSubReg();
-            LaneBitmask Mask = TRI->getSubRegIndexLaneMask(SubReg);
-            if (llvm::none_of(LI.subranges(),
-                              [Mask](LiveInterval::SubRange &SR) {
-                                return SR.LaneMask == Mask;
-                              })) {
-              removeInterval(Reg);
-            }
-          }
-        }
+            !getInterval(Reg).hasSubRanges() &&
+            MRI->shouldTrackSubRegLiveness(Reg))
+          removeInterval(Reg);
         if (!hasInterval(Reg)) {
           createAndComputeVirtRegInterval(Reg);
           // Don't bother to repair a freshly calculated live interval.
-          llvm::erase(RegsToRepair, Reg);
+          erase_value(RegsToRepair, Reg);
         }
       }
     }

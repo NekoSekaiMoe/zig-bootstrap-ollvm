@@ -30,15 +30,9 @@ __clone:
 	mov 8(%ebp),%ebp
 	int $128
 	test %eax,%eax
-	jz 1f
-	add $16,%esp
-	pop %edi
-	pop %esi
-	pop %ebx
-	pop %ebp
-	ret
+	jnz 1f
 
-1:	mov %ebp,%eax
+	mov %ebp,%eax
 	xor %ebp,%ebp
 	call *%eax
 	mov %eax,%ebx
@@ -46,3 +40,10 @@ __clone:
 	inc %eax
 	int $128
 	hlt
+
+1:	add $16,%esp
+	pop %edi
+	pop %esi
+	pop %ebx
+	pop %ebp
+	ret

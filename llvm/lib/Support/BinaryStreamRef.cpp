@@ -10,6 +10,7 @@
 #include "llvm/Support/BinaryByteStream.h"
 
 using namespace llvm;
+using namespace llvm::support;
 
 namespace {
 
@@ -17,7 +18,9 @@ class ArrayRefImpl : public BinaryStream {
 public:
   ArrayRefImpl(ArrayRef<uint8_t> Data, endianness Endian) : BBS(Data, Endian) {}
 
-  llvm::endianness getEndian() const override { return BBS.getEndian(); }
+  llvm::support::endianness getEndian() const override {
+    return BBS.getEndian();
+  }
   Error readBytes(uint64_t Offset, uint64_t Size,
                   ArrayRef<uint8_t> &Buffer) override {
     return BBS.readBytes(Offset, Size, Buffer);
@@ -38,7 +41,9 @@ public:
       : BBS(Data, Endian) {}
 
   // Inherited via WritableBinaryStream
-  llvm::endianness getEndian() const override { return BBS.getEndian(); }
+  llvm::support::endianness getEndian() const override {
+    return BBS.getEndian();
+  }
   Error readBytes(uint64_t Offset, uint64_t Size,
                   ArrayRef<uint8_t> &Buffer) override {
     return BBS.readBytes(Offset, Size, Buffer);

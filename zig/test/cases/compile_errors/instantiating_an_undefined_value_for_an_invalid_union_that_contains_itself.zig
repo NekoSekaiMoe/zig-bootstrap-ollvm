@@ -13,3 +13,4 @@ export fn entry() usize {
 // target=native
 //
 // :1:13: error: union 'tmp.Foo' depends on itself
+// :2:5: note: while checking this field

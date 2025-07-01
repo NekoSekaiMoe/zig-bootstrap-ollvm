@@ -6,12 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Common/CodeGenTarget.h"
+#include "CodeGenTarget.h"
 #include "TableGenBackends.h"
 #include "WebAssemblyDisassemblerEmitter.h"
 #include "X86DisassemblerTables.h"
 #include "X86RecognizableInstr.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
@@ -95,17 +94,19 @@ using namespace llvm::X86Disassembler;
 /// X86RecognizableInstr.cpp contains the implementation for a single
 ///   instruction.
 
-static void emitDisassembler(const RecordKeeper &Records, raw_ostream &OS) {
-  const CodeGenTarget Target(Records);
+static void EmitDisassembler(RecordKeeper &Records, raw_ostream &OS) {
+  CodeGenTarget Target(Records);
   emitSourceFileHeader(" * " + Target.getName().str() + " Disassembler", OS);
 
   // X86 uses a custom disassembler.
   if (Target.getName() == "X86") {
     DisassemblerTables Tables;
 
-    for (const auto &[Idx, NumberedInst] :
-         enumerate(Target.getInstructionsByEnumValue()))
-      RecognizableInstr::processInstr(Tables, *NumberedInst, Idx);
+    ArrayRef<const CodeGenInstruction*> numberedInstructions =
+      Target.getInstructionsByEnumValue();
+
+    for (unsigned i = 0, e = numberedInstructions.size(); i != e; ++i)
+      RecognizableInstr::processInstr(Tables, *numberedInstructions[i], i);
 
     if (Tables.hasConflicts()) {
       PrintError(Target.getTargetRecord()->getLoc(), "Primary decode conflict");
@@ -124,13 +125,11 @@ static void emitDisassembler(const RecordKeeper &Records, raw_ostream &OS) {
     return;
   }
 
-  StringRef PredicateNamespace = Target.getName();
+  std::string PredicateNamespace = std::string(Target.getName());
   if (PredicateNamespace == "Thumb")
     PredicateNamespace = "ARM";
   EmitDecoder(Records, OS, PredicateNamespace);
 }
 
-cl::OptionCategory DisassemblerEmitterCat("Options for -gen-disassembler");
-
-static TableGen::Emitter::Opt X("gen-disassembler", emitDisassembler,
+static TableGen::Emitter::Opt X("gen-disassembler", EmitDisassembler,
                                 "Generate disassembler");

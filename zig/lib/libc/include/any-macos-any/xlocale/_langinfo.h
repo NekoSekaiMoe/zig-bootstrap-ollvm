@@ -25,14 +25,11 @@
 #define _XLOCALE__LANGINFO_H_
 
 #include <sys/cdefs.h>
-#include <_bounds.h>
 #include <_types/_nl_item.h>
-#include <__xlocale.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
+#include <_xlocale.h>
 
 __BEGIN_DECLS
-char *_LIBC_CSTR    nl_langinfo_l(nl_item, locale_t);
+char	*nl_langinfo_l(nl_item, locale_t);
 __END_DECLS
 
 #endif /* _XLOCALE__LANGINFO_H_ */

@@ -405,7 +405,7 @@ pub const DecodeState = struct {
     };
     fn readLiteralsBits(
         self: *DecodeState,
-        bit_count_to_read: u16,
+        bit_count_to_read: usize,
     ) LiteralBitsError!u16 {
         return self.literal_stream_reader.readBitsNoEof(u16, bit_count_to_read) catch bits: {
             if (self.literal_streams == .four and self.literal_stream_index < 3) {
@@ -989,7 +989,6 @@ pub fn decodeLiteralsSection(
     const header = try decodeLiteralsHeader(source);
     switch (header.block_type) {
         .raw => {
-            if (buffer.len < header.regenerated_size) return error.LiteralsBufferTooSmall;
             try source.readNoEof(buffer[0..header.regenerated_size]);
             return LiteralsSection{
                 .header = header,

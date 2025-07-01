@@ -116,7 +116,8 @@ void ARCFrameLowering::emitPrologue(MachineFunction &MF,
                                     MachineBasicBlock &MBB) const {
   LLVM_DEBUG(dbgs() << "Emit Prologue: " << MF.getName() << "\n");
   auto *AFI = MF.getInfo<ARCFunctionInfo>();
-  MCContext &Context = MF.getContext();
+  MachineModuleInfo &MMI = MF.getMMI();
+  MCContext &Context = MMI.getContext();
   const MCRegisterInfo *MRI = Context.getRegisterInfo();
   const ARCInstrInfo *TII = MF.getSubtarget<ARCSubtarget>().getInstrInfo();
   MachineBasicBlock::iterator MBBI = MBB.begin();
@@ -438,8 +439,8 @@ void ARCFrameLowering::processFunctionBeforeFrameFinalized(
   LLVM_DEBUG(dbgs() << "Current stack size: " << MFI.getStackSize() << "\n");
   const TargetRegisterClass *RC = &ARC::GPR32RegClass;
   if (MFI.hasStackObjects()) {
-    int RegScavFI = MFI.CreateSpillStackObject(RegInfo->getSpillSize(*RC),
-                                               RegInfo->getSpillAlign(*RC));
+    int RegScavFI = MFI.CreateStackObject(RegInfo->getSpillSize(*RC),
+                                          RegInfo->getSpillAlign(*RC), false);
     RS->addScavengingFrameIndex(RegScavFI);
     LLVM_DEBUG(dbgs() << "Created scavenging index RegScavFI=" << RegScavFI
                       << "\n");
@@ -487,7 +488,7 @@ MachineBasicBlock::iterator ARCFrameLowering::eliminateCallFramePseudoInstr(
   return MBB.erase(I);
 }
 
-bool ARCFrameLowering::hasFPImpl(const MachineFunction &MF) const {
+bool ARCFrameLowering::hasFP(const MachineFunction &MF) const {
   const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
   bool HasFP = MF.getTarget().Options.DisableFramePointerElim(MF) ||
                MF.getFrameInfo().hasVarSizedObjects() ||

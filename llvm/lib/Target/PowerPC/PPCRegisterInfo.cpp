@@ -18,6 +18,7 @@
 #include "PPCSubtarget.h"
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -29,6 +30,7 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
@@ -166,7 +168,7 @@ PPCRegisterInfo::PPCRegisterInfo(const PPCTargetMachine &TM)
 const TargetRegisterClass *
 PPCRegisterInfo::getPointerRegClass(const MachineFunction &MF, unsigned Kind)
                                                                        const {
-  // Note that PPCInstrInfo::foldImmediate also directly uses this Kind value
+  // Note that PPCInstrInfo::FoldImmediate also directly uses this Kind value
   // when it checks for ZERO folding.
   if (Kind == 1) {
     if (TM.isPPC64())
@@ -378,21 +380,23 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   markSuperRegs(Reserved, PPC::VRSAVE);
 
-  const PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
-  bool UsesTOCBasePtr = FuncInfo->usesTOCBasePtr();
   // The SVR4 ABI reserves r2 and r13
-  if (Subtarget.isSVR4ABI() || Subtarget.isAIXABI()) {
+  if (Subtarget.isSVR4ABI()) {
     // We only reserve r2 if we need to use the TOC pointer. If we have no
     // explicit uses of the TOC pointer (meaning we're a leaf function with
     // no constant-pool loads, etc.) and we have no potential uses inside an
     // inline asm block, then we can treat r2 has an ordinary callee-saved
     // register.
-    if (!TM.isPPC64() || UsesTOCBasePtr || MF.hasInlineAsm())
-      markSuperRegs(Reserved, PPC::R2); // System-reserved register.
-
-    if (Subtarget.isSVR4ABI())
-      markSuperRegs(Reserved, PPC::R13); // Small Data Area pointer register.
+    const PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
+    if (!TM.isPPC64() || FuncInfo->usesTOCBasePtr() || MF.hasInlineAsm())
+      markSuperRegs(Reserved, PPC::R2);  // System-reserved register
+    markSuperRegs(Reserved, PPC::R13); // Small Data Area pointer register
   }
+
+  // Always reserve r2 on AIX for now.
+  // TODO: Make r2 allocatable on AIX/XCOFF for some leaf functions.
+  if (Subtarget.isAIXABI())
+    markSuperRegs(Reserved, PPC::R2);  // System-reserved register
 
   // On PPC64, r13 is the thread pointer. Never allocate this register.
   if (TM.isPPC64())
@@ -437,12 +441,14 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
 bool PPCRegisterInfo::isAsmClobberable(const MachineFunction &MF,
                                        MCRegister PhysReg) const {
-  // CTR and LR registers are always reserved, but they are asm clobberable.
-  if (PhysReg == PPC::CTR || PhysReg == PPC::CTR8 || PhysReg == PPC::LR ||
-      PhysReg == PPC::LR8)
-    return true;
+  // We cannot use getReservedRegs() to find the registers that are not asm
+  // clobberable because there are some reserved registers which can be
+  // clobbered by inline asm. For example, when LR is clobbered, the register is
+  // saved and restored. We will hardcode the registers that are not asm
+  // cloberable in this function.
 
-  return !getReservedRegs(MF).test(PhysReg);
+  // The stack pointer (R1/X1) is not clobberable by inline asm
+  return PhysReg != PPC::R1 && PhysReg != PPC::X1;
 }
 
 bool PPCRegisterInfo::requiresFrameIndexScavenging(const MachineFunction &MF) const {
@@ -531,7 +537,7 @@ bool PPCRegisterInfo::requiresVirtualBaseRegisters(
 
 bool PPCRegisterInfo::isCallerPreservedPhysReg(MCRegister PhysReg,
                                                const MachineFunction &MF) const {
-  assert(PhysReg.isPhysical());
+  assert(Register::isPhysicalRegister(PhysReg));
   const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
   const MachineFrameInfo &MFI = MF.getFrameInfo();
 
@@ -692,23 +698,21 @@ PPCRegisterInfo::getLargestLegalSuperClass(const TargetRegisterClass *RC,
         InflateGPRC++;
     }
 
-    for (unsigned SuperID : RC->superclasses()) {
-      if (getRegSizeInBits(*getRegClass(SuperID)) != getRegSizeInBits(*RC))
+    for (const auto *I = RC->getSuperClasses(); *I; ++I) {
+      if (getRegSizeInBits(**I) != getRegSizeInBits(*RC))
         continue;
 
-      switch (SuperID) {
+      switch ((*I)->getID()) {
       case PPC::VSSRCRegClassID:
-        return Subtarget.hasP8Vector() ? getRegClass(SuperID)
-                                       : DefaultSuperclass;
+        return Subtarget.hasP8Vector() ? *I : DefaultSuperclass;
       case PPC::VSFRCRegClassID:
       case PPC::VSRCRegClassID:
-        return getRegClass(SuperID);
+        return *I;
       case PPC::VSRpRCRegClassID:
-        return Subtarget.pairedVectorMemops() ? getRegClass(SuperID)
-                                              : DefaultSuperclass;
+        return Subtarget.pairedVectorMemops() ? *I : DefaultSuperclass;
       case PPC::ACCRCRegClassID:
       case PPC::UACCRCRegClassID:
-        return Subtarget.hasMMA() ? getRegClass(SuperID) : DefaultSuperclass;
+        return Subtarget.hasMMA() ? *I : DefaultSuperclass;
       }
     }
   }
@@ -1009,8 +1013,8 @@ void PPCRegisterInfo::lowerCRRestore(MachineBasicBlock::iterator II,
 
   Register Reg = MF.getRegInfo().createVirtualRegister(LP64 ? G8RC : GPRC);
   Register DestReg = MI.getOperand(0).getReg();
-  assert(MI.definesRegister(DestReg, /*TRI=*/nullptr) &&
-         "RESTORE_CR does not define its destination");
+  assert(MI.definesRegister(DestReg) &&
+    "RESTORE_CR does not define its destination");
 
   addFrameReference(BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::LWZ8 : PPC::LWZ),
                               Reg), FrameIndex);
@@ -1171,8 +1175,8 @@ void PPCRegisterInfo::lowerCRBitRestore(MachineBasicBlock::iterator II,
 
   Register Reg = MF.getRegInfo().createVirtualRegister(LP64 ? G8RC : GPRC);
   Register DestReg = MI.getOperand(0).getReg();
-  assert(MI.definesRegister(DestReg, /*TRI=*/nullptr) &&
-         "RESTORE_CRBIT does not define its destination");
+  assert(MI.definesRegister(DestReg) &&
+    "RESTORE_CRBIT does not define its destination");
 
   addFrameReference(BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::LWZ8 : PPC::LWZ),
                               Reg), FrameIndex);
@@ -1359,7 +1363,7 @@ void PPCRegisterInfo::lowerACCRestore(MachineBasicBlock::iterator II,
   DebugLoc DL = MI.getDebugLoc();
 
   Register DestReg = MI.getOperand(0).getReg();
-  assert(MI.definesRegister(DestReg, /*TRI=*/nullptr) &&
+  assert(MI.definesRegister(DestReg) &&
          "RESTORE_ACC does not define its destination");
 
   bool IsPrimed = PPC::ACCRCRegClass.contains(DestReg);
@@ -1487,7 +1491,7 @@ void PPCRegisterInfo::lowerQuadwordRestore(MachineBasicBlock::iterator II,
   DebugLoc DL = MI.getDebugLoc();
 
   Register DestReg = MI.getOperand(0).getReg();
-  assert(MI.definesRegister(DestReg, /*TRI=*/nullptr) &&
+  assert(MI.definesRegister(DestReg) &&
          "RESTORE_QUADWORD does not define its destination");
 
   Register Reg = PPC::X0 + (DestReg - PPC::G8p0) * 2;
@@ -1691,7 +1695,7 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // transform it to the prefixed version so we don't have to use the XForm.
   if ((OpC == PPC::LXVP || OpC == PPC::STXVP) &&
       (!isInt<16>(Offset) || (Offset % offsetMinAlign(MI)) != 0) &&
-      Subtarget.hasPrefixInstrs() && Subtarget.hasP10Vector()) {
+      Subtarget.hasPrefixInstrs()) {
     unsigned NewOpc = OpC == PPC::LXVP ? PPC::PLXVP : PPC::PSTXVP;
     MI.setDesc(TII.get(NewOpc));
     OpC = NewOpc;

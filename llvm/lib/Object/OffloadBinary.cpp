@@ -15,12 +15,15 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Object/Archive.h"
+#include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Object/Binary.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/Error.h"
 #include "llvm/Object/IRObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Alignment.h"
+#include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace llvm;
@@ -80,7 +83,7 @@ Error extractFromObject(const ObjectFile &Obj,
       if (!NameOrErr)
         return NameOrErr.takeError();
 
-      if (!NameOrErr->starts_with(".llvm.offloading"))
+      if (!NameOrErr->equals(".llvm.offloading"))
         continue;
     }
 
@@ -186,10 +189,7 @@ OffloadBinary::create(MemoryBufferRef Buf) {
     return errorCodeToError(object_error::parse_failed);
 
   if (TheHeader->Size > Buf.getBufferSize() ||
-      TheHeader->Size < sizeof(Entry) || TheHeader->Size < sizeof(Header))
-    return errorCodeToError(object_error::unexpected_eof);
-
-  if (TheHeader->EntryOffset > TheHeader->Size - sizeof(Entry) ||
+      TheHeader->EntryOffset > TheHeader->Size - sizeof(Entry) ||
       TheHeader->EntrySize > TheHeader->Size - sizeof(Header))
     return errorCodeToError(object_error::unexpected_eof);
 
@@ -204,7 +204,8 @@ OffloadBinary::create(MemoryBufferRef Buf) {
       new OffloadBinary(Buf, TheHeader, TheEntry));
 }
 
-SmallString<0> OffloadBinary::write(const OffloadingImage &OffloadingData) {
+std::unique_ptr<MemoryBuffer>
+OffloadBinary::write(const OffloadingImage &OffloadingData) {
   // Create a null-terminated string table with all the used strings.
   StringTableBuilder StrTab(StringTableBuilder::ELF);
   for (auto &KeyAndValue : OffloadingData.StringData) {
@@ -242,7 +243,7 @@ SmallString<0> OffloadBinary::write(const OffloadingImage &OffloadingData) {
   TheEntry.ImageOffset = BinaryDataSize;
   TheEntry.ImageSize = OffloadingData.Image->getBufferSize();
 
-  SmallString<0> Data;
+  SmallVector<char> Data;
   Data.reserve(TheHeader.Size);
   raw_svector_ostream OS(Data);
   OS << StringRef(reinterpret_cast<char *>(&TheHeader), sizeof(Header));
@@ -263,7 +264,7 @@ SmallString<0> OffloadBinary::write(const OffloadingImage &OffloadingData) {
   OS.write_zeros(TheHeader.Size - OS.tell());
   assert(TheHeader.Size == OS.tell() && "Size mismatch");
 
-  return Data;
+  return MemoryBuffer::getMemBufferCopy(OS.str());
 }
 
 Error object::extractOffloadBinaries(MemoryBufferRef Buffer,
@@ -342,40 +343,4 @@ StringRef object::getImageKindName(ImageKind Kind) {
   default:
     return "";
   }
-}
-
-bool object::areTargetsCompatible(const OffloadFile::TargetID &LHS,
-                                  const OffloadFile::TargetID &RHS) {
-  // Exact matches are not considered compatible because they are the same
-  // target. We are interested in different targets that are compatible.
-  if (LHS == RHS)
-    return false;
-
-  // The triples must match at all times.
-  if (LHS.first != RHS.first)
-    return false;
-
-  // If the architecture is "all" we assume it is always compatible.
-  if (LHS.second == "generic" || RHS.second == "generic")
-    return true;
-
-  // Only The AMDGPU target requires additional checks.
-  llvm::Triple T(LHS.first);
-  if (!T.isAMDGPU())
-    return false;
-
-  // The base processor must always match.
-  if (LHS.second.split(":").first != RHS.second.split(":").first)
-    return false;
-
-  // Check combintions of on / off features that must match.
-  if (LHS.second.contains("xnack+") && RHS.second.contains("xnack-"))
-    return false;
-  if (LHS.second.contains("xnack-") && RHS.second.contains("xnack+"))
-    return false;
-  if (LHS.second.contains("sramecc-") && RHS.second.contains("sramecc+"))
-    return false;
-  if (LHS.second.contains("sramecc+") && RHS.second.contains("sramecc-"))
-    return false;
-  return true;
 }

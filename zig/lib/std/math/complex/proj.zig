@@ -19,6 +19,5 @@ test proj {
     const a = Complex(f32).init(5, 3);
     const c = proj(a);
 
-    try testing.expectEqual(5, c.re);
-    try testing.expectEqual(3, c.im);
+    try testing.expect(c.re == 5 and c.im == 3);
 }

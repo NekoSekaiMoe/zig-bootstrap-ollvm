@@ -19,6 +19,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -70,7 +71,7 @@ LLVM_DUMP_METHOD void SubtargetFeatures::dump() const {
 void SubtargetFeatures::getDefaultSubtargetFeatures(const Triple& Triple) {
   // FIXME: This is an inelegant way of specifying the features of a
   // subtarget. It would be better if we could encode this information
-  // into the IR.
+  // into the IR. See <rdar://5972456>.
   if (Triple.getVendor() == Triple::Apple) {
     if (Triple.getArch() == Triple::ppc) {
       // powerpc-apple-*

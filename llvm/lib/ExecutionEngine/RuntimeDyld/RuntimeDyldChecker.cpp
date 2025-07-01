@@ -8,19 +8,15 @@
 
 #include "llvm/ExecutionEngine/RuntimeDyldChecker.h"
 #include "RuntimeDyldCheckerImpl.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/MC/MCTargetOptions.h"
-#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MSVCErrorWorkarounds.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include <cctype>
 #include <memory>
 #include <utility>
@@ -28,19 +24,6 @@
 #define DEBUG_TYPE "rtdyld"
 
 using namespace llvm;
-
-namespace {
-struct TargetInfo {
-  const Target *TheTarget;
-  std::unique_ptr<MCSubtargetInfo> STI;
-  std::unique_ptr<MCRegisterInfo> MRI;
-  std::unique_ptr<MCAsmInfo> MAI;
-  std::unique_ptr<MCContext> Ctx;
-  std::unique_ptr<MCDisassembler> Disassembler;
-  std::unique_ptr<MCInstrInfo> MII;
-  std::unique_ptr<MCInstPrinter> InstPrinter;
-};
-} // anonymous namespace
 
 namespace llvm {
 
@@ -139,7 +122,7 @@ private:
       std::tie(Token, Remaining) = parseNumberString(Expr);
     else {
       unsigned TokLen = 1;
-      if (Expr.starts_with("<<") || Expr.starts_with(">>"))
+      if (Expr.startswith("<<") || Expr.startswith(">>"))
         TokLen = 2;
       Token = Expr.substr(0, TokLen);
     }
@@ -174,9 +157,9 @@ private:
       return std::make_pair(BinOpToken::Invalid, "");
 
     // Handle the two 2-character tokens.
-    if (Expr.starts_with("<<"))
+    if (Expr.startswith("<<"))
       return std::make_pair(BinOpToken::ShiftLeft, Expr.substr(2).ltrim());
-    if (Expr.starts_with(">>"))
+    if (Expr.startswith(">>"))
       return std::make_pair(BinOpToken::ShiftRight, Expr.substr(2).ltrim());
 
     // Handle one-character tokens.
@@ -239,7 +222,7 @@ private:
   // On success, returns a pair containing the value of the operand, plus
   // the expression remaining to be evaluated.
   std::pair<EvalResult, StringRef> evalDecodeOperand(StringRef Expr) const {
-    if (!Expr.starts_with("("))
+    if (!Expr.startswith("("))
       return std::make_pair(unexpectedToken(Expr, Expr, "expected '('"), "");
     StringRef RemainingExpr = Expr.substr(1).ltrim();
     StringRef Symbol;
@@ -270,7 +253,7 @@ private:
           "");
     }
 
-    if (!RemainingExpr.starts_with(","))
+    if (!RemainingExpr.startswith(","))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ','"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -280,7 +263,7 @@ private:
     if (OpIdxExpr.hasError())
       return std::make_pair(OpIdxExpr, "");
 
-    if (!RemainingExpr.starts_with(")"))
+    if (!RemainingExpr.startswith(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ')'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -293,20 +276,6 @@ private:
           "");
 
     unsigned OpIdx = OpIdxExpr.getValue();
-
-    auto printInst = [this](StringRef Symbol, MCInst Inst,
-                            raw_string_ostream &ErrMsgStream) {
-      auto TT = Checker.getTripleForSymbol(Checker.getTargetFlag(Symbol));
-      auto TI = getTargetInfo(TT, Checker.getCPU(), Checker.getFeatures());
-      if (auto E = TI.takeError()) {
-        errs() << "Error obtaining instruction printer: "
-               << toString(std::move(E)) << "\n";
-        return;
-      }
-      Inst.dump_pretty(ErrMsgStream, TI->InstPrinter.get());
-      return;
-    };
-
     if (OpIdx >= Inst.getNumOperands()) {
       std::string ErrMsg;
       raw_string_ostream ErrMsgStream(ErrMsg);
@@ -315,9 +284,8 @@ private:
                    << "'. Instruction has only "
                    << format("%i", Inst.getNumOperands())
                    << " operands.\nInstruction is:\n  ";
-
-      printInst(Symbol, Inst, ErrMsgStream);
-      return {EvalResult(std::move(ErrMsg)), ""};
+      Inst.dump_pretty(ErrMsgStream, Checker.InstPrinter);
+      return std::make_pair(EvalResult(ErrMsgStream.str()), "");
     }
 
     const MCOperand &Op = Inst.getOperand(OpIdx);
@@ -326,9 +294,9 @@ private:
       raw_string_ostream ErrMsgStream(ErrMsg);
       ErrMsgStream << "Operand '" << format("%i", OpIdx) << "' of instruction '"
                    << Symbol << "' is not an immediate.\nInstruction is:\n  ";
+      Inst.dump_pretty(ErrMsgStream, Checker.InstPrinter);
 
-      printInst(Symbol, Inst, ErrMsgStream);
-      return {EvalResult(std::move(ErrMsg)), ""};
+      return std::make_pair(EvalResult(ErrMsgStream.str()), "");
     }
 
     return std::make_pair(EvalResult(Op.getImm()), RemainingExpr);
@@ -342,7 +310,7 @@ private:
   // expression remaining to be evaluated.
   std::pair<EvalResult, StringRef> evalNextPC(StringRef Expr,
                                               ParseContext PCtx) const {
-    if (!Expr.starts_with("("))
+    if (!Expr.startswith("("))
       return std::make_pair(unexpectedToken(Expr, Expr, "expected '('"), "");
     StringRef RemainingExpr = Expr.substr(1).ltrim();
     StringRef Symbol;
@@ -353,7 +321,7 @@ private:
           EvalResult(("Cannot decode unknown symbol '" + Symbol + "'").str()),
           "");
 
-    if (!RemainingExpr.starts_with(")"))
+    if (!RemainingExpr.startswith(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ')'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -368,13 +336,7 @@ private:
     uint64_t SymbolAddr = PCtx.IsInsideLoad
                               ? Checker.getSymbolLocalAddr(Symbol)
                               : Checker.getSymbolRemoteAddr(Symbol);
-
-    // ARM PC offset is 8 instead of 4, because it accounts for an additional
-    // prefetch instruction that increments PC even though it is implicit.
-    auto TT = Checker.getTripleForSymbol(Checker.getTargetFlag(Symbol));
-    uint64_t PCOffset = TT.getArch() == Triple::ArchType::arm ? 4 : 0;
-
-    uint64_t NextPC = SymbolAddr + InstSize + PCOffset;
+    uint64_t NextPC = SymbolAddr + InstSize;
 
     return std::make_pair(EvalResult(NextPC), RemainingExpr);
   }
@@ -386,7 +348,7 @@ private:
   // remaining to be evaluated.
   std::pair<EvalResult, StringRef>
   evalStubOrGOTAddr(StringRef Expr, ParseContext PCtx, bool IsStubAddr) const {
-    if (!Expr.starts_with("("))
+    if (!Expr.startswith("("))
       return std::make_pair(unexpectedToken(Expr, Expr, "expected '('"), "");
     StringRef RemainingExpr = Expr.substr(1).ltrim();
 
@@ -397,7 +359,7 @@ private:
     StubContainerName = RemainingExpr.substr(0, ComaIdx).rtrim();
     RemainingExpr = RemainingExpr.substr(ComaIdx).ltrim();
 
-    if (!RemainingExpr.starts_with(","))
+    if (!RemainingExpr.startswith(","))
       return std::make_pair(
           unexpectedToken(RemainingExpr, Expr, "expected ','"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -405,25 +367,15 @@ private:
     StringRef Symbol;
     std::tie(Symbol, RemainingExpr) = parseSymbol(RemainingExpr);
 
-    // Parse optional parameter to filter by stub kind
-    StringRef KindNameFilter;
-    if (RemainingExpr.starts_with(",")) {
-      RemainingExpr = RemainingExpr.substr(1).ltrim();
-      size_t ClosingBracket = RemainingExpr.find(")");
-      KindNameFilter = RemainingExpr.substr(0, ClosingBracket);
-      RemainingExpr = RemainingExpr.substr(ClosingBracket);
-    }
-
-    if (!RemainingExpr.starts_with(")"))
+    if (!RemainingExpr.startswith(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, Expr, "expected ')'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
 
     uint64_t StubAddr;
     std::string ErrorMsg;
-    std::tie(StubAddr, ErrorMsg) =
-        Checker.getStubOrGOTAddrFor(StubContainerName, Symbol, KindNameFilter,
-                                    PCtx.IsInsideLoad, IsStubAddr);
+    std::tie(StubAddr, ErrorMsg) = Checker.getStubOrGOTAddrFor(
+        StubContainerName, Symbol, PCtx.IsInsideLoad, IsStubAddr);
 
     if (ErrorMsg != "")
       return std::make_pair(EvalResult(ErrorMsg), "");
@@ -433,7 +385,7 @@ private:
 
   std::pair<EvalResult, StringRef> evalSectionAddr(StringRef Expr,
                                                    ParseContext PCtx) const {
-    if (!Expr.starts_with("("))
+    if (!Expr.startswith("("))
       return std::make_pair(unexpectedToken(Expr, Expr, "expected '('"), "");
     StringRef RemainingExpr = Expr.substr(1).ltrim();
 
@@ -444,7 +396,7 @@ private:
     FileName = RemainingExpr.substr(0, ComaIdx).rtrim();
     RemainingExpr = RemainingExpr.substr(ComaIdx).ltrim();
 
-    if (!RemainingExpr.starts_with(","))
+    if (!RemainingExpr.startswith(","))
       return std::make_pair(
           unexpectedToken(RemainingExpr, Expr, "expected ','"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -454,7 +406,7 @@ private:
     SectionName = RemainingExpr.substr(0, CloseParensIdx).rtrim();
     RemainingExpr = RemainingExpr.substr(CloseParensIdx).ltrim();
 
-    if (!RemainingExpr.starts_with(")"))
+    if (!RemainingExpr.startswith(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, Expr, "expected ')'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -470,7 +422,7 @@ private:
     return std::make_pair(EvalResult(StubAddr), RemainingExpr);
   }
 
-  // Evaluate an identifier expr, which may be a symbol, or a call to
+  // Evaluate an identiefer expr, which may be a symbol, or a call to
   // one of the builtin functions: get_insn_opcode or get_insn_length.
   // Return the result, plus the expression remaining to be parsed.
   std::pair<EvalResult, StringRef> evalIdentifierExpr(StringRef Expr,
@@ -495,7 +447,7 @@ private:
       std::string ErrMsg("No known address for symbol '");
       ErrMsg += Symbol;
       ErrMsg += "'";
-      if (Symbol.starts_with("L"))
+      if (Symbol.startswith("L"))
         ErrMsg += " (this appears to be an assembler local label - "
                   " perhaps drop the 'L'?)";
 
@@ -516,7 +468,7 @@ private:
   // pair representing the number and the expression remaining to be parsed.
   std::pair<StringRef, StringRef> parseNumberString(StringRef Expr) const {
     size_t FirstNonDigit = StringRef::npos;
-    if (Expr.starts_with("0x")) {
+    if (Expr.startswith("0x")) {
       FirstNonDigit = Expr.find_first_not_of("0123456789abcdefABCDEF", 2);
       if (FirstNonDigit == StringRef::npos)
         FirstNonDigit = Expr.size();
@@ -550,14 +502,14 @@ private:
   // remaining to be parsed.
   std::pair<EvalResult, StringRef> evalParensExpr(StringRef Expr,
                                                   ParseContext PCtx) const {
-    assert(Expr.starts_with("(") && "Not a parenthesized expression");
+    assert(Expr.startswith("(") && "Not a parenthesized expression");
     EvalResult SubExprResult;
     StringRef RemainingExpr;
     std::tie(SubExprResult, RemainingExpr) =
         evalComplexExpr(evalSimpleExpr(Expr.substr(1).ltrim(), PCtx), PCtx);
     if (SubExprResult.hasError())
       return std::make_pair(SubExprResult, "");
-    if (!RemainingExpr.starts_with(")"))
+    if (!RemainingExpr.startswith(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, Expr, "expected ')'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -569,11 +521,11 @@ private:
   // Return a pair containing the result, plus the expression remaining to be
   // parsed.
   std::pair<EvalResult, StringRef> evalLoadExpr(StringRef Expr) const {
-    assert(Expr.starts_with("*") && "Not a load expression");
+    assert(Expr.startswith("*") && "Not a load expression");
     StringRef RemainingExpr = Expr.substr(1).ltrim();
 
     // Parse read size.
-    if (!RemainingExpr.starts_with("{"))
+    if (!RemainingExpr.startswith("{"))
       return std::make_pair(EvalResult("Expected '{' following '*'."), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
     EvalResult ReadSizeExpr;
@@ -583,7 +535,7 @@ private:
     uint64_t ReadSize = ReadSizeExpr.getValue();
     if (ReadSize < 1 || ReadSize > 8)
       return std::make_pair(EvalResult("Invalid size for dereference."), "");
-    if (!RemainingExpr.starts_with("}"))
+    if (!RemainingExpr.startswith("}"))
       return std::make_pair(EvalResult("Missing '}' for dereference."), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
 
@@ -640,7 +592,7 @@ private:
       return std::make_pair(SubExprResult, RemainingExpr);
 
     // Evaluate bit-slice if present.
-    if (RemainingExpr.starts_with("["))
+    if (RemainingExpr.startswith("["))
       std::tie(SubExprResult, RemainingExpr) =
           evalSliceExpr(std::make_pair(SubExprResult, RemainingExpr));
 
@@ -660,7 +612,7 @@ private:
     StringRef RemainingExpr;
     std::tie(SubExprResult, RemainingExpr) = Ctx;
 
-    assert(RemainingExpr.starts_with("[") && "Not a slice expr.");
+    assert(RemainingExpr.startswith("[") && "Not a slice expr.");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
 
     EvalResult HighBitExpr;
@@ -669,7 +621,7 @@ private:
     if (HighBitExpr.hasError())
       return std::make_pair(HighBitExpr, RemainingExpr);
 
-    if (!RemainingExpr.starts_with(":"))
+    if (!RemainingExpr.startswith(":"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ':'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -680,7 +632,7 @@ private:
     if (LowBitExpr.hasError())
       return std::make_pair(LowBitExpr, RemainingExpr);
 
-    if (!RemainingExpr.starts_with("]"))
+    if (!RemainingExpr.startswith("]"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ']'"), "");
     RemainingExpr = RemainingExpr.substr(1).ltrim();
@@ -710,7 +662,7 @@ private:
     if (LHSResult.hasError() || RemainingExpr == "")
       return std::make_pair(LHSResult, RemainingExpr);
 
-    // Otherwise check if this is a binary expression.
+    // Otherwise check if this is a binary expressioan.
     BinOpToken BinOp;
     std::tie(BinOp, RemainingExpr) = parseBinOpToken(RemainingExpr);
 
@@ -735,85 +687,15 @@ private:
 
   bool decodeInst(StringRef Symbol, MCInst &Inst, uint64_t &Size,
                   int64_t Offset) const {
-    auto TT = Checker.getTripleForSymbol(Checker.getTargetFlag(Symbol));
-    auto TI = getTargetInfo(TT, Checker.getCPU(), Checker.getFeatures());
-
-    if (auto E = TI.takeError()) {
-      errs() << "Error obtaining disassembler: " << toString(std::move(E))
-             << "\n";
-      return false;
-    }
-
+    MCDisassembler *Dis = Checker.Disassembler;
     StringRef SymbolMem = Checker.getSymbolContent(Symbol);
     ArrayRef<uint8_t> SymbolBytes(SymbolMem.bytes_begin() + Offset,
                                   SymbolMem.size() - Offset);
 
     MCDisassembler::DecodeStatus S =
-        TI->Disassembler->getInstruction(Inst, Size, SymbolBytes, 0, nulls());
+        Dis->getInstruction(Inst, Size, SymbolBytes, 0, nulls());
 
     return (S == MCDisassembler::Success);
-  }
-
-  Expected<TargetInfo> getTargetInfo(const Triple &TT, const StringRef &CPU,
-                                     const SubtargetFeatures &TF) const {
-
-    auto TripleName = TT.str();
-    std::string ErrorStr;
-    const Target *TheTarget =
-        TargetRegistry::lookupTarget(TripleName, ErrorStr);
-    if (!TheTarget)
-      return make_error<StringError>("Error accessing target '" + TripleName +
-                                         "': " + ErrorStr,
-                                     inconvertibleErrorCode());
-
-    std::unique_ptr<MCSubtargetInfo> STI(
-        TheTarget->createMCSubtargetInfo(TripleName, CPU, TF.getString()));
-    if (!STI)
-      return make_error<StringError>("Unable to create subtarget for " +
-                                         TripleName,
-                                     inconvertibleErrorCode());
-
-    std::unique_ptr<MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TripleName));
-    if (!MRI)
-      return make_error<StringError>("Unable to create target register info "
-                                     "for " +
-                                         TripleName,
-                                     inconvertibleErrorCode());
-
-    MCTargetOptions MCOptions;
-    std::unique_ptr<MCAsmInfo> MAI(
-        TheTarget->createMCAsmInfo(*MRI, TripleName, MCOptions));
-    if (!MAI)
-      return make_error<StringError>("Unable to create target asm info " +
-                                         TripleName,
-                                     inconvertibleErrorCode());
-
-    auto Ctx = std::make_unique<MCContext>(Triple(TripleName), MAI.get(),
-                                           MRI.get(), STI.get());
-
-    std::unique_ptr<MCDisassembler> Disassembler(
-        TheTarget->createMCDisassembler(*STI, *Ctx));
-    if (!Disassembler)
-      return make_error<StringError>("Unable to create disassembler for " +
-                                         TripleName,
-                                     inconvertibleErrorCode());
-
-    std::unique_ptr<MCInstrInfo> MII(TheTarget->createMCInstrInfo());
-    if (!MII)
-      return make_error<StringError>("Unable to create instruction info for" +
-                                         TripleName,
-                                     inconvertibleErrorCode());
-
-    std::unique_ptr<MCInstPrinter> InstPrinter(TheTarget->createMCInstPrinter(
-        Triple(TripleName), 0, *MAI, *MII, *MRI));
-    if (!InstPrinter)
-      return make_error<StringError>(
-          "Unable to create instruction printer for" + TripleName,
-          inconvertibleErrorCode());
-
-    return TargetInfo({TheTarget, std::move(STI), std::move(MRI),
-                       std::move(MAI), std::move(Ctx), std::move(Disassembler),
-                       std::move(MII), std::move(InstPrinter)});
   }
 };
 } // namespace llvm
@@ -821,14 +703,15 @@ private:
 RuntimeDyldCheckerImpl::RuntimeDyldCheckerImpl(
     IsSymbolValidFunction IsSymbolValid, GetSymbolInfoFunction GetSymbolInfo,
     GetSectionInfoFunction GetSectionInfo, GetStubInfoFunction GetStubInfo,
-    GetGOTInfoFunction GetGOTInfo, llvm::endianness Endianness, Triple TT,
-    StringRef CPU, SubtargetFeatures TF, raw_ostream &ErrStream)
+    GetGOTInfoFunction GetGOTInfo, support::endianness Endianness,
+    MCDisassembler *Disassembler, MCInstPrinter *InstPrinter,
+    raw_ostream &ErrStream)
     : IsSymbolValid(std::move(IsSymbolValid)),
       GetSymbolInfo(std::move(GetSymbolInfo)),
       GetSectionInfo(std::move(GetSectionInfo)),
       GetStubInfo(std::move(GetStubInfo)), GetGOTInfo(std::move(GetGOTInfo)),
-      Endianness(Endianness), TT(std::move(TT)), CPU(std::move(CPU)),
-      TF(std::move(TF)), ErrStream(ErrStream) {}
+      Endianness(Endianness), Disassembler(Disassembler),
+      InstPrinter(InstPrinter), ErrStream(ErrStream) {}
 
 bool RuntimeDyldCheckerImpl::check(StringRef CheckExpr) const {
   CheckExpr = CheckExpr.trim();
@@ -861,7 +744,7 @@ bool RuntimeDyldCheckerImpl::checkAllRulesInBuffer(StringRef RulePrefix,
       ++LineEnd;
 
     StringRef Line(LineStart, LineEnd - LineStart);
-    if (Line.starts_with(RulePrefix))
+    if (Line.startswith(RulePrefix))
       CheckExpr += Line.substr(RulePrefix.size()).str();
 
     // If there's a check expr string...
@@ -939,36 +822,6 @@ StringRef RuntimeDyldCheckerImpl::getSymbolContent(StringRef Symbol) const {
   return {SymInfo->getContent().data(), SymInfo->getContent().size()};
 }
 
-TargetFlagsType RuntimeDyldCheckerImpl::getTargetFlag(StringRef Symbol) const {
-  auto SymInfo = GetSymbolInfo(Symbol);
-  if (!SymInfo) {
-    logAllUnhandledErrors(SymInfo.takeError(), errs(), "RTDyldChecker: ");
-    return TargetFlagsType{};
-  }
-  return SymInfo->getTargetFlags();
-}
-
-Triple
-RuntimeDyldCheckerImpl::getTripleForSymbol(TargetFlagsType Flag) const {
-  Triple TheTriple = TT;
-
-  switch (TT.getArch()) {
-  case Triple::ArchType::arm:
-    if (~Flag & 0x1)
-      return TT;
-    TheTriple.setArchName((Twine("thumb") + TT.getArchName().substr(3)).str());
-    return TheTriple;
-  case Triple::ArchType::thumb:
-    if (Flag & 0x1)
-      return TT;
-    TheTriple.setArchName((Twine("arm") + TT.getArchName().substr(5)).str());
-    return TheTriple;
-
-  default:
-    return TT;
-  }
-}
-
 std::pair<uint64_t, std::string> RuntimeDyldCheckerImpl::getSectionAddr(
     StringRef FileName, StringRef SectionName, bool IsInsideLoad) const {
 
@@ -1000,14 +853,11 @@ std::pair<uint64_t, std::string> RuntimeDyldCheckerImpl::getSectionAddr(
 }
 
 std::pair<uint64_t, std::string> RuntimeDyldCheckerImpl::getStubOrGOTAddrFor(
-    StringRef StubContainerName, StringRef SymbolName, StringRef StubKindFilter,
-    bool IsInsideLoad, bool IsStubAddr) const {
+    StringRef StubContainerName, StringRef SymbolName, bool IsInsideLoad,
+    bool IsStubAddr) const {
 
-  assert((StubKindFilter.empty() || IsStubAddr) &&
-         "Kind name filter only supported for stubs");
-  auto StubInfo =
-      IsStubAddr ? GetStubInfo(StubContainerName, SymbolName, StubKindFilter)
-                 : GetGOTInfo(StubContainerName, SymbolName);
+  auto StubInfo = IsStubAddr ? GetStubInfo(StubContainerName, SymbolName)
+                             : GetGOTInfo(StubContainerName, SymbolName);
 
   if (!StubInfo) {
     std::string ErrMsg;
@@ -1034,13 +884,14 @@ std::pair<uint64_t, std::string> RuntimeDyldCheckerImpl::getStubOrGOTAddrFor(
 RuntimeDyldChecker::RuntimeDyldChecker(
     IsSymbolValidFunction IsSymbolValid, GetSymbolInfoFunction GetSymbolInfo,
     GetSectionInfoFunction GetSectionInfo, GetStubInfoFunction GetStubInfo,
-    GetGOTInfoFunction GetGOTInfo, llvm::endianness Endianness, Triple TT,
-    StringRef CPU, SubtargetFeatures TF, raw_ostream &ErrStream)
+    GetGOTInfoFunction GetGOTInfo, support::endianness Endianness,
+    MCDisassembler *Disassembler, MCInstPrinter *InstPrinter,
+    raw_ostream &ErrStream)
     : Impl(::std::make_unique<RuntimeDyldCheckerImpl>(
           std::move(IsSymbolValid), std::move(GetSymbolInfo),
           std::move(GetSectionInfo), std::move(GetStubInfo),
-          std::move(GetGOTInfo), Endianness, std::move(TT), std::move(CPU),
-          std::move(TF), ErrStream)) {}
+          std::move(GetGOTInfo), Endianness, Disassembler, InstPrinter,
+          ErrStream)) {}
 
 RuntimeDyldChecker::~RuntimeDyldChecker() = default;
 

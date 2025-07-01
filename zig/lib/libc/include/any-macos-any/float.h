@@ -22,15 +22,6 @@
 #ifndef __FLOAT_H
 #define __FLOAT_H
 
-#if !defined(__has_feature) || !__has_feature(modules)
-/* clang's float.h comes before this header in the search order. It
- * will include this header first, undef all of these macros, and then
- * redeclare them. That doesn't work when the two headers are in
- * different clang modules. The only way to avoid redeclaration errors
- * is to not declare the macros here, and let clang's float.h handle
- * them.
- */
-
 /* Undefine anything that we'll be redefining below. */
 #undef FLT_EVAL_METHOD
 #undef FLT_ROUNDS
@@ -145,7 +136,5 @@
 #  define DBL_DECIMAL_DIG __DBL_DECIMAL_DIG__
 #  define LDBL_DECIMAL_DIG __LDBL_DECIMAL_DIG__
 #endif
-
-#endif /* !__has_feature(modules) */
 
 #endif /* __FLOAT_H */

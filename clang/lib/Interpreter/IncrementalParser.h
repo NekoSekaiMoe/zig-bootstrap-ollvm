@@ -13,27 +13,36 @@
 #ifndef LLVM_CLANG_LIB_INTERPRETER_INCREMENTALPARSER_H
 #define LLVM_CLANG_LIB_INTERPRETER_INCREMENTALPARSER_H
 
+#include "clang/Interpreter/PartialTranslationUnit.h"
+
+#include "clang/AST/GlobalDecl.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
 #include <list>
 #include <memory>
+namespace llvm {
+class LLVMContext;
+}
 
 namespace clang {
 class ASTConsumer;
 class CodeGenerator;
 class CompilerInstance;
+class IncrementalAction;
+class Interpreter;
 class Parser;
-class Sema;
-class TranslationUnitDecl;
-
 /// Provides support for incremental compilation. Keeps track of the state
 /// changes between the subsequent incremental input.
 ///
 class IncrementalParser {
 protected:
-  /// The Sema performing the incremental compilation.
-  Sema &S;
+  /// Long-lived, incremental parsing action.
+  std::unique_ptr<IncrementalAction> Act;
+
+  /// Compiler instance performing the incremental compilation.
+  std::unique_ptr<CompilerInstance> CI;
 
   /// Parser.
   std::unique_ptr<Parser> P;
@@ -44,21 +53,38 @@ protected:
   /// Counts the number of direct user input lines that have been parsed.
   unsigned InputCount = 0;
 
-  // IncrementalParser();
+  /// List containing every information about every incrementally parsed piece
+  /// of code.
+  std::list<PartialTranslationUnit> PTUs;
+
+  IncrementalParser();
 
 public:
-  IncrementalParser(CompilerInstance &Instance, llvm::Error &Err);
+  IncrementalParser(Interpreter &Interp,
+                    std::unique_ptr<CompilerInstance> Instance,
+                    llvm::LLVMContext &LLVMCtx, llvm::Error &Err);
   virtual ~IncrementalParser();
+
+  CompilerInstance *getCI() { return CI.get(); }
+  CodeGenerator *getCodeGen() const;
 
   /// Parses incremental input by creating an in-memory file.
   ///\returns a \c PartialTranslationUnit which holds information about the
-  /// \c TranslationUnitDecl.
-  virtual llvm::Expected<TranslationUnitDecl *> Parse(llvm::StringRef Input);
+  /// \c TranslationUnitDecl and \c llvm::Module corresponding to the input.
+  virtual llvm::Expected<PartialTranslationUnit &> Parse(llvm::StringRef Input);
 
-  void CleanUpPTU(TranslationUnitDecl *MostRecentTU);
+  /// Uses the CodeGenModule mangled name cache and avoids recomputing.
+  ///\returns the mangled name of a \c GD.
+  llvm::StringRef GetMangledName(GlobalDecl GD) const;
+
+  void CleanUpPTU(PartialTranslationUnit &PTU);
+
+  std::list<PartialTranslationUnit> &getPTUs() { return PTUs; }
+
+  std::unique_ptr<llvm::Module> GenModule();
 
 private:
-  llvm::Expected<TranslationUnitDecl *> ParseOrWrapTopLevelDecl();
+  llvm::Expected<PartialTranslationUnit &> ParseOrWrapTopLevelDecl();
 };
 } // end namespace clang
 

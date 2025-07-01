@@ -15,17 +15,13 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/BinaryFormat/XCOFF.h"
 #include "llvm/Object/ObjectFile.h"
-#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Endian.h"
 #include <limits>
 
 namespace llvm {
 namespace object {
-
-class xcoff_symbol_iterator;
 
 struct XCOFFFileHeader32 {
   support::ubig16_t Magic;
@@ -71,9 +67,6 @@ public:
   }
 
   uint16_t getVersion() const { return static_cast<const T *>(this)->Version; }
-  uint64_t getEntryPointAddr() const {
-    return static_cast<const T *>(this)->EntryPointAddr;
-  }
 };
 
 struct XCOFFAuxiliaryHeader32 : XCOFFAuxiliaryHeader<XCOFFAuxiliaryHeader32> {
@@ -157,19 +150,15 @@ struct XCOFFAuxiliaryHeader64 : XCOFFAuxiliaryHeader<XCOFFAuxiliaryHeader64> {
 };
 
 template <typename T> struct XCOFFSectionHeader {
-  // The section flags definitions are the same in both 32- and 64-bit objects.
-  //  Least significant 3 bits are reserved.
+  // Least significant 3 bits are reserved.
   static constexpr unsigned SectionFlagsReservedMask = 0x7;
 
   // The low order 16 bits of section flags denotes the section type.
-  // The high order 16 bits of section flags denotes the section subtype.
-  // For now, this is only used for DWARF sections.
   static constexpr unsigned SectionFlagsTypeMask = 0xffffu;
 
 public:
   StringRef getName() const;
   uint16_t getSectionType() const;
-  uint32_t getSectionSubtype() const;
   bool isReservedSectionType() const;
 };
 
@@ -419,13 +408,13 @@ public:
     return Entry64->AuxType;
   }
 
+private:
   uint8_t getSymbolAlignmentAndType() const {
     return GETVALUE(SymbolAlignmentAndType);
   }
 
 #undef GETVALUE
 
-private:
   const XCOFFCsectAuxEnt32 *Entry32 = nullptr;
   const XCOFFCsectAuxEnt64 *Entry64 = nullptr;
 };
@@ -587,10 +576,6 @@ public:
   Expected<uint32_t> getSymbolFlags(DataRefImpl Symb) const override;
   basic_symbol_iterator symbol_begin() const override;
   basic_symbol_iterator symbol_end() const override;
-
-  using xcoff_symbol_iterator_range = iterator_range<xcoff_symbol_iterator>;
-  xcoff_symbol_iterator_range symbols() const;
-
   bool is64Bit() const override;
   Expected<StringRef> getSymbolName(DataRefImpl Symb) const override;
   Expected<uint64_t> getSymbolAddress(DataRefImpl Symb) const override;
@@ -776,55 +761,33 @@ struct XCOFFSymbolEntry64 {
   uint8_t NumberOfAuxEntries;
 };
 
-extern template LLVM_TEMPLATE_ABI Expected<ArrayRef<XCOFFRelocation32>>
-XCOFFObjectFile::relocations<XCOFFSectionHeader32, XCOFFRelocation32>(
-    const XCOFFSectionHeader32 &Sec) const;
-extern template LLVM_TEMPLATE_ABI Expected<ArrayRef<XCOFFRelocation64>>
-XCOFFObjectFile::relocations<XCOFFSectionHeader64, XCOFFRelocation64>(
-    const XCOFFSectionHeader64 &Sec) const;
-
-class XCOFFSymbolRef : public SymbolRef {
+class XCOFFSymbolRef {
 public:
   enum { NAME_IN_STR_TBL_MAGIC = 0x0 };
 
   XCOFFSymbolRef(DataRefImpl SymEntDataRef,
                  const XCOFFObjectFile *OwningObjectPtr)
-      : SymbolRef(SymEntDataRef, OwningObjectPtr) {
+      : OwningObjectPtr(OwningObjectPtr) {
     assert(OwningObjectPtr && "OwningObjectPtr cannot be nullptr!");
     assert(SymEntDataRef.p != 0 &&
            "Symbol table entry pointer cannot be nullptr!");
+
+    if (OwningObjectPtr->is64Bit())
+      Entry64 = reinterpret_cast<const XCOFFSymbolEntry64 *>(SymEntDataRef.p);
+    else
+      Entry32 = reinterpret_cast<const XCOFFSymbolEntry32 *>(SymEntDataRef.p);
   }
 
-  const XCOFFSymbolEntry32 *getSymbol32() const {
-    return reinterpret_cast<const XCOFFSymbolEntry32 *>(getRawDataRefImpl().p);
-  }
+  const XCOFFSymbolEntry32 *getSymbol32() { return Entry32; }
+  const XCOFFSymbolEntry64 *getSymbol64() { return Entry64; }
 
-  const XCOFFSymbolEntry64 *getSymbol64() const {
-    return reinterpret_cast<const XCOFFSymbolEntry64 *>(getRawDataRefImpl().p);
-  }
+  uint64_t getValue() const { return Entry32 ? getValue32() : getValue64(); }
 
-  uint64_t getValue() const {
-    return getObject()->is64Bit() ? getValue64() : getValue32();
-  }
+  uint32_t getValue32() const { return Entry32->Value; }
 
-  uint32_t getValue32() const {
-    return reinterpret_cast<const XCOFFSymbolEntry32 *>(getRawDataRefImpl().p)
-        ->Value;
-  }
+  uint64_t getValue64() const { return Entry64->Value; }
 
-  uint64_t getValue64() const {
-    return reinterpret_cast<const XCOFFSymbolEntry64 *>(getRawDataRefImpl().p)
-        ->Value;
-  }
-
-  uint64_t getSize() const {
-    return getObject()->getSymbolSize(getRawDataRefImpl());
-  }
-
-#define GETVALUE(X)                                                            \
-  getObject()->is64Bit()                                                       \
-      ? reinterpret_cast<const XCOFFSymbolEntry64 *>(getRawDataRefImpl().p)->X \
-      : reinterpret_cast<const XCOFFSymbolEntry32 *>(getRawDataRefImpl().p)->X
+#define GETVALUE(X) Entry32 ? Entry32->X : Entry64->X
 
   int16_t getSectionNumber() const { return GETVALUE(SectionNumber); }
 
@@ -849,35 +812,19 @@ public:
 #undef GETVALUE
 
   uintptr_t getEntryAddress() const {
-    return getRawDataRefImpl().p;
+    return Entry32 ? reinterpret_cast<uintptr_t>(Entry32)
+                   : reinterpret_cast<uintptr_t>(Entry64);
   }
 
   Expected<StringRef> getName() const;
-  Expected<bool> isFunction() const;
+  bool isFunction() const;
   bool isCsectSymbol() const;
   Expected<XCOFFCsectAuxRef> getXCOFFCsectAuxRef() const;
 
 private:
-  const XCOFFObjectFile *getObject() const {
-    return cast<XCOFFObjectFile>(BasicSymbolRef::getObject());
-  }
-};
-
-class xcoff_symbol_iterator : public symbol_iterator {
-public:
-  xcoff_symbol_iterator(const basic_symbol_iterator &B)
-      : symbol_iterator(B) {}
-
-  xcoff_symbol_iterator(const XCOFFSymbolRef *Symbol)
-      : symbol_iterator(*Symbol) {}
-
-  const XCOFFSymbolRef *operator->() const {
-    return static_cast<const XCOFFSymbolRef *>(symbol_iterator::operator->());
-  }
-
-  const XCOFFSymbolRef &operator*() const {
-    return static_cast<const XCOFFSymbolRef &>(symbol_iterator::operator*());
-  }
+  const XCOFFObjectFile *OwningObjectPtr;
+  const XCOFFSymbolEntry32 *Entry32 = nullptr;
+  const XCOFFSymbolEntry64 *Entry64 = nullptr;
 };
 
 class TBVectorExt {

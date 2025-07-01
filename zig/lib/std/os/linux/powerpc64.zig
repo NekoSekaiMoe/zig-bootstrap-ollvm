@@ -1,4 +1,3 @@
-const builtin = @import("builtin");
 const std = @import("../../std.zig");
 const maxInt = std.math.maxInt;
 const linux = std.os.linux;
@@ -49,7 +48,7 @@ pub fn syscall2(number: SYS, arg1: usize, arg2: usize) usize {
         : [number] "{r0}" (@intFromEnum(number)),
           [arg1] "{r3}" (arg1),
           [arg2] "{r4}" (arg2),
-        : "memory", "cr0", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
+        : "memory", "cr0", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
     );
 }
 
@@ -64,7 +63,7 @@ pub fn syscall3(number: SYS, arg1: usize, arg2: usize, arg3: usize) usize {
           [arg1] "{r3}" (arg1),
           [arg2] "{r4}" (arg2),
           [arg3] "{r5}" (arg3),
-        : "memory", "cr0", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
+        : "memory", "cr0", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
     );
 }
 
@@ -80,7 +79,7 @@ pub fn syscall4(number: SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize)
           [arg2] "{r4}" (arg2),
           [arg3] "{r5}" (arg3),
           [arg4] "{r6}" (arg4),
-        : "memory", "cr0", "r7", "r8", "r9", "r10", "r11", "r12"
+        : "memory", "cr0", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
     );
 }
 
@@ -97,7 +96,7 @@ pub fn syscall5(number: SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize,
           [arg3] "{r5}" (arg3),
           [arg4] "{r6}" (arg4),
           [arg5] "{r7}" (arg5),
-        : "memory", "cr0", "r8", "r9", "r10", "r11", "r12"
+        : "memory", "cr0", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
     );
 }
 
@@ -123,68 +122,18 @@ pub fn syscall6(
           [arg4] "{r6}" (arg4),
           [arg5] "{r7}" (arg5),
           [arg6] "{r8}" (arg6),
-        : "memory", "cr0", "r9", "r10", "r11", "r12"
+        : "memory", "cr0", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"
     );
 }
 
-pub fn clone() callconv(.naked) usize {
-    // __clone(func, stack, flags, arg, ptid, tls, ctid)
-    //         3,    4,     5,     6,   7,    8,   9
-    //
-    // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
-    //         0          3,     4,     5,    6,   7
-    asm volatile (
-        \\  # create initial stack frame for new thread
-        \\  clrrdi 4, 4, 4
-        \\  li     0, 0
-        \\  stdu   0,-32(4)
-        \\
-        \\  # save fn and arg to child stack
-        \\  std    3,  8(4)
-        \\  std    6, 16(4)
-        \\
-        \\  # shuffle args into correct registers and call SYS_clone
-        \\  mr    3, 5
-        \\  #mr   4, 4
-        \\  mr    5, 7
-        \\  mr    6, 8
-        \\  mr    7, 9
-        \\  li    0, 120  # SYS_clone = 120
-        \\  sc
-        \\
-        \\  # if error, negate return (errno)
-        \\  bns+  1f
-        \\  neg   3, 3
-        \\
-        \\1:
-        \\  # if we're the parent, return
-        \\  cmpwi cr7, 3, 0
-        \\  bnelr cr7
-        \\
-        \\  # we're the child
-    );
-    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\  .cfi_undefined lr
-    );
-    asm volatile (
-        \\  li    31, 0
-        \\  mtlr   0
-        \\
-        \\  # call fn(arg)
-        \\  ld     3, 16(1)
-        \\  ld    12,  8(1)
-        \\  mtctr 12
-        \\  bctrl
-        \\
-        \\  # call SYS_exit. exit code is already in r3 from fn return value
-        \\  li    0, 1    # SYS_exit = 1
-        \\  sc
-    );
-}
+const CloneFn = *const fn (arg: usize) callconv(.C) u8;
+
+/// This matches the libc clone function.
+pub extern fn clone(func: CloneFn, stack: usize, flags: usize, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
 
 pub const restore = restore_rt;
 
-pub fn restore_rt() callconv(.naked) noreturn {
+pub fn restore_rt() callconv(.Naked) noreturn {
     asm volatile (
         \\ sc
         :
@@ -217,6 +166,13 @@ pub const F = struct {
     pub const GETOWN_EX = 16;
 
     pub const GETOWNER_UIDS = 17;
+};
+
+pub const LOCK = struct {
+    pub const SH = 1;
+    pub const EX = 2;
+    pub const UN = 8;
+    pub const NB = 4;
 };
 
 pub const VDSO = struct {
@@ -293,13 +249,13 @@ pub const Stat = extern struct {
 };
 
 pub const timeval = extern struct {
-    sec: isize,
-    usec: isize,
+    tv_sec: isize,
+    tv_usec: isize,
 };
 
 pub const timezone = extern struct {
-    minuteswest: i32,
-    dsttime: i32,
+    tz_minuteswest: i32,
+    tz_dsttime: i32,
 };
 
 pub const greg_t = u64;
@@ -337,11 +293,8 @@ pub const ucontext_t = extern struct {
     flags: u32,
     link: ?*ucontext_t,
     stack: stack_t,
-    sigmask: [1024 / @bitSizeOf(c_ulong)]c_ulong, // Currently a libc-compatible (1024-bit) sigmask
+    sigmask: sigset_t,
     mcontext: mcontext_t,
 };
 
 pub const Elf_Symndx = u32;
-
-/// TODO
-pub const getcontext = {};

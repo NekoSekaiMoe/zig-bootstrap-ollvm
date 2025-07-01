@@ -61,7 +61,7 @@ static void *start(void *arg)
 
 int timer_create(clockid_t clk, struct sigevent *restrict evp, timer_t *restrict res)
 {
-	static volatile int init = 0;
+	volatile static int init = 0;
 	pthread_t td;
 	pthread_attr_t attr;
 	int r;

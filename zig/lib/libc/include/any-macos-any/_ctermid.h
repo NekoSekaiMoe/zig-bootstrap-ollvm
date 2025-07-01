@@ -25,15 +25,10 @@
 #define _CTERMID_H_
 
 #include <sys/cdefs.h>
-#include <_bounds.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 __BEGIN_DECLS
 
-#define	L_ctermid	1024	/* size for ctermid(); PATH_MAX */
-
-char *_LIBC_CSTR	ctermid(char *_LIBC_COUNT_OR_NULL(L_ctermid));
+char    *ctermid(char *);
 
 __END_DECLS
 

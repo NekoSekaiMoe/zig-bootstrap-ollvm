@@ -1,4 +1,4 @@
-//===-- RISCVMoveMerger.cpp - RISC-V move merge pass ----------------------===//
+//===-- RISCVMoveMerger.cpp - RISCV move merge pass -----------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -22,7 +22,9 @@ namespace {
 struct RISCVMoveMerge : public MachineFunctionPass {
   static char ID;
 
-  RISCVMoveMerge() : MachineFunctionPass(ID) {}
+  RISCVMoveMerge() : MachineFunctionPass(ID) {
+    initializeRISCVMoveMergePass(*PassRegistry::getPassRegistry());
+  }
 
   const RISCVInstrInfo *TII;
   const TargetRegisterInfo *TRI;

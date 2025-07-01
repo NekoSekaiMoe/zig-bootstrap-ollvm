@@ -143,8 +143,9 @@ static bool analyzeGlobalAux(const Value *V, GlobalStatus &GS,
             GS.StoredType = GlobalStatus::Stored;
           }
         }
-      } else if (isa<GetElementPtrInst>(I) || isa<AddrSpaceCastInst>(I)) {
-        // Skip over GEPs; we don't care about the type or offset
+      } else if (isa<BitCastInst>(I) || isa<GetElementPtrInst>(I) ||
+                 isa<AddrSpaceCastInst>(I)) {
+        // Skip over bitcasts and GEPs; we don't care about the type or offset
         // of the pointer.
         if (analyzeGlobalAux(I, GS, VisitedUsers))
           return true;
@@ -171,14 +172,9 @@ static bool analyzeGlobalAux(const Value *V, GlobalStatus &GS,
           return true;
         GS.StoredType = GlobalStatus::Stored;
       } else if (const auto *CB = dyn_cast<CallBase>(I)) {
-        if (CB->getIntrinsicID() == Intrinsic::threadlocal_address) {
-          if (analyzeGlobalAux(I, GS, VisitedUsers))
-            return true;
-        } else {
-          if (!CB->isCallee(&U))
-            return true;
-          GS.IsLoaded = true;
-        }
+        if (!CB->isCallee(&U))
+          return true;
+        GS.IsLoaded = true;
       } else {
         return true; // Any other non-load instruction might take address!
       }

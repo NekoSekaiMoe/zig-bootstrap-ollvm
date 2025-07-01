@@ -21,13 +21,18 @@
 #include "llvm/DebugInfo/LogicalView/Core/LVSymbol.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVType.h"
 #include "llvm/DebugInfo/LogicalView/Readers/LVCodeViewReader.h"
+#include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/InputFile.h"
+#include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PDBStringTable.h"
+#include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
+#include "llvm/DebugInfo/PDB/PDB.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -168,11 +173,10 @@ class LVForwardReferences {
 
   // Update a previously recorded forward reference with its definition.
   void update(StringRef Name, TypeIndex TIReference) {
-    auto It = ForwardTypesNames.find(Name);
-    if (It != ForwardTypesNames.end()) {
+    if (ForwardTypesNames.find(Name) != ForwardTypesNames.end()) {
       // Update the recorded forward reference with its definition.
-      It->second.second = TIReference;
-      add(It->second.first, TIReference);
+      ForwardTypesNames[Name].second = TIReference;
+      add(ForwardTypesNames[Name].first, TIReference);
     } else {
       // We have not seen the forward reference. Insert the definition.
       ForwardTypesNames.emplace(
@@ -192,14 +196,15 @@ public:
   }
 
   TypeIndex find(TypeIndex TIForward) {
-    auto It = ForwardTypes.find(TIForward);
-    return It != ForwardTypes.end() ? It->second : TypeIndex::None();
+    return (ForwardTypes.find(TIForward) != ForwardTypes.end())
+               ? ForwardTypes[TIForward]
+               : TypeIndex::None();
   }
 
   TypeIndex find(StringRef Name) {
-    auto It = ForwardTypesNames.find(Name);
-    return It != ForwardTypesNames.end() ? It->second.second
-                                         : TypeIndex::None();
+    return (ForwardTypesNames.find(Name) != ForwardTypesNames.end())
+               ? ForwardTypesNames[Name].second
+               : TypeIndex::None();
   }
 
   // If the given TI corresponds to a reference, return the reference.
@@ -237,8 +242,9 @@ public:
 
   // Find the logical namespace for the 'Name' component.
   LVScope *find(StringRef Name) {
-    auto It = NamespaceNames.find(Name);
-    LVScope *Namespace = It != NamespaceNames.end() ? It->second : nullptr;
+    LVScope *Namespace = (NamespaceNames.find(Name) != NamespaceNames.end())
+                             ? NamespaceNames[Name]
+                             : nullptr;
     return Namespace;
   }
 
@@ -459,10 +465,13 @@ LVScope *LVNamespaceDeduction::get(LVStringRefs Components) {
 LVScope *LVNamespaceDeduction::get(StringRef ScopedName, bool CheckScope) {
   LVStringRefs Components = getAllLexicalComponents(ScopedName);
   if (CheckScope)
-    llvm::erase_if(Components, [&](StringRef Component) {
-      LookupSet::iterator Iter = IdentifiedNamespaces.find(Component);
-      return Iter == IdentifiedNamespaces.end();
-    });
+    Components.erase(std::remove_if(Components.begin(), Components.end(),
+                                    [&](StringRef Component) {
+                                      LookupSet::iterator Iter =
+                                          IdentifiedNamespaces.find(Component);
+                                      return Iter == IdentifiedNamespaces.end();
+                                    }),
+                     Components.end());
 
   LLVM_DEBUG(
       { dbgs() << formatv("ScopedName: '{0}'\n", ScopedName.str().c_str()); });
@@ -828,7 +837,7 @@ Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record,
     // Symbol was created as 'variable'; determine its real kind.
     Symbol->resetIsVariable();
 
-    if (Local.Name == "this") {
+    if (Local.Name.equals("this")) {
       Symbol->setIsParameter();
       Symbol->setIsArtificial();
     } else {
@@ -879,7 +888,7 @@ Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record,
     Symbol->resetIsVariable();
 
     // Check for the 'this' symbol.
-    if (Local.Name == "this") {
+    if (Local.Name.equals("this")) {
       Symbol->setIsArtificial();
       Symbol->setIsParameter();
     } else {
@@ -1423,7 +1432,7 @@ Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record, LocalSym &Local) {
 
     // Be sure the 'this' symbol is marked as 'compiler generated'.
     if (bool(Local.Flags & LocalSymFlags::IsCompilerGenerated) ||
-        Local.Name == "this") {
+        Local.Name.equals("this")) {
       Symbol->setIsArtificial();
       Symbol->setIsParameter();
     } else {
@@ -1663,7 +1672,7 @@ Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record, UDTSym &UDT) {
       Type->resetIncludeInPrint();
     else {
       StringRef RecordName = getRecordName(Types, UDT.Type);
-      if (UDT.Name == RecordName)
+      if (UDT.Name.equals(RecordName))
         Type->resetIncludeInPrint();
       Type->setType(LogicalVisitor->getElement(StreamTPI, UDT.Type));
     }
@@ -1676,48 +1685,6 @@ Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record, UDTSym &UDT) {
 Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record,
                                         UsingNamespaceSym &UN) {
   LLVM_DEBUG({ W.printString("Namespace", UN.Name); });
-  return Error::success();
-}
-
-// S_ARMSWITCHTABLE
-Error LVSymbolVisitor::visitKnownRecord(CVSymbol &CVR,
-                                        JumpTableSym &JumpTable) {
-  LLVM_DEBUG({
-    W.printHex("BaseOffset", JumpTable.BaseOffset);
-    W.printNumber("BaseSegment", JumpTable.BaseSegment);
-    W.printFlags("SwitchType", static_cast<uint16_t>(JumpTable.SwitchType),
-                 getJumpTableEntrySizeNames());
-    W.printHex("BranchOffset", JumpTable.BranchOffset);
-    W.printHex("TableOffset", JumpTable.TableOffset);
-    W.printNumber("BranchSegment", JumpTable.BranchSegment);
-    W.printNumber("TableSegment", JumpTable.TableSegment);
-    W.printNumber("EntriesCount", JumpTable.EntriesCount);
-  });
-  return Error::success();
-}
-
-// S_CALLERS, S_CALLEES, S_INLINEES
-Error LVSymbolVisitor::visitKnownRecord(CVSymbol &Record, CallerSym &Caller) {
-  LLVM_DEBUG({
-    llvm::StringRef FieldName;
-    switch (Caller.getKind()) {
-    case SymbolRecordKind::CallerSym:
-      FieldName = "Callee";
-      break;
-    case SymbolRecordKind::CalleeSym:
-      FieldName = "Caller";
-      break;
-    case SymbolRecordKind::InlineesSym:
-      FieldName = "Inlinee";
-      break;
-    default:
-      return llvm::make_error<CodeViewError>(
-          "Unknown CV Record type for a CallerSym object!");
-    }
-    for (auto FuncID : Caller.Indices) {
-      printTypeIndex(FieldName, FuncID);
-    }
-  });
   return Error::success();
 }
 
@@ -2734,7 +2701,7 @@ Error LVLogicalVisitor::visitKnownMember(CVMemberRecord &Record,
             getInnerComponent(NestedTypeName);
         // We have an already created nested type. Add it to the current scope
         // and update all its children if any.
-        if (OuterComponent.size() && OuterComponent == RecordName) {
+        if (OuterComponent.size() && OuterComponent.equals(RecordName)) {
           if (!NestedType->getIsScopedAlready()) {
             Scope->addElement(NestedType);
             NestedType->setIsScopedAlready();
@@ -2930,7 +2897,7 @@ Error LVLogicalVisitor::finishVisitation(CVType &Record, TypeIndex TI,
 // Customized version of 'FieldListVisitHelper'.
 Error LVLogicalVisitor::visitFieldListMemberStream(
     TypeIndex TI, LVElement *Element, ArrayRef<uint8_t> FieldList) {
-  BinaryByteStream Stream(FieldList, llvm::endianness::little);
+  BinaryByteStream Stream(FieldList, llvm::support::little);
   BinaryStreamReader Reader(Stream);
   FieldListDeserializer Deserializer(Reader);
   TypeVisitorCallbackPipeline Pipeline;

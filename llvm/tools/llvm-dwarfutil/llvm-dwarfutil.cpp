@@ -33,30 +33,35 @@ using namespace object;
 namespace {
 enum ID {
   OPT_INVALID = 0, // This is not an option ID.
-#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  OPT_##ID,
 #include "Options.inc"
 #undef OPTION
 };
 
-#define OPTTABLE_STR_TABLE_CODE
+#define PREFIX(NAME, VALUE)                                                    \
+  static constexpr StringLiteral NAME##_init[] = VALUE;                        \
+  static constexpr ArrayRef<StringLiteral> NAME(NAME##_init,                   \
+                                                std::size(NAME##_init) - 1);
 #include "Options.inc"
-#undef OPTTABLE_STR_TABLE_CODE
+#undef PREFIX
 
-#define OPTTABLE_PREFIXES_TABLE_CODE
-#include "Options.inc"
-#undef OPTTABLE_PREFIXES_TABLE_CODE
-
-using namespace llvm::opt;
 static constexpr opt::OptTable::Info InfoTable[] = {
-#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  {                                                                            \
+      PREFIX,      NAME,      HELPTEXT,                                        \
+      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
+      PARAM,       FLAGS,     OPT_##GROUP,                                     \
+      OPT_##ALIAS, ALIASARGS, VALUES},
 #include "Options.inc"
 #undef OPTION
 };
 
 class DwarfutilOptTable : public opt::GenericOptTable {
 public:
-  DwarfutilOptTable()
-      : opt::GenericOptTable(OptionStrTable, OptionPrefixesTable, InfoTable) {}
+  DwarfutilOptTable() : opt::GenericOptTable(InfoTable) {}
 };
 } // namespace
 
@@ -120,10 +125,10 @@ static Error validateAndSetOptions(opt::InputArgList &Args, Options &Options) {
 
   if (opt::Arg *LinkerKind = Args.getLastArg(OPT_linker)) {
     StringRef S = LinkerKind->getValue();
-    if (S == "classic")
-      Options.UseDWARFLinkerParallel = false;
-    else if (S == "parallel")
-      Options.UseDWARFLinkerParallel = true;
+    if (S == "apple")
+      Options.UseLLVMDWARFLinker = false;
+    else if (S == "llvm")
+      Options.UseLLVMDWARFLinker = true;
     else
       return createStringError(
           std::errc::invalid_argument,

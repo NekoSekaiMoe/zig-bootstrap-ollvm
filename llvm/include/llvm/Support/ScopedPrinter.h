@@ -86,7 +86,7 @@ template <class T> std::string to_string(const T &Value) {
   std::string number;
   raw_string_ostream stream(number);
   stream << Value;
-  return number;
+  return stream.str();
 }
 
 template <typename T, typename TEnum>
@@ -160,8 +160,8 @@ public:
   template <typename T, typename TFlag>
   void printFlags(StringRef Label, T Value, ArrayRef<EnumEntry<TFlag>> Flags,
                   TFlag EnumMask1 = {}, TFlag EnumMask2 = {},
-                  TFlag EnumMask3 = {}, ArrayRef<FlagEntry> ExtraFlags = {}) {
-    SmallVector<FlagEntry, 10> SetFlags(ExtraFlags);
+                  TFlag EnumMask3 = {}) {
+    SmallVector<FlagEntry, 10> SetFlags;
 
     for (const auto &Flag : Flags) {
       if (Flag.Value == 0)
@@ -539,13 +539,7 @@ ScopedPrinter::printHex<support::ulittle16_t>(StringRef Label,
   startLine() << Label << ": " << hex(Value) << "\n";
 }
 
-struct DelimitedScope {
-  DelimitedScope(ScopedPrinter &W) : W(&W) {}
-  DelimitedScope() : W(nullptr) {}
-  virtual ~DelimitedScope() = default;
-  virtual void setPrinter(ScopedPrinter &W) = 0;
-  ScopedPrinter *W;
-};
+struct DelimitedScope;
 
 class JSONScopedPrinter : public ScopedPrinter {
 private:
@@ -842,6 +836,14 @@ private:
       JOS.objectEnd();
     ScopeHistory.pop_back();
   }
+};
+
+struct DelimitedScope {
+  DelimitedScope(ScopedPrinter &W) : W(&W) {}
+  DelimitedScope() : W(nullptr) {}
+  virtual ~DelimitedScope() = default;
+  virtual void setPrinter(ScopedPrinter &W) = 0;
+  ScopedPrinter *W;
 };
 
 struct DictScope : DelimitedScope {

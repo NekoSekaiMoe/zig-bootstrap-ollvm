@@ -27,6 +27,7 @@
 #define LLVM_ADT_STATISTIC_H
 
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Compiler.h"
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -177,8 +178,8 @@ void EnableStatistics(bool DoPrintOnExit = true);
 /// Check if statistics are enabled.
 bool AreStatisticsEnabled();
 
-/// Return a stream to print our output on.
-std::unique_ptr<raw_ostream> CreateInfoOutputFile();
+/// Return a file stream to print our output on.
+std::unique_ptr<raw_fd_ostream> CreateInfoOutputFile();
 
 /// Print statistics to the file returned by CreateInfoOutputFile().
 void PrintStatistics();

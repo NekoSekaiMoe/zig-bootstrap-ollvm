@@ -1,11 +1,11 @@
 export fn entry() void {
     foo();
 }
-fn foo() callconv(.naked) void {}
+fn foo() callconv(.Naked) void {}
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
-// :2:5: error: unable to call function with calling convention 'naked'
+// :2:5: error: unable to call function with naked calling convention
 // :4:1: note: function declared here

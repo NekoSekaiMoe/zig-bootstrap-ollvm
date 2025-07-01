@@ -15,7 +15,7 @@
 #ifndef LLVM_CODEGEN_VALUETYPES_H
 #define LLVM_CODEGEN_VALUETYPES_H
 
-#include "llvm/CodeGenTypes/MachineValueType.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TypeSize.h"
@@ -27,7 +27,6 @@ namespace llvm {
 
   class LLVMContext;
   class Type;
-  struct fltSemantics;
 
   /// Extended Value Type. Capable of holding value types which are not native
   /// for any processor (such as the i12345 type), as well as the types an MVT
@@ -108,13 +107,6 @@ namespace llvm {
       return changeExtendedVectorElementType(EltVT);
     }
 
-    /// Return a VT for a type whose attributes match ourselves with the
-    /// exception of the element type that is chosen by the caller.
-    EVT changeElementType(EVT EltVT) const {
-      EltVT = EltVT.getScalarType();
-      return isVector() ? changeVectorElementType(EltVT) : EltVT;
-    }
-
     /// Return the type converted to an equivalently sized integer or vector
     /// with integer element type. Similar to changeVectorElementTypeToInteger,
     /// but also handles scalars.
@@ -175,9 +167,6 @@ namespace llvm {
       return isSimple() ? V.isScalableVector() : isExtendedScalableVector();
     }
 
-    /// Return true if this is a vector value type.
-    bool isRISCVVectorTuple() const { return V.isRISCVVectorTuple(); }
-
     bool isFixedLengthVector() const {
       return isSimple() ? V.isFixedLengthVector()
                         : isExtendedFixedLengthVector();
@@ -230,8 +219,7 @@ namespace llvm {
 
     /// Return true if this is an overloaded type for TableGen.
     bool isOverloaded() const {
-      return (V == MVT::iAny || V == MVT::fAny || V == MVT::vAny ||
-              V == MVT::pAny);
+      return (V==MVT::iAny || V==MVT::fAny || V==MVT::vAny || V==MVT::iPTRAny);
     }
 
     /// Return true if the bit size is a multiple of 8.
@@ -353,11 +341,6 @@ namespace llvm {
     /// Given a vector type, return the minimum number of elements it contains.
     unsigned getVectorMinNumElements() const {
       return getVectorElementCount().getKnownMinValue();
-    }
-
-    /// Given a RISCV vector tuple type, return the num_fields.
-    unsigned getRISCVVectorTupleNumFields() const {
-      return V.getRISCVVectorTupleNumFields();
     }
 
     /// Return the size of the specified value type in bits.
@@ -498,10 +481,8 @@ namespace llvm {
     Type *getTypeForEVT(LLVMContext &Context) const;
 
     /// Return the value type corresponding to the specified type.
-    /// If HandleUnknown is true, unknown types are returned as Other,
-    /// otherwise they are invalid.
-    /// NB: This includes pointer types, which require a DataLayout to convert
-    /// to a concrete value type.
+    /// This returns all pointers as iPTR.  If HandleUnknown is true, unknown
+    /// types are returned as Other, otherwise they are invalid.
     static EVT getEVT(Type *Ty, bool HandleUnknown = false);
 
     intptr_t getRawBits() const {
@@ -521,10 +502,6 @@ namespace llvm {
           return L.V.SimpleTy < R.V.SimpleTy;
       }
     };
-
-    /// Returns an APFloat semantics tag appropriate for the value type. If this
-    /// is a vector type, the element semantics are returned.
-    const fltSemantics &getFltSemantics() const;
 
   private:
     // Methods for handling the Extended-type case in functions above.

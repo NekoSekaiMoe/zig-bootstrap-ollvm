@@ -20,6 +20,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace llvm {
 class SPIRVSubtarget;
@@ -33,11 +34,9 @@ enum ModuleSectionType {
   MB_EntryPoints, // All OpEntryPoint instructions (if any).
   //  MB_ExecutionModes, MB_DebugSourceAndStrings,
   MB_DebugNames,           // All OpName and OpMemberName intrs.
-  MB_DebugStrings,         // All OpString intrs.
   MB_DebugModuleProcessed, // All OpModuleProcessed instructions.
   MB_Annotations,          // OpDecorate, OpMemberDecorate etc.
   MB_TypeConstVars,        // OpTypeXXX, OpConstantXXX, and global OpVariables.
-  MB_NonSemanticGlobalDI,  // OpExtInst with e.g. DebugSource, DebugTypeBasic.
   MB_ExtFuncDecls,         // OpFunction etc. to declare for external funcs.
   NUM_MODULE_SECTIONS      // Total number of sections requiring basic blocks.
 };
@@ -46,13 +45,13 @@ struct Requirements {
   const bool IsSatisfiable;
   const std::optional<Capability::Capability> Cap;
   const ExtensionList Exts;
-  const VersionTuple MinVer; // 0 if no min version is required.
-  const VersionTuple MaxVer; // 0 if no max version is required.
+  const unsigned MinVer; // 0 if no min version is required.
+  const unsigned MaxVer; // 0 if no max version is required.
 
   Requirements(bool IsSatisfiable = false,
                std::optional<Capability::Capability> Cap = {},
-               ExtensionList Exts = {}, VersionTuple MinVer = VersionTuple(),
-               VersionTuple MaxVer = VersionTuple())
+               ExtensionList Exts = {}, unsigned MinVer = 0,
+               unsigned MaxVer = 0)
       : IsSatisfiable(IsSatisfiable), Cap(Cap), Exts(Exts), MinVer(MinVer),
         MaxVer(MaxVer) {}
   Requirements(Capability::Capability Cap) : Requirements(true, {Cap}) {}
@@ -61,34 +60,27 @@ struct Requirements {
 struct RequirementHandler {
 private:
   CapabilityList MinimalCaps;
-
-  // AllCaps and AvailableCaps are related but different. AllCaps is a subset of
-  // AvailableCaps. AvailableCaps is the complete set of capabilities that are
-  // available to the current target. AllCaps is the set of capabilities that
-  // are required by the current module.
   SmallSet<Capability::Capability, 8> AllCaps;
-  DenseSet<unsigned> AvailableCaps;
-
   SmallSet<Extension::Extension, 4> AllExtensions;
-  VersionTuple MinVersion; // 0 if no min version is defined.
-  VersionTuple MaxVersion; // 0 if no max version is defined.
-  // Add capabilities to AllCaps, recursing through their implicitly declared
-  // capabilities too.
-  void recursiveAddCapabilities(const CapabilityList &ToPrune);
-
-  void initAvailableCapabilitiesForOpenCL(const SPIRVSubtarget &ST);
-  void initAvailableCapabilitiesForVulkan(const SPIRVSubtarget &ST);
+  unsigned MinVersion; // 0 if no min version is defined.
+  unsigned MaxVersion; // 0 if no max version is defined.
+  DenseSet<unsigned> AvailableCaps;
+  // Remove a list of capabilities from dedupedCaps and add them to AllCaps,
+  // recursing through their implicitly declared capabilities too.
+  void pruneCapabilities(const CapabilityList &ToPrune);
 
 public:
-  RequirementHandler() {}
+  RequirementHandler() : MinVersion(0), MaxVersion(0) {}
   void clear() {
     MinimalCaps.clear();
     AllCaps.clear();
     AvailableCaps.clear();
     AllExtensions.clear();
-    MinVersion = VersionTuple();
-    MaxVersion = VersionTuple();
+    MinVersion = 0;
+    MaxVersion = 0;
   }
+  unsigned getMinVersion() const { return MinVersion; }
+  unsigned getMaxVersion() const { return MaxVersion; }
   const CapabilityList &getMinimalCapabilities() const { return MinimalCaps; }
   const SmallSet<Extension::Extension, 4> &getExtensions() const {
     return AllExtensions;
@@ -118,13 +110,9 @@ public:
   bool isCapabilityAvailable(Capability::Capability Cap) const {
     return AvailableCaps.contains(Cap);
   }
-
-  // Remove capability ToRemove, but only if IfPresent is present.
-  void removeCapabilityIf(const Capability::Capability ToRemove,
-                          const Capability::Capability IfPresent);
 };
 
-using InstrList = SmallVector<const MachineInstr *>;
+using InstrList = SmallVector<MachineInstr *>;
 // Maps a local register to the corresponding global alias.
 using LocalToGlobalRegTable = std::map<Register, Register>;
 using RegisterAliasMapTy =
@@ -142,12 +130,12 @@ struct ModuleAnalysisInfo {
   // Maps ExtInstSet to corresponding ID register.
   DenseMap<unsigned, Register> ExtInstSetMap;
   // Contains the list of all global OpVariables in the module.
-  SmallVector<const MachineInstr *, 4> GlobalVarList;
+  SmallVector<MachineInstr *, 4> GlobalVarList;
   // Maps functions to corresponding function ID registers.
   DenseMap<const Function *, Register> FuncMap;
   // The set contains machine instructions which are necessary
   // for correct MIR but will not be emitted in function bodies.
-  DenseSet<const MachineInstr *> InstrsToDelete;
+  DenseSet<MachineInstr *> InstrsToDelete;
   // The table contains global aliases of local registers for each machine
   // function. The aliases are used to substitute local registers during
   // code emission.
@@ -157,17 +145,17 @@ struct ModuleAnalysisInfo {
   // The array contains lists of MIs for each module section.
   InstrList MS[NUM_MODULE_SECTIONS];
   // The table maps MBB number to SPIR-V unique ID register.
-  DenseMap<std::pair<const MachineFunction *, int>, Register> BBNumToRegMap;
+  DenseMap<int, Register> BBNumToRegMap;
 
   Register getFuncReg(const Function *F) {
     assert(F && "Function is null");
     auto FuncPtrRegPair = FuncMap.find(F);
-    return FuncPtrRegPair == FuncMap.end() ? Register(0)
-                                           : FuncPtrRegPair->second;
+    assert(FuncPtrRegPair != FuncMap.end() && "Cannot find function ID");
+    return FuncPtrRegPair->second;
   }
   Register getExtInstSetReg(unsigned SetNum) { return ExtInstSetMap[SetNum]; }
   InstrList &getMSInstrs(unsigned MSType) { return MS[MSType]; }
-  void setSkipEmission(const MachineInstr *MI) { InstrsToDelete.insert(MI); }
+  void setSkipEmission(MachineInstr *MI) { InstrsToDelete.insert(MI); }
   bool getSkipEmission(const MachineInstr *MI) {
     return InstrsToDelete.contains(MI);
   }
@@ -188,25 +176,19 @@ struct ModuleAnalysisInfo {
   }
   unsigned getNextID() { return MaxID++; }
   bool hasMBBRegister(const MachineBasicBlock &MBB) {
-    auto Key = std::make_pair(MBB.getParent(), MBB.getNumber());
-    return BBNumToRegMap.contains(Key);
+    return BBNumToRegMap.find(MBB.getNumber()) != BBNumToRegMap.end();
   }
   // Convert MBB's number to corresponding ID register.
   Register getOrCreateMBBRegister(const MachineBasicBlock &MBB) {
-    auto Key = std::make_pair(MBB.getParent(), MBB.getNumber());
-    auto It = BBNumToRegMap.find(Key);
-    if (It != BBNumToRegMap.end())
-      return It->second;
+    auto f = BBNumToRegMap.find(MBB.getNumber());
+    if (f != BBNumToRegMap.end())
+      return f->second;
     Register NewReg = Register::index2VirtReg(getNextID());
-    BBNumToRegMap[Key] = NewReg;
+    BBNumToRegMap[MBB.getNumber()] = NewReg;
     return NewReg;
   }
 };
 } // namespace SPIRV
-
-using InstrSignature = SmallVector<size_t>;
-using InstrTraces = std::set<InstrSignature>;
-using InstrGRegsMap = std::map<SmallVector<size_t>, unsigned>;
 
 struct SPIRVModuleAnalysis : public ModulePass {
   static char ID;
@@ -220,27 +202,15 @@ public:
 
 private:
   void setBaseInfo(const Module &M);
+  void collectGlobalEntities(
+      const std::vector<SPIRV::DTSortableEntry *> &DepsGraph,
+      SPIRV::ModuleSectionType MSType,
+      std::function<bool(const SPIRV::DTSortableEntry *)> Pred,
+      bool UsePreOrder);
+  void processDefInstrs(const Module &M);
   void collectFuncNames(MachineInstr &MI, const Function *F);
   void processOtherInstrs(const Module &M);
   void numberRegistersGlobally(const Module &M);
-
-  // analyze dependencies to collect module scope definitions
-  void collectDeclarations(const Module &M);
-  void visitDecl(const MachineRegisterInfo &MRI, InstrGRegsMap &SignatureToGReg,
-                 std::map<const Value *, unsigned> &GlobalToGReg,
-                 const MachineFunction *MF, const MachineInstr &MI);
-  Register handleVariable(const MachineFunction *MF, const MachineInstr &MI,
-                          std::map<const Value *, unsigned> &GlobalToGReg);
-  Register handleTypeDeclOrConstant(const MachineInstr &MI,
-                                    InstrGRegsMap &SignatureToGReg);
-  Register
-  handleFunctionOrParameter(const MachineFunction *MF, const MachineInstr &MI,
-                            std::map<const Value *, unsigned> &GlobalToGReg,
-                            bool &IsFunDef);
-  void visitFunPtrUse(Register OpReg, InstrGRegsMap &SignatureToGReg,
-                      std::map<const Value *, unsigned> &GlobalToGReg,
-                      const MachineFunction *MF, const MachineInstr &MI);
-  bool isDeclSection(const MachineRegisterInfo &MRI, const MachineInstr &MI);
 
   const SPIRVSubtarget *ST;
   SPIRVGlobalRegistry *GR;

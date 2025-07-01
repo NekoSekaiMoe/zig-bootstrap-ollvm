@@ -107,7 +107,7 @@ static inline bool isCodeViewDebugSubsection(object::SectionRef Section,
     return false;
   }
 
-  Reader = BinaryStreamReader(*ContentsOrErr, llvm::endianness::little);
+  Reader = BinaryStreamReader(*ContentsOrErr, support::little);
   uint32_t Magic;
   if (Reader.bytesRemaining() < sizeof(uint32_t))
     return false;
@@ -561,7 +561,7 @@ static bool isMyCode(const SymbolGroup &Group) {
     return true;
 
   StringRef Name = Group.name();
-  if (Name.starts_with("Import:"))
+  if (Name.startswith("Import:"))
     return false;
   if (Name.ends_with_insensitive(".dll"))
     return false;

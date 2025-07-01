@@ -15,7 +15,10 @@
 #include "SourcePrinter.h"
 #include "llvm-objdump.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/DebugInfo/DWARF/DWARFExpression.h"
+#include "llvm/DebugInfo/Symbolize/SymbolizableModule.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #define DEBUG_TYPE "objdump"
@@ -37,7 +40,7 @@ void LiveVariable::print(raw_ostream &OS, const MCRegisterInfo &MRI) const {
   DWARFExpression Expression(Data, Unit->getAddressByteSize());
 
   auto GetRegName = [&MRI, &OS](uint64_t DwarfRegNum, bool IsEH) -> StringRef {
-    if (std::optional<MCRegister> LLVMRegNum =
+    if (std::optional<unsigned> LLVMRegNum =
             MRI.getLLVMRegNum(DwarfRegNum, IsEH))
       if (const char *RegName = MRI.getName(*LLVMRegNum))
         return StringRef(RegName);
@@ -341,8 +344,7 @@ bool SourcePrinter::cacheSource(const DILineInfo &LineInfo) {
   if (LineInfo.Source) {
     Buffer = MemoryBuffer::getMemBuffer(*LineInfo.Source);
   } else {
-    auto BufferOrError =
-        MemoryBuffer::getFile(LineInfo.FileName, /*IsText=*/true);
+    auto BufferOrError = MemoryBuffer::getFile(LineInfo.FileName);
     if (!BufferOrError) {
       if (MissingSources.insert(LineInfo.FileName).second)
         reportWarning("failed to find source " + LineInfo.FileName,
@@ -434,7 +436,7 @@ void SourcePrinter::printLines(formatted_raw_ostream &OS,
     OS << Delimiter << LineInfo.FunctionName;
     // If demangling is successful, FunctionName will end with "()". Print it
     // only if demangling did not run or was unsuccessful.
-    if (!StringRef(LineInfo.FunctionName).ends_with("()"))
+    if (!StringRef(LineInfo.FunctionName).endswith("()"))
       OS << "()";
     OS << ":\n";
   }

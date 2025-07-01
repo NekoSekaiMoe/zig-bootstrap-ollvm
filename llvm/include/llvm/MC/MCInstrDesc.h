@@ -519,8 +519,9 @@ public:
   /// Returns true if this instruction is a candidate for remat. This
   /// flag is only used in TargetInstrInfo method isTriviallyRematerializable.
   ///
-  /// If this flag is set, the isReallyTriviallyReMaterializable() method is
-  /// called to verify the instruction is really rematerializable.
+  /// If this flag is set, the isReallyTriviallyReMaterializable()
+  /// or isReallyTriviallyReMaterializableGeneric methods are called to verify
+  /// the instruction is really rematable.
   bool isRematerializable() const {
     return Flags & (1ULL << MCID::Rematerializable);
   }
@@ -584,13 +585,13 @@ public:
 
   /// Return true if this instruction implicitly
   /// uses the specified physical register.
-  bool hasImplicitUseOfPhysReg(MCRegister Reg) const {
+  bool hasImplicitUseOfPhysReg(unsigned Reg) const {
     return is_contained(implicit_uses(), Reg);
   }
 
   /// Return true if this instruction implicitly
   /// defines the specified physical register.
-  bool hasImplicitDefOfPhysReg(MCRegister Reg,
+  bool hasImplicitDefOfPhysReg(unsigned Reg,
                                const MCRegisterInfo *MRI = nullptr) const;
 
   /// Return the scheduling class for this instruction.  The
@@ -617,7 +618,7 @@ public:
 
   /// Return true if this instruction defines the specified physical
   /// register, either explicitly or implicitly.
-  bool hasDefOfPhysReg(const MCInst &MI, MCRegister Reg,
+  bool hasDefOfPhysReg(const MCInst &MI, unsigned Reg,
                        const MCRegisterInfo &RI) const;
 };
 

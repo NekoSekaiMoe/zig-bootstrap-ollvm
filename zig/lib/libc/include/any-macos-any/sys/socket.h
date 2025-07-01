@@ -78,6 +78,8 @@
 #include <machine/_param.h>
 #include <net/net_kev.h>
 
+
+
 #include <Availability.h>
 
 /*
@@ -187,7 +189,6 @@
 
 #define SO_RESOLVER_SIGNATURE      0x1131  /* A signed data blob from the system resolver */
 
-#define SO_BINDTODEVICE            0x1134  /* bind socket to a network device (max valid option length IFNAMSIZ) */
 
 /* When adding new socket-options, you need to make sure MPTCP supports these as well! */
 
@@ -345,6 +346,7 @@ struct so_np_extensions {
 #define SONPX_SETOPTSHUT        0x000000001     /* flag for allowing setsockopt after shutdown */
 
 
+
 #endif
 #endif
 
@@ -414,7 +416,11 @@ struct so_np_extensions {
 struct sockaddr {
 	__uint8_t       sa_len;         /* total length */
 	sa_family_t     sa_family;      /* [XSI] address family */
-	char            sa_data[14];    /* [XSI] addr value */
+#if __has_ptrcheck
+	char            sa_data[__counted_by(sa_len - 2)];
+#else
+	char            sa_data[14];    /* [XSI] addr value (actually smaller or larger) */
+#endif
 };
 __CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct sockaddr, sockaddr);
 
@@ -524,7 +530,10 @@ __CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct sockaddr_storage, sockaddr_storage);
  */
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 #define NET_MAXID       AF_MAX
+#endif /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
 
+
+#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 /*
  * PF_ROUTE - Routing table
  *
@@ -548,6 +557,9 @@ __CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct sockaddr_storage, sockaddr_storage);
 #define NET_RT_MAXID            11
 #endif /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
 
+
+
+
 /*
  * Maximum queue length specifiable by listen.
  */
@@ -558,14 +570,16 @@ __CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct sockaddr_storage, sockaddr_storage);
  * Used value-result for recvmsg, value only for sendmsg.
  */
 struct msghdr {
-	void            *__sized_by(msg_namelen) msg_name; /* [XSI] optional address */
+	void            *msg_name;      /* [XSI] optional address */
 	socklen_t       msg_namelen;    /* [XSI] size of address */
 	struct          iovec *msg_iov; /* [XSI] scatter/gather array */
 	int             msg_iovlen;     /* [XSI] # elements in msg_iov */
-	void            *__sized_by(msg_controllen) msg_control; /* [XSI] ancillary data, see below */
+	void            *msg_control;   /* [XSI] ancillary data, see below */
 	socklen_t       msg_controllen; /* [XSI] ancillary data buffer len */
 	int             msg_flags;      /* [XSI] flags on received message */
 };
+
+
 
 #define MSG_OOB         0x1             /* process out-of-band data */
 #define MSG_PEEK        0x2             /* peek at incoming message */
@@ -680,6 +694,7 @@ struct cmsgcred {
 #define SCM_CREDS                       0x03    /* process creds (struct cmsgcred) */
 #define SCM_TIMESTAMP_MONOTONIC         0x04    /* timestamp (uint64_t) */
 
+
 #endif  /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
 /*
@@ -702,6 +717,7 @@ struct sf_hdtr {
 
 
 #endif  /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
+
 
 __BEGIN_DECLS
 
@@ -744,7 +760,6 @@ __API_AVAILABLE(macosx(10.11), ios(9.0), tvos(9.0), watchos(2.0))
 int disconnectx(int, sae_associd_t, sae_connid_t);
 #endif  /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 __END_DECLS
-
 
 
 #endif /* !_SYS_SOCKET_H_ */

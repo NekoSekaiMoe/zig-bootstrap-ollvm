@@ -75,7 +75,8 @@ static Expected<uint64_t> parseVersion(StringRef &Buf) {
                              "Expecting version number.");
 
   uint64_t Version =
-      support::endian::read<uint64_t, llvm::endianness::little>(Buf.data());
+      support::endian::read<uint64_t, support::little, support::unaligned>(
+          Buf.data());
   if (Version != remarks::CurrentRemarkVersion)
     return createStringError(std::errc::illegal_byte_sequence,
                              "Mismatching remark version. Got %" PRId64
@@ -90,7 +91,8 @@ static Expected<uint64_t> parseStrTabSize(StringRef &Buf) {
     return createStringError(std::errc::illegal_byte_sequence,
                              "Expecting string table size.");
   uint64_t StrTabSize =
-      support::endian::read<uint64_t, llvm::endianness::little>(Buf.data());
+      support::endian::read<uint64_t, support::little, support::unaligned>(
+          Buf.data());
   Buf = Buf.drop_front(sizeof(uint64_t));
   return StrTabSize;
 }
@@ -136,7 +138,7 @@ Expected<std::unique_ptr<YAMLRemarkParser>> remarks::createYAMLParserFromMeta(
       StrTab = std::move(*MaybeStrTab);
     }
     // If it starts with "---", there is no external file.
-    if (!Buf.starts_with("---")) {
+    if (!Buf.startswith("---")) {
       // At this point, we expect Buf to contain the external file path.
       StringRef ExternalFilePath = Buf;
       SmallString<80> FullPath;
@@ -302,8 +304,11 @@ Expected<StringRef> YAMLRemarkParser::parseStr(yaml::KeyValueNode &Node) {
   } else
     Result = Value->getRawValue();
 
-  Result.consume_front("\'");
-  Result.consume_back("\'");
+  if (Result.front() == '\'')
+    Result = Result.drop_front();
+
+  if (Result.back() == '\'')
+    Result = Result.drop_back();
 
   return Result;
 }
@@ -453,8 +458,11 @@ Expected<StringRef> YAMLStrTabRemarkParser::parseStr(yaml::KeyValueNode &Node) {
   else
     return Str.takeError();
 
-  Result.consume_front("\'");
-  Result.consume_back("\'");
+  if (Result.front() == '\'')
+    Result = Result.drop_front();
+
+  if (Result.back() == '\'')
+    Result = Result.drop_back();
 
   return Result;
 }

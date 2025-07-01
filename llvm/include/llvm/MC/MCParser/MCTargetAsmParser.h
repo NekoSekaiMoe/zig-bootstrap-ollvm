@@ -13,7 +13,6 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCParser/MCAsmParserExtension.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
-#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
@@ -25,6 +24,7 @@ namespace llvm {
 class MCContext;
 class MCInst;
 class MCInstrInfo;
+class MCRegister;
 class MCStreamer;
 class MCSubtargetInfo;
 class MCSymbol;
@@ -154,12 +154,10 @@ public:
   constexpr bool isNoMatch() const { return Status == StatusTy::NoMatch; }
 
   // Allow implicit conversions to / from OperandMatchResultTy.
-  LLVM_DEPRECATED("Migrate to ParseStatus", "")
   constexpr ParseStatus(OperandMatchResultTy R)
       : Status(R == MatchOperand_Success     ? Success
                : R == MatchOperand_ParseFail ? Failure
                                              : NoMatch) {}
-  LLVM_DEPRECATED("Migrate to ParseStatus", "")
   constexpr operator OperandMatchResultTy() const {
     return isSuccess()   ? MatchOperand_Success
            : isFailure() ? MatchOperand_ParseFail
@@ -423,10 +421,10 @@ public:
   /// Check whether a register specification can be parsed at the current
   /// location, without failing the entire parse if it can't. Must not consume
   /// tokens if the parse fails.
-  virtual ParseStatus tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
-                                       SMLoc &EndLoc) = 0;
+  virtual OperandMatchResultTy
+  tryParseRegister(MCRegister &Reg, SMLoc &StartLoc, SMLoc &EndLoc) = 0;
 
-  /// Parse one assembly instruction.
+  /// ParseInstruction - Parse one assembly instruction.
   ///
   /// The parser is positioned following the instruction name. The target
   /// specific instruction parser should parse the entire instruction and
@@ -439,11 +437,11 @@ public:
   /// \param Operands [out] - The list of parsed operands, this returns
   ///        ownership of them to the caller.
   /// \return True on failure.
-  virtual bool parseInstruction(ParseInstructionInfo &Info, StringRef Name,
+  virtual bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                                 SMLoc NameLoc, OperandVector &Operands) = 0;
-  virtual bool parseInstruction(ParseInstructionInfo &Info, StringRef Name,
+  virtual bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                                 AsmToken Token, OperandVector &Operands) {
-    return parseInstruction(Info, Name, Token.getLoc(), Operands);
+    return ParseInstruction(Info, Name, Token.getLoc(), Operands);
   }
 
   /// ParseDirective - Parse a target specific assembler directive
@@ -471,19 +469,19 @@ public:
   /// \param DirectiveID - The token identifying the directive.
   virtual ParseStatus parseDirective(AsmToken DirectiveID);
 
-  /// Recognize a series of operands of a parsed
+  /// MatchAndEmitInstruction - Recognize a series of operands of a parsed
   /// instruction as an actual MCInst and emit it to the specified MCStreamer.
   /// This returns false on success and returns true on failure to match.
   ///
   /// On failure, the target parser is responsible for emitting a diagnostic
   /// explaining the match failure.
-  virtual bool matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+  virtual bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                        OperandVector &Operands, MCStreamer &Out,
                                        uint64_t &ErrorInfo,
                                        bool MatchingInlineAsm) = 0;
 
   /// Allows targets to let registers opt out of clobber lists.
-  virtual bool omitRegisterFromClobberLists(MCRegister Reg) { return false; }
+  virtual bool OmitRegisterFromClobberLists(unsigned RegNo) { return false; }
 
   /// Allow a target to add special case operand matching for things that
   /// tblgen doesn't/can't handle effectively. For example, literal
@@ -514,7 +512,9 @@ public:
   /// by the tied-operands checks in the AsmMatcher. This method can be
   /// overridden to allow e.g. a sub- or super-register as the tied operand.
   virtual bool areEqualRegs(const MCParsedAsmOperand &Op1,
-                            const MCParsedAsmOperand &Op2) const;
+                            const MCParsedAsmOperand &Op2) const {
+    return Op1.isReg() && Op2.isReg() && Op1.getReg() == Op2.getReg();
+  }
 
   // Return whether this parser uses assignment statements with equals tokens
   virtual bool equalIsAsmAssignment() { return true; };
@@ -523,10 +523,6 @@ public:
   // Return whether this parser accept star as start of statement
   virtual bool starIsStartOfStatement() { return false; };
 
-  virtual MCSymbolRefExpr::VariantKind
-  getVariantKindForName(StringRef Name) const {
-    return MCSymbolRefExpr::getVariantKindForName(Name);
-  }
   virtual const MCExpr *applyModifierToExpr(const MCExpr *E,
                                             MCSymbolRefExpr::VariantKind,
                                             MCContext &Ctx) {

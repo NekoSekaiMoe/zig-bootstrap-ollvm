@@ -16,6 +16,7 @@
 #include "llvm/MC/MCFixupKindInfo.h"
 #include "llvm/MC/MCMachObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
 #include "llvm/MC/MCSymbolXCOFF.h"
@@ -86,8 +87,7 @@ protected:
   Triple TT;
 public:
   PPCAsmBackend(const Target &T, const Triple &TT)
-      : MCAsmBackend(TT.isLittleEndian() ? llvm::endianness::little
-                                         : llvm::endianness::big),
+      : MCAsmBackend(TT.isLittleEndian() ? support::little : support::big),
         TT(TT) {}
 
   unsigned getNumFixupKinds() const override {
@@ -132,7 +132,7 @@ public:
 
     assert(unsigned(Kind - FirstTargetFixupKind) < getNumFixupKinds() &&
            "Invalid kind!");
-    return (Endian == llvm::endianness::little
+    return (Endian == support::little
                 ? InfosLE
                 : InfosBE)[Kind - FirstTargetFixupKind];
   }
@@ -154,15 +154,13 @@ public:
     // from the fixup value. The Value has been "split up" into the appropriate
     // bitfields above.
     for (unsigned i = 0; i != NumBytes; ++i) {
-      unsigned Idx =
-          Endian == llvm::endianness::little ? i : (NumBytes - 1 - i);
+      unsigned Idx = Endian == support::little ? i : (NumBytes - 1 - i);
       Data[Offset + i] |= uint8_t((Value >> (Idx * 8)) & 0xff);
     }
   }
 
   bool shouldForceRelocation(const MCAssembler &Asm, const MCFixup &Fixup,
-                             const MCValue &Target, const uint64_t,
-                             const MCSubtargetInfo *STI) override {
+                             const MCValue &Target) override {
     MCFixupKind Kind = Fixup.getKind();
     switch ((unsigned)Kind) {
     default:
@@ -188,6 +186,14 @@ public:
       }
       return false;
     }
+  }
+
+  bool fixupNeedsRelaxation(const MCFixup &Fixup,
+                            uint64_t Value,
+                            const MCRelaxableFragment *DF,
+                            const MCAsmLayout &Layout) const override {
+    // FIXME.
+    llvm_unreachable("relaxInstruction() unimplemented");
   }
 
   void relaxInstruction(MCInst &Inst,

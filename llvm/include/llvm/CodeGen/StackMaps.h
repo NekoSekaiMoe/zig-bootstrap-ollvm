@@ -259,7 +259,7 @@ private:
 class StackMaps {
 public:
   struct Location {
-    enum LocationType : uint16_t {
+    enum LocationType {
       Unprocessed,
       Register,
       Direct,
@@ -268,22 +268,23 @@ public:
       ConstantIndex
     };
     LocationType Type = Unprocessed;
-    uint16_t Size = 0;
-    uint16_t Reg = 0;
-    int32_t Offset = 0;
+    unsigned Size = 0;
+    unsigned Reg = 0;
+    int64_t Offset = 0;
 
     Location() = default;
-    Location(LocationType Type, uint16_t Size, uint16_t Reg, int32_t Offset)
+    Location(LocationType Type, unsigned Size, unsigned Reg, int64_t Offset)
         : Type(Type), Size(Size), Reg(Reg), Offset(Offset) {}
   };
 
   struct LiveOutReg {
-    uint16_t Reg = 0;
-    uint16_t DwarfRegNum = 0;
-    uint16_t Size = 0;
+    unsigned short Reg = 0;
+    unsigned short DwarfRegNum = 0;
+    unsigned short Size = 0;
 
     LiveOutReg() = default;
-    LiveOutReg(uint16_t Reg, uint16_t DwarfRegNum, uint16_t Size)
+    LiveOutReg(unsigned short Reg, unsigned short DwarfRegNum,
+               unsigned short Size)
         : Reg(Reg), DwarfRegNum(DwarfRegNum), Size(Size) {}
   };
 
@@ -368,7 +369,7 @@ private:
   MachineInstr::const_mop_iterator
   parseOperand(MachineInstr::const_mop_iterator MOI,
                MachineInstr::const_mop_iterator MOE, LocationVec &Locs,
-               LiveOutVec &LiveOuts);
+               LiveOutVec &LiveOuts) const;
 
   /// Specialized parser of statepoint operands.
   /// They do not directly correspond to StackMap record entries.

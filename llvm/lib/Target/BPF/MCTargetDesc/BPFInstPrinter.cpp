@@ -11,13 +11,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "MCTargetDesc/BPFInstPrinter.h"
-#include "BPF.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormattedStream.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
@@ -33,16 +34,15 @@ void BPFInstPrinter::printInst(const MCInst *MI, uint64_t Address,
 }
 
 static void printExpr(const MCExpr *Expr, raw_ostream &O) {
+#ifndef NDEBUG
   const MCSymbolRefExpr *SRE;
 
   if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr))
     SRE = dyn_cast<MCSymbolRefExpr>(BE->getLHS());
   else
     SRE = dyn_cast<MCSymbolRefExpr>(Expr);
-  if (!SRE)
-    report_fatal_error("Unexpected MCExpr type.");
+  assert(SRE && "Unexpected MCExpr type.");
 
-#ifndef NDEBUG
   MCSymbolRefExpr::VariantKind Kind = SRE->getKind();
 
   assert(Kind == MCSymbolRefExpr::VK_None);
@@ -100,13 +100,8 @@ void BPFInstPrinter::printBrTargetOperand(const MCInst *MI, unsigned OpNo,
                                        raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm()) {
-    if (MI->getOpcode() == BPF::JMPL) {
-      int32_t Imm = Op.getImm();
-      O << ((Imm >= 0) ? "+" : "") << formatImm(Imm);
-    } else {
-      int16_t Imm = Op.getImm();
-      O << ((Imm >= 0) ? "+" : "") << formatImm(Imm);
-    }
+    int16_t Imm = Op.getImm();
+    O << ((Imm >= 0) ? "+" : "") << formatImm(Imm);
   } else if (Op.isExpr()) {
     printExpr(Op.getExpr(), O);
   } else {

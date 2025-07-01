@@ -67,17 +67,6 @@ __INTRINSICS_USEINLINE
   #define __has_builtin(x) 0
 #endif
 
-/*
- * Macro __INTRINSIC_PROLOG uses non-portable Conditional inclusion
- * (ISO WG14 N2176 (C17) 6.10.1/4). Avoid gcc 7+ -Wexpansion-to-defined
- * warning enabled by -W or -Wextra option.
- * In Clang, this warning is enabled by -pedantic.
- */
-#if defined(__GNUC__) && (__GNUC__ >= 7 || defined(__clang__))
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wexpansion-to-defined"
-#endif
-
 /* These macros are used by the routines below.  While this file may be included 
    multiple times, these macros only need to be defined once. */
 #ifndef _INTRIN_MAC_
@@ -134,7 +123,7 @@ __INTRINSICS_USEINLINE
    FunctionName: Any valid function name
    DataType: __LONG32 or __int64
    OffsetConstraint: either "I" for 32bit data types or "J" for 64. */
-#if (defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_)) || defined(__i386__) || defined(_X86_)
+#if defined(__x86_64__) || defined(_AMD64_) || defined(__i386__) || defined(_X86_)
 #define __buildbittesti(x, y, z, a) unsigned char x(y volatile *Base, y Offset) \
 { \
    unsigned char old; \
@@ -162,7 +151,7 @@ __INTRINSICS_USEINLINE
       : "memory", "cc"); \
    return (old >> Offset) & 1; \
 }
-#elif defined(__aarch64__) || defined(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_)
+#elif defined(__aarch64__) || defined(_ARM64_)
 #define __buildbittesti(x, y, z, a) unsigned char x(y volatile *Base, y Offset) \
 { \
    unsigned int old, tmp1, tmp2; \
@@ -198,7 +187,7 @@ __INTRINSICS_USEINLINE
       : "memory", "cc"); \
    return (old >> Offset) & 1; \
 }
-#endif /* (defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_)) || defined(__i386__) || defined(_X86_) */
+#endif /* defined(__x86_64__) || defined(_AMD64_) || defined(__i386__) || defined(_X86_) */
 
 /* This macro is used by YieldProcessor when compiling x86 w/o SSE2.
 It generates the same opcodes as _mm_pause.  */
@@ -230,10 +219,9 @@ Parameters: (FunctionName, DataType, Segment)
 
 #define __buildreadseg(x, y, z, a) y x(unsigned __LONG32 Offset) { \
     y ret; \
-    __asm__ ("mov{" a " %%" z ":(%[offset]), %[ret] | %[ret], " z ":[%[offset]] }" \
+    __asm__ ("mov{" a " %%" z ":%[offset], %[ret] | %[ret], %%" z ":%[offset]}" \
         : [ret] "=r" (ret) \
-        : [offset] "r" (Offset) \
-        : "memory"); \
+        : [offset] "m" ((*(y *) (size_t) Offset))); \
     return ret; \
 }
 
@@ -248,10 +236,9 @@ Parameters: (FunctionName, DataType, Segment)
    */
 
 #define __buildwriteseg(x, y, z, a) void x(unsigned __LONG32 Offset, y Data) { \
-    __asm__ volatile ("mov{" a " %[Data], %%" z ":(%[offset]) | " z ":[%[offset]], %[Data] }" \
-        : \
-        : [offset] "r" (Offset), [Data] "r" (Data) \
-        : "memory"); \
+    __asm__ ("mov{" a " %[Data], %%" z ":%[offset] | %%" z ":%[offset], %[Data]}" \
+        : [offset] "=m" ((*(y *) (size_t) Offset)) \
+        : [Data] "ri" (Data)); \
 }
 
 /* This macro is used by _BitScanForward, _BitScanForward64, _BitScanReverse _BitScanReverse64
@@ -668,7 +655,8 @@ unsigned short _rotr16(unsigned short __X, unsigned char __C)
 #define __INTRINSIC_DEFINED__rotr16
 #endif /* __INTRINSIC_PROLOG */
 
-#if (defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_))
+#if defined(__x86_64__) || defined(_AMD64_)
+
 #if __INTRINSIC_PROLOG(__faststorefence)
 void __faststorefence(void);
 #if !__has_builtin(__faststorefence)
@@ -1102,7 +1090,7 @@ unsigned __int64 __shiftright128 (unsigned __int64  LowPart, unsigned __int64 Hi
 #define __INTRINSIC_DEFINED___shiftright128
 #endif /* __INTRINSIC_PROLOG */
 
-#endif /* #(defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_)) */
+#endif /* defined(__x86_64__) || defined(_AMD64_) */
 
 /* ***************************************************** */
 
@@ -1194,7 +1182,7 @@ unsigned char _BitScanReverse(unsigned __LONG32 *Index, unsigned __LONG32 Mask)
 
 #endif /* defined(__arm__) || defined(_ARM_) */
 
-#if defined(__aarch64__) || defined(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_)
+#if defined(__aarch64__) || defined(_ARM64_)
 
 #if __INTRINSIC_PROLOG(_interlockedbittestandset)
 unsigned char _interlockedbittestandset(__LONG32 volatile *a, __LONG32 b);
@@ -1435,9 +1423,9 @@ unsigned char _BitScanReverse64(unsigned __LONG32 *Index, unsigned __int64 Mask)
 #define __INTRINSIC_DEFINED__BitScanReverse64
 #endif /* __INTRINSIC_PROLOG */
 
-#endif /* defined(__aarch64__) || define(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_) */
+#endif /* defined(__aarch64__) || define(_ARM64_) */
 
-#if defined(__arm__) || defined(_ARM_) || defined(__aarch64__) || defined(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_)
+#if defined(__arm__) || defined(_ARM_) || defined(__aarch64__) || defined(_ARM64_)
 
 #if __INTRINSIC_PROLOG(_bittest)
 unsigned char _bittest(const __LONG32 *__a, __LONG32 __b);
@@ -1493,9 +1481,9 @@ unsigned char _bittestandcomplement(__LONG32 *__a, __LONG32 __b)
 #define __INTRINSIC_DEFINED__bittestandcomplement
 #endif /* __INTRINSIC_PROLOG */
 
-#endif /* defined(__arm__) || defined(_ARM_) || defined(__aarch64__) || defined(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_) */
+#endif /* defined(__arm__) || defined(_ARM_) || defined(__aarch64__) || defined(_ARM64_) */
 
-#if defined(__aarch64__) || defined(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_)
+#if defined(__aarch64__) || defined(_ARM64_)
 
 #if __INTRINSIC_PROLOG(_bittest64)
 unsigned char _bittest64(const __int64 *__a, __int64 __b);
@@ -1551,7 +1539,7 @@ unsigned char _bittestandcomplement64(__int64 *__a, __int64 __b)
 #define __INTRINSIC_DEFINED__bittestandcomplement64
 #endif /* __INTRINSIC_PROLOG */
 
-#endif /* defined(__aarch64__) || define(_ARM64_) || defined(__arm64ec__) || defined(_ARM64EC_) */
+#endif /* defined(__aarch64__) || define(_ARM64_) */
 
 /* ***************************************************** */
 
@@ -1618,17 +1606,6 @@ __INTRINSICS_USEINLINE
 __buildlogicali(_InterlockedXor, __LONG32, xor)
 #endif
 #define __INTRINSIC_DEFINED__InterlockedXor
-#endif /* __INTRINSIC_PROLOG */
-
-#if __INTRINSIC_PROLOG(_InterlockedCompareExchange8)
-char _InterlockedCompareExchange8(char volatile *destination, char exchange, char comperand);
-#if !__has_builtin(_InterlockedCompareExchange8)
-__INTRINSICS_USEINLINE
-char _InterlockedCompareExchange8(char volatile *destination, char exchange, char comperand) {
-    return __sync_val_compare_and_swap(destination, comperand, exchange);
-}
-#endif
-#define __INTRINSIC_DEFINED__InterlockedCompareExchange8
 #endif /* __INTRINSIC_PROLOG */
 
 #if __INTRINSIC_PROLOG(_InterlockedIncrement16)
@@ -1776,7 +1753,7 @@ void *_InterlockedExchangePointer(void *volatile *Target,void *Value) {
 
 #endif /* defined(__x86_64__) || defined(_AMD64_) || defined(__i386__) || defined(_X86_) || defined(__arm__) || defined(_ARM_) || defined(__aarch64__) || defined(_ARM64_) */
 
-#if (defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_)) || defined(__i386__) || defined(_X86_)
+#if defined(__x86_64__) || defined(_AMD64_) || defined(__i386__) || defined(_X86_)
 
 #if __INTRINSIC_PROLOG(__int2c)
 void __int2c(void);
@@ -2046,7 +2023,7 @@ void __cpuid(int CPUInfo[4], int InfoType) {
 #define __INTRINSIC_DEFINED___cpuid
 #endif /* __INTRINSIC_PROLOG */
 
-#if (!defined(__GNUC__) || __GNUC__ < 11) && (!defined(__clang__) || __clang_major__ < 19)
+#if (!defined(__GNUC__) || __GNUC__ < 11) && (!defined(__clang__) || __clang_major__ < 18)
 #if __INTRINSIC_PROLOG(__cpuidex)
 void __cpuidex(int CPUInfo[4], int, int);
 #if !__has_builtin(__cpuidex)
@@ -2156,7 +2133,7 @@ unsigned __int64 _xgetbv(unsigned int index)
 #endif /* __INTRINSIC_PROLOG */
 #endif /* __GNUC__ < 8 */
 
-#endif /* (defined(__x86_64__) && !defined(__arm64ec__)) || (defined(_AMD64_) && !defined(_ARM64EC_)) || defined(__i386__) || defined(_X86_) */
+#endif /* defined(__x86_64__) || defined(_AMD64_) || defined(__i386__) || defined(_X86_) */
 
 /* ***************************************************** */
 
@@ -2311,10 +2288,6 @@ __build_writecr(__writecr8, unsigned __LONG32, "8")
 #undef __FLAGSET
 #undef __FLAGCLOBBER1
 #undef __FLAGCLOBBER2
-
-#if defined(__GNUC__) && (__GNUC__ >= 7 || defined(__clang__))
-#pragma GCC diagnostic pop
-#endif
 
 #pragma pop_macro("__has_builtin")
 

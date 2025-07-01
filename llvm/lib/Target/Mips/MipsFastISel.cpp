@@ -22,6 +22,7 @@
 #include "MipsSubtarget.h"
 #include "MipsTargetMachine.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -34,10 +35,10 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constant.h"
@@ -57,6 +58,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCInstrDesc.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
@@ -462,7 +464,7 @@ bool MipsFastISel::computeAddress(const Value *Obj, Address &Addr) {
     // Don't walk into other basic blocks unless the object is an alloca from
     // another block, otherwise it may not have a virtual register assigned.
     if (FuncInfo.StaticAllocaMap.count(static_cast<const AllocaInst *>(Obj)) ||
-        FuncInfo.getMBB(I->getParent()) == FuncInfo.MBB) {
+        FuncInfo.MBBMap[I->getParent()] == FuncInfo.MBB) {
       Opcode = I->getOpcode();
       U = I;
     }
@@ -490,7 +492,7 @@ bool MipsFastISel::computeAddress(const Value *Obj, Address &Addr) {
         unsigned Idx = cast<ConstantInt>(Op)->getZExtValue();
         TmpOffset += SL->getElementOffset(Idx);
       } else {
-        uint64_t S = GTI.getSequentialElementStride(DL);
+        uint64_t S = DL.getTypeAllocSize(GTI.getIndexedType());
         while (true) {
           if (const ConstantInt *CI = dyn_cast<ConstantInt>(Op)) {
             // Constant-offset addressing.
@@ -879,52 +881,38 @@ bool MipsFastISel::selectLogicalOp(const Instruction *I) {
 }
 
 bool MipsFastISel::selectLoad(const Instruction *I) {
-  const LoadInst *LI = cast<LoadInst>(I);
-
   // Atomic loads need special handling.
-  if (LI->isAtomic())
+  if (cast<LoadInst>(I)->isAtomic())
     return false;
 
   // Verify we have a legal type before going any further.
   MVT VT;
-  if (!isLoadTypeLegal(LI->getType(), VT))
-    return false;
-
-  // Underaligned loads need special handling.
-  if (LI->getAlign() < VT.getFixedSizeInBits() / 8 &&
-      !Subtarget->systemSupportsUnalignedAccess())
+  if (!isLoadTypeLegal(I->getType(), VT))
     return false;
 
   // See if we can handle this address.
   Address Addr;
-  if (!computeAddress(LI->getOperand(0), Addr))
+  if (!computeAddress(I->getOperand(0), Addr))
     return false;
 
   unsigned ResultReg;
   if (!emitLoad(VT, ResultReg, Addr))
     return false;
-  updateValueMap(LI, ResultReg);
+  updateValueMap(I, ResultReg);
   return true;
 }
 
 bool MipsFastISel::selectStore(const Instruction *I) {
-  const StoreInst *SI = cast<StoreInst>(I);
-
-  Value *Op0 = SI->getOperand(0);
+  Value *Op0 = I->getOperand(0);
   unsigned SrcReg = 0;
 
   // Atomic stores need special handling.
-  if (SI->isAtomic())
+  if (cast<StoreInst>(I)->isAtomic())
     return false;
 
   // Verify we have a legal type before going any further.
   MVT VT;
-  if (!isLoadTypeLegal(SI->getOperand(0)->getType(), VT))
-    return false;
-
-  // Underaligned stores need special handling.
-  if (SI->getAlign() < VT.getFixedSizeInBits() / 8 &&
-      !Subtarget->systemSupportsUnalignedAccess())
+  if (!isLoadTypeLegal(I->getOperand(0)->getType(), VT))
     return false;
 
   // Get the value to be stored into a register.
@@ -934,7 +922,7 @@ bool MipsFastISel::selectStore(const Instruction *I) {
 
   // See if we can handle this address.
   Address Addr;
-  if (!computeAddress(SI->getOperand(1), Addr))
+  if (!computeAddress(I->getOperand(1), Addr))
     return false;
 
   if (!emitStore(VT, SrcReg, Addr))
@@ -954,8 +942,8 @@ bool MipsFastISel::selectBranch(const Instruction *I) {
   // goto FBB
   // TBB:
   //
-  MachineBasicBlock *TBB = FuncInfo.getMBB(BI->getSuccessor(0));
-  MachineBasicBlock *FBB = FuncInfo.getMBB(BI->getSuccessor(1));
+  MachineBasicBlock *TBB = FuncInfo.MBBMap[BI->getSuccessor(0)];
+  MachineBasicBlock *FBB = FuncInfo.MBBMap[BI->getSuccessor(1)];
 
   // Fold the common case of a conditional branch with a comparison
   // in the same block.
@@ -1620,8 +1608,8 @@ bool MipsFastISel::fastLowerIntrinsicCall(const IntrinsicInst *II) {
         }
         emitInst(Mips::SLL, TempReg[0]).addReg(SrcReg).addImm(8);
         emitInst(Mips::SRL, TempReg[1]).addReg(SrcReg).addImm(8);
-        emitInst(Mips::ANDi, TempReg[2]).addReg(TempReg[1]).addImm(0xFF);
-        emitInst(Mips::OR, DestReg).addReg(TempReg[0]).addReg(TempReg[2]);
+        emitInst(Mips::OR, TempReg[2]).addReg(TempReg[0]).addReg(TempReg[1]);
+        emitInst(Mips::ANDi, DestReg).addReg(TempReg[2]).addImm(0xFFFF);
         updateValueMap(II, DestReg);
         return true;
       }
@@ -1775,8 +1763,8 @@ bool MipsFastISel::selectRet(const Instruction *I) {
     RetRegs.push_back(VA.getLocReg());
   }
   MachineInstrBuilder MIB = emitInst(Mips::RetRA);
-  for (unsigned Reg : RetRegs)
-    MIB.addReg(Reg, RegState::Implicit);
+  for (unsigned i = 0, e = RetRegs.size(); i != e; ++i)
+    MIB.addReg(RetRegs[i], RegState::Implicit);
   return true;
 }
 

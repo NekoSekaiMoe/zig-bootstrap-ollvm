@@ -1,28 +1,19 @@
+/// Delete this to find out where URL escaping needs to be added.
+const missing_feature_url_escape = true;
+
+const gpa = std.heap.wasm_allocator;
+
 const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
-const Walk = @import("Walk");
+const Walk = @import("Walk.zig");
 const markdown = @import("markdown.zig");
-const Decl = Walk.Decl;
-
-const fileSourceHtml = @import("html_render.zig").fileSourceHtml;
-const appendEscaped = @import("html_render.zig").appendEscaped;
-const resolveDeclLink = @import("html_render.zig").resolveDeclLink;
-const missing_feature_url_escape = @import("html_render.zig").missing_feature_url_escape;
-
-const gpa = std.heap.wasm_allocator;
+const Decl = @import("Decl.zig");
 
 const js = struct {
-    /// Keep in sync with the `LOG_` constants in `main.js`.
-    const LogLevel = enum(u8) {
-        err,
-        warn,
-        info,
-        debug,
-    };
-
-    extern "js" fn log(level: LogLevel, ptr: [*]const u8, len: usize) void;
+    extern "js" fn log(ptr: [*]const u8, len: usize) void;
+    extern "js" fn panic(ptr: [*]const u8, len: usize) noreturn;
 };
 
 pub const std_options: std.Options = .{
@@ -43,13 +34,14 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const prefix = if (scope == .default) "" else @tagName(scope) ++ ": ";
+    const level_txt = comptime message_level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
     var buf: [500]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, prefix ++ format, args) catch l: {
+    const line = std.fmt.bufPrint(&buf, level_txt ++ prefix2 ++ format, args) catch l: {
         buf[buf.len - 3 ..][0..3].* = "...".*;
         break :l &buf;
     };
-    js.log(@field(js.LogLevel, @tagName(message_level)), line.ptr, line.len);
+    js.log(line.ptr, line.len);
 }
 
 export fn alloc(n: usize) [*]u8 {
@@ -61,13 +53,13 @@ export fn unpack(tar_ptr: [*]u8, tar_len: usize) void {
     const tar_bytes = tar_ptr[0..tar_len];
     //log.debug("received {d} bytes of tar file", .{tar_bytes.len});
 
-    unpackInner(tar_bytes) catch |err| {
-        std.debug.panic("unable to unpack tar: {s}", .{@errorName(err)});
+    unpack_inner(tar_bytes) catch |err| {
+        fatal("unable to unpack tar: {s}", .{@errorName(err)});
     };
 }
 
-var query_string: std.ArrayListUnmanaged(u8) = .empty;
-var query_results: std.ArrayListUnmanaged(Decl.Index) = .empty;
+var query_string: std.ArrayListUnmanaged(u8) = .{};
+var query_results: std.ArrayListUnmanaged(Decl.Index) = .{};
 
 /// Resizes the query string to be the correct length; returns the pointer to
 /// the query string.
@@ -99,11 +91,11 @@ fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
         segments: u16,
     };
     const g = struct {
-        var full_path_search_text: std.ArrayListUnmanaged(u8) = .empty;
-        var full_path_search_text_lower: std.ArrayListUnmanaged(u8) = .empty;
-        var doc_search_text: std.ArrayListUnmanaged(u8) = .empty;
+        var full_path_search_text: std.ArrayListUnmanaged(u8) = .{};
+        var full_path_search_text_lower: std.ArrayListUnmanaged(u8) = .{};
+        var doc_search_text: std.ArrayListUnmanaged(u8) = .{};
         /// Each element matches a corresponding query_results element.
-        var scores: std.ArrayListUnmanaged(Score) = .empty;
+        var scores: std.ArrayListUnmanaged(Score) = .{};
     };
 
     // First element stores the size of the list.
@@ -124,9 +116,7 @@ fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
         @memcpy(g.full_path_search_text_lower.items, g.full_path_search_text.items);
 
         const ast = decl.file.get_ast();
-        if (info.first_doc_comment.unwrap()) |first_doc_comment| {
-            try collect_docs(&g.doc_search_text, ast, first_doc_comment);
-        }
+        try collect_docs(&g.doc_search_text, ast, info.first_doc_comment);
 
         if (ignore_case) {
             ascii_lower(g.full_path_search_text_lower.items);
@@ -229,15 +219,18 @@ const ErrorIdentifier = packed struct(u64) {
     fn hasDocs(ei: ErrorIdentifier) bool {
         const decl_index = ei.decl_index;
         const ast = decl_index.get().file.get_ast();
+        const token_tags = ast.tokens.items(.tag);
         const token_index = ei.token_index;
         if (token_index == 0) return false;
-        return ast.tokenTag(token_index - 1) == .doc_comment;
+        return token_tags[token_index - 1] == .doc_comment;
     }
 
     fn html(ei: ErrorIdentifier, base_decl: Decl.Index, out: *std.ArrayListUnmanaged(u8)) Oom!void {
         const decl_index = ei.decl_index;
         const ast = decl_index.get().file.get_ast();
         const name = ast.tokenSlice(ei.token_index);
+        const first_doc_comment = Decl.findFirstDocComment(ast, ei.token_index);
+        const has_docs = ast.tokens.items(.tag)[first_doc_comment] == .doc_comment;
         const has_link = base_decl != decl_index;
 
         try out.appendSlice(gpa, "<dt>");
@@ -252,7 +245,7 @@ const ErrorIdentifier = packed struct(u64) {
         }
         try out.appendSlice(gpa, "</dt>");
 
-        if (Decl.findFirstDocComment(ast, ei.token_index).unwrap()) |first_doc_comment| {
+        if (has_docs) {
             try out.appendSlice(gpa, "<dd>");
             try render_docs(out, decl_index, first_doc_comment, false);
             try out.appendSlice(gpa, "</dd>");
@@ -260,8 +253,8 @@ const ErrorIdentifier = packed struct(u64) {
     }
 };
 
-var string_result: std.ArrayListUnmanaged(u8) = .empty;
-var error_set_result: std.StringArrayHashMapUnmanaged(ErrorIdentifier) = .empty;
+var string_result: std.ArrayListUnmanaged(u8) = .{};
+var error_set_result: std.StringArrayHashMapUnmanaged(ErrorIdentifier) = .{};
 
 export fn decl_error_set(decl_index: Decl.Index) Slice(ErrorIdentifier) {
     return Slice(ErrorIdentifier).init(decl_error_set_fallible(decl_index) catch @panic("OOM"));
@@ -279,6 +272,13 @@ export fn fn_error_set_decl(decl_index: Decl.Index, node: Ast.Node.Index) Decl.I
         .alias => |aliasee| fn_error_set_decl(aliasee, aliasee.get().ast_node),
         else => decl_index,
     };
+}
+
+export fn decl_field_count(decl_index: Decl.Index) u32 {
+    switch (decl_index.get().categorize()) {
+        .namespace => |node| return decl_index.get().file.get().field_count(node),
+        else => return 0,
+    }
 }
 
 fn decl_error_set_fallible(decl_index: Decl.Index) Oom![]ErrorIdentifier {
@@ -318,16 +318,17 @@ fn addErrorsFromExpr(
 ) Oom!void {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
+    const node_tags = ast.nodes.items(.tag);
+    const node_datas = ast.nodes.items(.data);
 
     switch (decl.file.categorize_expr(node)) {
-        .error_set => |n| switch (ast.nodeTag(n)) {
+        .error_set => |n| switch (node_tags[n]) {
             .error_set_decl => {
                 try addErrorsFromNode(decl_index, out, node);
             },
             .merge_error_sets => {
-                const lhs, const rhs = ast.nodeData(n).node_and_node;
-                try addErrorsFromExpr(decl_index, out, lhs);
-                try addErrorsFromExpr(decl_index, out, rhs);
+                try addErrorsFromExpr(decl_index, out, node_datas[node].lhs);
+                try addErrorsFromExpr(decl_index, out, node_datas[node].rhs);
             },
             else => unreachable,
         },
@@ -345,9 +346,11 @@ fn addErrorsFromNode(
 ) Oom!void {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
-    const error_token = ast.nodeMainToken(node);
+    const main_tokens = ast.nodes.items(.main_token);
+    const token_tags = ast.tokens.items(.tag);
+    const error_token = main_tokens[node];
     var tok_i = error_token + 2;
-    while (true) : (tok_i += 1) switch (ast.tokenTag(tok_i)) {
+    while (true) : (tok_i += 1) switch (token_tags[tok_i]) {
         .doc_comment, .comma => {},
         .identifier => {
             const name = ast.tokenSlice(tok_i);
@@ -382,41 +385,17 @@ export fn decl_params(decl_index: Decl.Index) Slice(Ast.Node.Index) {
 }
 
 fn decl_fields_fallible(decl_index: Decl.Index) ![]Ast.Node.Index {
-    const decl = decl_index.get();
-    const ast = decl.file.get_ast();
-
-    switch (decl.categorize()) {
-        .type_function => {
-            // If the type function returns a reference to another type function, get the fields from there
-            if (decl.get_type_fn_return_type_fn()) |function_decl| {
-                return decl_fields_fallible(function_decl);
-            }
-            // If the type function returns a container, such as a `struct`, read that container's fields
-            if (decl.get_type_fn_return_expr()) |return_expr| {
-                switch (ast.nodeTag(return_expr)) {
-                    .container_decl, .container_decl_trailing, .container_decl_two, .container_decl_two_trailing, .container_decl_arg, .container_decl_arg_trailing => {
-                        return ast_decl_fields_fallible(ast, return_expr);
-                    },
-                    else => {},
-                }
-            }
-            return &.{};
-        },
-        else => {
-            const value_node = decl.value_node() orelse return &.{};
-            return ast_decl_fields_fallible(ast, value_node);
-        },
-    }
-}
-
-fn ast_decl_fields_fallible(ast: *Ast, ast_index: Ast.Node.Index) ![]Ast.Node.Index {
     const g = struct {
-        var result: std.ArrayListUnmanaged(Ast.Node.Index) = .empty;
+        var result: std.ArrayListUnmanaged(Ast.Node.Index) = .{};
     };
     g.result.clearRetainingCapacity();
+    const decl = decl_index.get();
+    const ast = decl.file.get_ast();
+    const node_tags = ast.nodes.items(.tag);
+    const value_node = decl.value_node() orelse return &.{};
     var buf: [2]Ast.Node.Index = undefined;
-    const container_decl = ast.fullContainerDecl(&buf, ast_index) orelse return &.{};
-    for (container_decl.ast.members) |member_node| switch (ast.nodeTag(member_node)) {
+    const container_decl = ast.fullContainerDecl(&buf, value_node) orelse return &.{};
+    for (container_decl.ast.members) |member_node| switch (node_tags[member_node]) {
         .container_field_init,
         .container_field_align,
         .container_field,
@@ -429,7 +408,7 @@ fn ast_decl_fields_fallible(ast: *Ast, ast_index: Ast.Node.Index) ![]Ast.Node.In
 
 fn decl_params_fallible(decl_index: Decl.Index) ![]Ast.Node.Index {
     const g = struct {
-        var result: std.ArrayListUnmanaged(Ast.Node.Index) = .empty;
+        var result: std.ArrayListUnmanaged(Ast.Node.Index) = .{};
     };
     g.result.clearRetainingCapacity();
     const decl = decl_index.get();
@@ -467,12 +446,13 @@ fn decl_field_html_fallible(
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
     try out.appendSlice(gpa, "<pre><code>");
-    try fileSourceHtml(decl.file, out, field_node, .{});
+    try file_source_html(decl.file, out, field_node, .{});
     try out.appendSlice(gpa, "</code></pre>");
 
     const field = ast.fullContainerField(field_node).?;
+    const first_doc_comment = Decl.findFirstDocComment(ast, field.firstToken());
 
-    if (Decl.findFirstDocComment(ast, field.firstToken()).unwrap()) |first_doc_comment| {
+    if (ast.tokens.items(.tag)[first_doc_comment] == .doc_comment) {
         try out.appendSlice(gpa, "<div class=\"fieldDocs\">");
         try render_docs(out, decl_index, first_doc_comment, false);
         try out.appendSlice(gpa, "</div>");
@@ -486,13 +466,14 @@ fn decl_param_html_fallible(
 ) !void {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
+    const token_tags = ast.tokens.items(.tag);
     const colon = ast.firstToken(param_node) - 1;
     const name_token = colon - 1;
     const first_doc_comment = f: {
         var it = ast.firstToken(param_node);
         while (it > 0) {
             it -= 1;
-            switch (ast.tokenTag(it)) {
+            switch (token_tags[it]) {
                 .doc_comment, .colon, .identifier, .keyword_comptime, .keyword_noalias => {},
                 else => break,
             }
@@ -504,10 +485,10 @@ fn decl_param_html_fallible(
     try out.appendSlice(gpa, "<pre><code>");
     try appendEscaped(out, name);
     try out.appendSlice(gpa, ": ");
-    try fileSourceHtml(decl.file, out, param_node, .{});
+    try file_source_html(decl.file, out, param_node, .{});
     try out.appendSlice(gpa, "</code></pre>");
 
-    if (ast.tokenTag(first_doc_comment) == .doc_comment) {
+    if (ast.tokens.items(.tag)[first_doc_comment] == .doc_comment) {
         try out.appendSlice(gpa, "<div class=\"fieldDocs\">");
         try render_docs(out, decl_index, first_doc_comment, false);
         try out.appendSlice(gpa, "</div>");
@@ -517,8 +498,10 @@ fn decl_param_html_fallible(
 export fn decl_fn_proto_html(decl_index: Decl.Index, linkify_fn_name: bool) String {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
-    const proto_node = switch (ast.nodeTag(decl.ast_node)) {
-        .fn_decl => ast.nodeData(decl.ast_node).node_and_node[0],
+    const node_tags = ast.nodes.items(.tag);
+    const node_datas = ast.nodes.items(.data);
+    const proto_node = switch (node_tags[decl.ast_node]) {
+        .fn_decl => node_datas[decl.ast_node].lhs,
 
         .fn_proto,
         .fn_proto_one,
@@ -530,13 +513,13 @@ export fn decl_fn_proto_html(decl_index: Decl.Index, linkify_fn_name: bool) Stri
     };
 
     string_result.clearRetainingCapacity();
-    fileSourceHtml(decl.file, &string_result, proto_node, .{
+    file_source_html(decl.file, &string_result, proto_node, .{
         .skip_doc_comments = true,
         .skip_comments = true,
         .collapse_whitespace = true,
         .fn_link = if (linkify_fn_name) decl_index else .none,
     }) catch |err| {
-        std.debug.panic("unable to render source: {s}", .{@errorName(err)});
+        fatal("unable to render source: {s}", .{@errorName(err)});
     };
     return String.init(string_result.items);
 }
@@ -545,8 +528,8 @@ export fn decl_source_html(decl_index: Decl.Index) String {
     const decl = decl_index.get();
 
     string_result.clearRetainingCapacity();
-    fileSourceHtml(decl.file, &string_result, decl.ast_node, .{}) catch |err| {
-        std.debug.panic("unable to render source: {s}", .{@errorName(err)});
+    file_source_html(decl.file, &string_result, decl.ast_node, .{}) catch |err| {
+        fatal("unable to render source: {s}", .{@errorName(err)});
     };
     return String.init(string_result.items);
 }
@@ -557,8 +540,8 @@ export fn decl_doctest_html(decl_index: Decl.Index) String {
         return String.init("");
 
     string_result.clearRetainingCapacity();
-    fileSourceHtml(decl.file, &string_result, doctest_ast_node, .{}) catch |err| {
-        std.debug.panic("unable to render source: {s}", .{@errorName(err)});
+    file_source_html(decl.file, &string_result, doctest_ast_node, .{}) catch |err| {
+        fatal("unable to render source: {s}", .{@errorName(err)});
     };
     return String.init(string_result.items);
 }
@@ -575,16 +558,17 @@ export fn decl_parent(decl_index: Decl.Index) Decl.Index {
     return decl.parent;
 }
 
-export fn fn_error_set(decl_index: Decl.Index) Ast.Node.OptionalIndex {
+export fn fn_error_set(decl_index: Decl.Index) Ast.Node.Index {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
     var buf: [1]Ast.Node.Index = undefined;
     const full = ast.fullFnProto(&buf, decl.ast_node).?;
-    const return_type = full.ast.return_type.unwrap().?;
-    return switch (ast.nodeTag(return_type)) {
-        .error_set_decl => return_type.toOptional(),
-        .error_union => ast.nodeData(return_type).node_and_node[0].toOptional(),
-        else => .none,
+    const node_tags = ast.nodes.items(.tag);
+    const node_datas = ast.nodes.items(.data);
+    return switch (node_tags[full.ast.return_type]) {
+        .error_set_decl => full.ast.return_type,
+        .error_union => node_datas[full.ast.return_type].lhs,
+        else => 0,
     };
 }
 
@@ -597,19 +581,21 @@ export fn decl_file_path(decl_index: Decl.Index) String {
 export fn decl_category_name(decl_index: Decl.Index) String {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
+    const token_tags = ast.tokens.items(.tag);
     const name = switch (decl.categorize()) {
-        .namespace, .container => |node| {
-            if (ast.nodeTag(decl.ast_node) == .root)
+        .namespace => |node| {
+            const node_tags = ast.nodes.items(.tag);
+            if (node_tags[decl.ast_node] == .root)
                 return String.init("struct");
             string_result.clearRetainingCapacity();
             var buf: [2]Ast.Node.Index = undefined;
             const container_decl = ast.fullContainerDecl(&buf, node).?;
             if (container_decl.layout_token) |t| {
-                if (ast.tokenTag(t) == .keyword_extern) {
+                if (token_tags[t] == .keyword_extern) {
                     string_result.appendSlice(gpa, "extern ") catch @panic("OOM");
                 }
             }
-            const main_token_tag = ast.tokenTag(container_decl.ast.main_token);
+            const main_token_tag = token_tags[container_decl.ast.main_token];
             string_result.appendSlice(gpa, main_token_tag.lexeme().?) catch @panic("OOM");
             return String.init(string_result.items);
         },
@@ -642,9 +628,7 @@ export fn decl_name(decl_index: Decl.Index) String {
 export fn decl_docs_html(decl_index: Decl.Index, short: bool) String {
     const decl = decl_index.get();
     string_result.clearRetainingCapacity();
-    if (decl.extra_info().first_doc_comment.unwrap()) |first_doc_comment| {
-        render_docs(&string_result, decl_index, first_doc_comment, short) catch @panic("OOM");
-    }
+    render_docs(&string_result, decl_index, decl.extra_info().first_doc_comment, short) catch @panic("OOM");
     return String.init(string_result.items);
 }
 
@@ -653,9 +637,10 @@ fn collect_docs(
     ast: *const Ast,
     first_doc_comment: Ast.TokenIndex,
 ) Oom!void {
+    const token_tags = ast.tokens.items(.tag);
     list.clearRetainingCapacity();
     var it = first_doc_comment;
-    while (true) : (it += 1) switch (ast.tokenTag(it)) {
+    while (true) : (it += 1) switch (token_tags[it]) {
         .doc_comment, .container_doc_comment => {
             // It is tempting to trim this string but think carefully about how
             // that will affect the markdown parser.
@@ -674,11 +659,12 @@ fn render_docs(
 ) Oom!void {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
+    const token_tags = ast.tokens.items(.tag);
 
     var parser = try markdown.Parser.init(gpa);
     defer parser.deinit();
     var it = first_doc_comment;
-    while (true) : (it += 1) switch (ast.tokenTag(it)) {
+    while (true) : (it += 1) switch (token_tags[it]) {
         .doc_comment, .container_doc_comment => {
             const line = ast.tokenSlice(it)[3..];
             if (short and line.len == 0) break;
@@ -691,7 +677,7 @@ fn render_docs(
     defer parsed_doc.deinit(gpa);
 
     const g = struct {
-        var link_buffer: std.ArrayListUnmanaged(u8) = .empty;
+        var link_buffer: std.ArrayListUnmanaged(u8) = .{};
     };
 
     const Writer = std.ArrayListUnmanaged(u8).Writer;
@@ -712,7 +698,7 @@ fn render_docs(
                         const content = doc.string(data.text.content);
                         if (resolve_decl_path(r.context, content)) |resolved_decl_index| {
                             g.link_buffer.clearRetainingCapacity();
-                            try resolveDeclLink(resolved_decl_index, &g.link_buffer);
+                            try resolve_decl_link(resolved_decl_index, &g.link_buffer);
 
                             try writer.writeAll("<a href=\"#");
                             _ = missing_feature_url_escape;
@@ -753,13 +739,13 @@ export fn decl_type_html(decl_index: Decl.Index) String {
     t: {
         // If there is an explicit type, use it.
         if (ast.fullVarDecl(decl.ast_node)) |var_decl| {
-            if (var_decl.ast.type_node.unwrap()) |type_node| {
+            if (var_decl.ast.type_node != 0) {
                 string_result.appendSlice(gpa, "<code>") catch @panic("OOM");
-                fileSourceHtml(decl.file, &string_result, type_node, .{
+                file_source_html(decl.file, &string_result, var_decl.ast.type_node, .{
                     .skip_comments = true,
                     .collapse_whitespace = true,
                 }) catch |e| {
-                    std.debug.panic("unable to render html: {s}", .{@errorName(e)});
+                    fatal("unable to render html: {s}", .{@errorName(e)});
                 };
                 string_result.appendSlice(gpa, "</code>") catch @panic("OOM");
                 break :t;
@@ -771,7 +757,7 @@ export fn decl_type_html(decl_index: Decl.Index) String {
 
 const Oom = error{OutOfMemory};
 
-fn unpackInner(tar_bytes: []u8) !void {
+fn unpack_inner(tar_bytes: []u8) !void {
     var fbs = std.io.fixedBufferStream(tar_bytes);
     var file_name_buffer: [1024]u8 = undefined;
     var link_name_buffer: [1024]u8 = undefined;
@@ -810,6 +796,15 @@ fn unpackInner(tar_bytes: []u8) !void {
     }
 }
 
+fn fatal(comptime format: []const u8, args: anytype) noreturn {
+    var buf: [500]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, format, args) catch l: {
+        buf[buf.len - 3 ..][0..3].* = "...".*;
+        break :l &buf;
+    };
+    js.panic(line.ptr, line.len);
+}
+
 fn ascii_lower(bytes: []u8) void {
     for (bytes) |*b| b.* = std.ascii.toLower(b.*);
 }
@@ -827,7 +822,7 @@ export fn find_module_root(pkg: Walk.ModuleIndex) Decl.Index {
 }
 
 /// Set by `set_input_string`.
-var input_string: std.ArrayListUnmanaged(u8) = .empty;
+var input_string: std.ArrayListUnmanaged(u8) = .{};
 
 export fn set_input_string(len: usize) [*]u8 {
     input_string.resize(gpa, len) catch @panic("OOM");
@@ -849,7 +844,7 @@ export fn find_decl() Decl.Index {
     if (result != .none) return result;
 
     const g = struct {
-        var match_fqn: std.ArrayListUnmanaged(u8) = .empty;
+        var match_fqn: std.ArrayListUnmanaged(u8) = .{};
     };
     for (Walk.decls.items, 0..) |*decl, decl_index| {
         g.match_fqn.clearRetainingCapacity();
@@ -893,19 +888,12 @@ export fn categorize_decl(decl_index: Decl.Index, resolve_alias_count: usize) Wa
 }
 
 export fn type_fn_members(parent: Decl.Index, include_private: bool) Slice(Decl.Index) {
-    const decl = parent.get();
-
-    // If the type function returns another type function, get the members of that function
-    if (decl.get_type_fn_return_type_fn()) |function_decl| {
-        return namespace_members(function_decl, include_private);
-    }
-
     return namespace_members(parent, include_private);
 }
 
 export fn namespace_members(parent: Decl.Index, include_private: bool) Slice(Decl.Index) {
     const g = struct {
-        var members: std.ArrayListUnmanaged(Decl.Index) = .empty;
+        var members: std.ArrayListUnmanaged(Decl.Index) = .{};
     };
 
     g.members.clearRetainingCapacity();
@@ -919,6 +907,382 @@ export fn namespace_members(parent: Decl.Index, include_private: bool) Slice(Dec
     }
 
     return Slice(Decl.Index).init(g.members.items);
+}
+
+const RenderSourceOptions = struct {
+    skip_doc_comments: bool = false,
+    skip_comments: bool = false,
+    collapse_whitespace: bool = false,
+    fn_link: Decl.Index = .none,
+};
+
+fn file_source_html(
+    file_index: Walk.File.Index,
+    out: *std.ArrayListUnmanaged(u8),
+    root_node: Ast.Node.Index,
+    options: RenderSourceOptions,
+) !void {
+    const ast = file_index.get_ast();
+    const file = file_index.get();
+
+    const g = struct {
+        var field_access_buffer: std.ArrayListUnmanaged(u8) = .{};
+    };
+
+    const token_tags = ast.tokens.items(.tag);
+    const token_starts = ast.tokens.items(.start);
+    const main_tokens = ast.nodes.items(.main_token);
+
+    const start_token = ast.firstToken(root_node);
+    const end_token = ast.lastToken(root_node) + 1;
+
+    var cursor: usize = token_starts[start_token];
+
+    var indent: usize = 0;
+    if (std.mem.lastIndexOf(u8, ast.source[0..cursor], "\n")) |newline_index| {
+        for (ast.source[newline_index + 1 .. cursor]) |c| {
+            if (c == ' ') {
+                indent += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    for (
+        token_tags[start_token..end_token],
+        token_starts[start_token..end_token],
+        start_token..,
+    ) |tag, start, token_index| {
+        const between = ast.source[cursor..start];
+        if (std.mem.trim(u8, between, " \t\r\n").len > 0) {
+            if (!options.skip_comments) {
+                try out.appendSlice(gpa, "<span class=\"tok-comment\">");
+                try appendUnindented(out, between, indent);
+                try out.appendSlice(gpa, "</span>");
+            }
+        } else if (between.len > 0) {
+            if (options.collapse_whitespace) {
+                if (out.items.len > 0 and out.items[out.items.len - 1] != ' ')
+                    try out.append(gpa, ' ');
+            } else {
+                try appendUnindented(out, between, indent);
+            }
+        }
+        if (tag == .eof) break;
+        const slice = ast.tokenSlice(token_index);
+        cursor = start + slice.len;
+        switch (tag) {
+            .eof => unreachable,
+
+            .keyword_addrspace,
+            .keyword_align,
+            .keyword_and,
+            .keyword_asm,
+            .keyword_async,
+            .keyword_await,
+            .keyword_break,
+            .keyword_catch,
+            .keyword_comptime,
+            .keyword_const,
+            .keyword_continue,
+            .keyword_defer,
+            .keyword_else,
+            .keyword_enum,
+            .keyword_errdefer,
+            .keyword_error,
+            .keyword_export,
+            .keyword_extern,
+            .keyword_for,
+            .keyword_if,
+            .keyword_inline,
+            .keyword_noalias,
+            .keyword_noinline,
+            .keyword_nosuspend,
+            .keyword_opaque,
+            .keyword_or,
+            .keyword_orelse,
+            .keyword_packed,
+            .keyword_anyframe,
+            .keyword_pub,
+            .keyword_resume,
+            .keyword_return,
+            .keyword_linksection,
+            .keyword_callconv,
+            .keyword_struct,
+            .keyword_suspend,
+            .keyword_switch,
+            .keyword_test,
+            .keyword_threadlocal,
+            .keyword_try,
+            .keyword_union,
+            .keyword_unreachable,
+            .keyword_usingnamespace,
+            .keyword_var,
+            .keyword_volatile,
+            .keyword_allowzero,
+            .keyword_while,
+            .keyword_anytype,
+            .keyword_fn,
+            => {
+                try out.appendSlice(gpa, "<span class=\"tok-kw\">");
+                try appendEscaped(out, slice);
+                try out.appendSlice(gpa, "</span>");
+            },
+
+            .string_literal,
+            .char_literal,
+            .multiline_string_literal_line,
+            => {
+                try out.appendSlice(gpa, "<span class=\"tok-str\">");
+                try appendEscaped(out, slice);
+                try out.appendSlice(gpa, "</span>");
+            },
+
+            .builtin => {
+                try out.appendSlice(gpa, "<span class=\"tok-builtin\">");
+                try appendEscaped(out, slice);
+                try out.appendSlice(gpa, "</span>");
+            },
+
+            .doc_comment,
+            .container_doc_comment,
+            => {
+                if (!options.skip_doc_comments) {
+                    try out.appendSlice(gpa, "<span class=\"tok-comment\">");
+                    try appendEscaped(out, slice);
+                    try out.appendSlice(gpa, "</span>");
+                }
+            },
+
+            .identifier => i: {
+                if (options.fn_link != .none) {
+                    const fn_link = options.fn_link.get();
+                    const fn_token = main_tokens[fn_link.ast_node];
+                    if (token_index == fn_token + 1) {
+                        try out.appendSlice(gpa, "<a class=\"tok-fn\" href=\"#");
+                        _ = missing_feature_url_escape;
+                        try fn_link.fqn(out);
+                        try out.appendSlice(gpa, "\">");
+                        try appendEscaped(out, slice);
+                        try out.appendSlice(gpa, "</a>");
+                        break :i;
+                    }
+                }
+
+                if (token_index > 0 and token_tags[token_index - 1] == .keyword_fn) {
+                    try out.appendSlice(gpa, "<span class=\"tok-fn\">");
+                    try appendEscaped(out, slice);
+                    try out.appendSlice(gpa, "</span>");
+                    break :i;
+                }
+
+                if (Walk.isPrimitiveNonType(slice)) {
+                    try out.appendSlice(gpa, "<span class=\"tok-null\">");
+                    try appendEscaped(out, slice);
+                    try out.appendSlice(gpa, "</span>");
+                    break :i;
+                }
+
+                if (std.zig.primitives.isPrimitive(slice)) {
+                    try out.appendSlice(gpa, "<span class=\"tok-type\">");
+                    try appendEscaped(out, slice);
+                    try out.appendSlice(gpa, "</span>");
+                    break :i;
+                }
+
+                if (file.token_parents.get(token_index)) |field_access_node| {
+                    g.field_access_buffer.clearRetainingCapacity();
+                    try walk_field_accesses(file_index, &g.field_access_buffer, field_access_node);
+                    if (g.field_access_buffer.items.len > 0) {
+                        try out.appendSlice(gpa, "<a href=\"#");
+                        _ = missing_feature_url_escape;
+                        try out.appendSlice(gpa, g.field_access_buffer.items);
+                        try out.appendSlice(gpa, "\">");
+                        try appendEscaped(out, slice);
+                        try out.appendSlice(gpa, "</a>");
+                    } else {
+                        try appendEscaped(out, slice);
+                    }
+                    break :i;
+                }
+
+                {
+                    g.field_access_buffer.clearRetainingCapacity();
+                    try resolve_ident_link(file_index, &g.field_access_buffer, token_index);
+                    if (g.field_access_buffer.items.len > 0) {
+                        try out.appendSlice(gpa, "<a href=\"#");
+                        _ = missing_feature_url_escape;
+                        try out.appendSlice(gpa, g.field_access_buffer.items);
+                        try out.appendSlice(gpa, "\">");
+                        try appendEscaped(out, slice);
+                        try out.appendSlice(gpa, "</a>");
+                        break :i;
+                    }
+                }
+
+                try appendEscaped(out, slice);
+            },
+
+            .number_literal => {
+                try out.appendSlice(gpa, "<span class=\"tok-number\">");
+                try appendEscaped(out, slice);
+                try out.appendSlice(gpa, "</span>");
+            },
+
+            .bang,
+            .pipe,
+            .pipe_pipe,
+            .pipe_equal,
+            .equal,
+            .equal_equal,
+            .equal_angle_bracket_right,
+            .bang_equal,
+            .l_paren,
+            .r_paren,
+            .semicolon,
+            .percent,
+            .percent_equal,
+            .l_brace,
+            .r_brace,
+            .l_bracket,
+            .r_bracket,
+            .period,
+            .period_asterisk,
+            .ellipsis2,
+            .ellipsis3,
+            .caret,
+            .caret_equal,
+            .plus,
+            .plus_plus,
+            .plus_equal,
+            .plus_percent,
+            .plus_percent_equal,
+            .plus_pipe,
+            .plus_pipe_equal,
+            .minus,
+            .minus_equal,
+            .minus_percent,
+            .minus_percent_equal,
+            .minus_pipe,
+            .minus_pipe_equal,
+            .asterisk,
+            .asterisk_equal,
+            .asterisk_asterisk,
+            .asterisk_percent,
+            .asterisk_percent_equal,
+            .asterisk_pipe,
+            .asterisk_pipe_equal,
+            .arrow,
+            .colon,
+            .slash,
+            .slash_equal,
+            .comma,
+            .ampersand,
+            .ampersand_equal,
+            .question_mark,
+            .angle_bracket_left,
+            .angle_bracket_left_equal,
+            .angle_bracket_angle_bracket_left,
+            .angle_bracket_angle_bracket_left_equal,
+            .angle_bracket_angle_bracket_left_pipe,
+            .angle_bracket_angle_bracket_left_pipe_equal,
+            .angle_bracket_right,
+            .angle_bracket_right_equal,
+            .angle_bracket_angle_bracket_right,
+            .angle_bracket_angle_bracket_right_equal,
+            .tilde,
+            => try appendEscaped(out, slice),
+
+            .invalid, .invalid_periodasterisks => return error.InvalidToken,
+        }
+    }
+}
+
+fn unindent(s: []const u8, indent: usize) []const u8 {
+    var indent_idx: usize = 0;
+    for (s) |c| {
+        if (c == ' ' and indent_idx < indent) {
+            indent_idx += 1;
+        } else {
+            break;
+        }
+    }
+    return s[indent_idx..];
+}
+
+fn appendUnindented(out: *std.ArrayListUnmanaged(u8), s: []const u8, indent: usize) !void {
+    var it = std.mem.split(u8, s, "\n");
+    var is_first_line = true;
+    while (it.next()) |line| {
+        if (is_first_line) {
+            try appendEscaped(out, line);
+            is_first_line = false;
+        } else {
+            try out.appendSlice(gpa, "\n");
+            try appendEscaped(out, unindent(line, indent));
+        }
+    }
+}
+
+fn resolve_ident_link(
+    file_index: Walk.File.Index,
+    out: *std.ArrayListUnmanaged(u8),
+    ident_token: Ast.TokenIndex,
+) Oom!void {
+    const decl_index = file_index.get().lookup_token(ident_token);
+    if (decl_index == .none) return;
+    try resolve_decl_link(decl_index, out);
+}
+
+fn resolve_decl_link(decl_index: Decl.Index, out: *std.ArrayListUnmanaged(u8)) Oom!void {
+    const decl = decl_index.get();
+    switch (decl.categorize()) {
+        .alias => |alias_decl| try alias_decl.get().fqn(out),
+        else => try decl.fqn(out),
+    }
+}
+
+fn walk_field_accesses(
+    file_index: Walk.File.Index,
+    out: *std.ArrayListUnmanaged(u8),
+    node: Ast.Node.Index,
+) Oom!void {
+    const ast = file_index.get_ast();
+    const node_tags = ast.nodes.items(.tag);
+    assert(node_tags[node] == .field_access);
+    const node_datas = ast.nodes.items(.data);
+    const main_tokens = ast.nodes.items(.main_token);
+    const object_node = node_datas[node].lhs;
+    const dot_token = main_tokens[node];
+    const field_ident = dot_token + 1;
+    switch (node_tags[object_node]) {
+        .identifier => {
+            const lhs_ident = main_tokens[object_node];
+            try resolve_ident_link(file_index, out, lhs_ident);
+        },
+        .field_access => {
+            try walk_field_accesses(file_index, out, object_node);
+        },
+        else => {},
+    }
+    if (out.items.len > 0) {
+        try out.append(gpa, '.');
+        try out.appendSlice(gpa, ast.tokenSlice(field_ident));
+    }
+}
+
+fn appendEscaped(out: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    for (s) |c| {
+        try out.ensureUnusedCapacity(gpa, 6);
+        switch (c) {
+            '&' => out.appendSliceAssumeCapacity("&amp;"),
+            '<' => out.appendSliceAssumeCapacity("&lt;"),
+            '>' => out.appendSliceAssumeCapacity("&gt;"),
+            '"' => out.appendSliceAssumeCapacity("&quot;"),
+            else => out.appendAssumeCapacity(c),
+        }
+    }
 }
 
 fn count_scalar(haystack: []const u8, needle: u8) usize {

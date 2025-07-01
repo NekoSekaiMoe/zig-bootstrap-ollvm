@@ -8,11 +8,6 @@ if (HAS_WERROR_GLOBAL_CTORS AND NOT LLVM_HAS_NOGLOBAL_CTOR_MUTEX)
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=global-constructors")
 endif()
 
-# Solaris code uses kstat, so specify dependency explicitly for shared builds.
-if (${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
-  set(system_libs kstat)
-endif()
-
 add_llvm_component_library(LLVMTargetParser
   AArch64TargetParser.cpp
   ARMTargetParserCommon.cpp
@@ -20,8 +15,6 @@ add_llvm_component_library(LLVMTargetParser
   CSKYTargetParser.cpp
   Host.cpp
   LoongArchTargetParser.cpp
-  PPCTargetParser.cpp
-  RISCVISAInfo.cpp
   RISCVTargetParser.cpp
   SubtargetFeature.cpp
   TargetParser.cpp
@@ -32,14 +25,9 @@ add_llvm_component_library(LLVMTargetParser
   Unix
   Windows
 
-  LINK_LIBS
-  ${system_libs}
-
   LINK_COMPONENTS
   Support
 
   DEPENDS
-  ARMTargetParserTableGen
-  AArch64TargetParserTableGen
   RISCVTargetParserTableGen
   )

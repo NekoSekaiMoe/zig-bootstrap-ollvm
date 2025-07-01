@@ -25,9 +25,8 @@ class Defined;
 // in the final binary.
 class ConcatOutputSection : public OutputSection {
 public:
-  explicit ConcatOutputSection(StringRef name,
-                               OutputSection::Kind kind = ConcatKind)
-      : OutputSection(kind, name) {}
+  explicit ConcatOutputSection(StringRef name)
+      : OutputSection(ConcatKind, name) {}
 
   const ConcatInputSection *firstSection() const { return inputs.front(); }
   const ConcatInputSection *lastSection() const { return inputs.back(); }
@@ -47,7 +46,7 @@ public:
   void writeTo(uint8_t *buf) const override;
 
   static bool classof(const OutputSection *sec) {
-    return sec->kind() == ConcatKind || sec->kind() == TextKind;
+    return sec->kind() == ConcatKind;
   }
 
   static ConcatOutputSection *getOrCreateForInput(const InputSection *);
@@ -67,17 +66,11 @@ private:
 // support thunk insertion.
 class TextOutputSection : public ConcatOutputSection {
 public:
-  explicit TextOutputSection(StringRef name)
-      : ConcatOutputSection(name, TextKind) {}
+  explicit TextOutputSection(StringRef name) : ConcatOutputSection(name) {}
   void finalizeContents() override {}
   void finalize() override;
   bool needsThunks() const;
-  ArrayRef<ConcatInputSection *> getThunks() const { return thunks; }
   void writeTo(uint8_t *buf) const override;
-
-  static bool classof(const OutputSection *sec) {
-    return sec->kind() == TextKind;
-  }
 
 private:
   uint64_t estimateStubsInRangeVA(size_t callIdx) const;

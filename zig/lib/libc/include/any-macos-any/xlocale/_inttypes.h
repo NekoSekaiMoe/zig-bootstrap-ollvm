@@ -25,22 +25,19 @@
 #define _XLOCALE__INTTYPES_H_
 
 #include <sys/cdefs.h>
-#include <_bounds.h>
 #include <stdint.h>
 #include <stddef.h> /* wchar_t */
-#include <__xlocale.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
+#include <_xlocale.h>
 
 __BEGIN_DECLS
-intmax_t  strtoimax_l(const char * __restrict nptr,
-		char *_LIBC_CSTR * __restrict endptr, int base, locale_t);
-uintmax_t strtoumax_l(const char * __restrict nptr,
-		char *_LIBC_CSTR * __restrict endptr, int base, locale_t);
+intmax_t  strtoimax_l(const char * __restrict nptr, char ** __restrict endptr,
+		int base, locale_t);
+uintmax_t strtoumax_l(const char * __restrict nptr, char ** __restrict endptr,
+		int base, locale_t);
 intmax_t  wcstoimax_l(const wchar_t * __restrict nptr,
-		wchar_t *_LIBC_CSTR * __restrict endptr, int base, locale_t);
+		wchar_t ** __restrict endptr, int base, locale_t);
 uintmax_t wcstoumax_l(const wchar_t * __restrict nptr,
-		wchar_t *_LIBC_CSTR * __restrict endptr, int base, locale_t);
+		wchar_t ** __restrict endptr, int base, locale_t);
 
 /* Poison the following routines if -fshort-wchar is set */
 #if !defined(__cplusplus) && defined(__WCHAR_MAX__) && __WCHAR_MAX__ <= 0xffffU

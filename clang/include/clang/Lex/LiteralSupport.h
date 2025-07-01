@@ -36,15 +36,6 @@ class LangOptions;
 /// Copy characters from Input to Buf, expanding any UCNs.
 void expandUCNs(SmallVectorImpl<char> &Buf, StringRef Input);
 
-/// Return true if the token corresponds to a function local predefined macro,
-/// which expands to a string literal, that can be concatenated with other
-/// string literals (only in Microsoft mode).
-bool isFunctionLocalStringLiteralMacro(tok::TokenKind K, const LangOptions &LO);
-
-/// Return true if the token is a string literal, or a function local
-/// predefined macro, which expands to a string literal.
-bool tokenIsLikeStringLiteral(const Token &Tok, const LangOptions &LO);
-
 /// NumericLiteralParser - This performs strict semantic analysis of the content
 /// of a ppnumber, classifying it as either integer, floating, or erroneous,
 /// determines the radix of the value and can convert it to a useful value.
@@ -80,8 +71,7 @@ public:
   bool isFloat128 : 1;      // 1.0q
   bool isFract : 1;         // 1.0hr/r/lr/uhr/ur/ulr
   bool isAccum : 1;         // 1.0hk/k/lk/uhk/uk/ulk
-  bool isBitInt : 1;        // 1wb, 1uwb (C23) or 1__wb, 1__uwb (Clang extension in C++
-                            // mode)
+  bool isBitInt : 1;        // 1wb, 1uwb (C2x)
   uint8_t MicrosoftInteger; // Microsoft suffix extension i8, i16, i32, or i64.
 
 
@@ -118,10 +108,12 @@ public:
   /// bits of the result and return true.  Otherwise, return false.
   bool GetIntegerValue(llvm::APInt &Val);
 
-  /// Convert this numeric literal to a floating value, using the specified
-  /// APFloat fltSemantics (specifying float, double, etc) and rounding mode.
-  llvm::APFloat::opStatus GetFloatValue(llvm::APFloat &Result,
-                                        llvm::RoundingMode RM);
+  /// GetFloatValue - Convert this numeric literal to a floating value, using
+  /// the specified APFloat fltSemantics (specifying float, double, etc).
+  /// The optional bool isExact (passed-by-reference) has its value
+  /// set to true if the returned APFloat can represent the number in the
+  /// literal exactly, and false otherwise.
+  llvm::APFloat::opStatus GetFloatValue(llvm::APFloat &Result);
 
   /// GetFixedPointValue - Convert this numeric literal value into a
   /// scaled integer that represents this value. Returns true if an overflow

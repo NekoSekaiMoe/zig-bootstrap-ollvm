@@ -1070,7 +1070,8 @@ Error DumpOutputStyle::dumpStringTableFromPdb() {
     if (IS->name_ids().empty())
       P.formatLine("Empty");
     else {
-      auto MaxID = llvm::max_element(IS->name_ids());
+      auto MaxID =
+          std::max_element(IS->name_ids().begin(), IS->name_ids().end());
       uint32_t Digits = NumDigits(*MaxID);
 
       P.formatLine("{0} | {1}", fmt_align("ID", AlignStyle::Right, Digits),
@@ -1285,7 +1286,7 @@ Error DumpOutputStyle::dumpTypesFromObjectFile() {
       return ContentsOrErr.takeError();
 
     uint32_t Magic;
-    BinaryStreamReader Reader(*ContentsOrErr, llvm::endianness::little);
+    BinaryStreamReader Reader(*ContentsOrErr, llvm::support::little);
     if (auto EC = Reader.readInteger(Magic))
       return EC;
     if (Magic != COFF::DEBUG_SECTION_MAGIC)
@@ -1494,13 +1495,13 @@ Error DumpOutputStyle::dumpModuleSymsForPdb() {
           if (auto EC = Visitor.visitSymbolStreamFiltered(ModS.getSymbolArray(),
                                                           Filter)) {
             P.formatLine("Error while processing symbol records.  {0}",
-                         toStringWithoutConsuming(EC));
+                         toString(std::move(EC)));
             return EC;
           }
         } else if (auto EC = Visitor.visitSymbolStream(ModS.getSymbolArray(),
                                                        SS.Offset)) {
           P.formatLine("Error while processing symbol records.  {0}",
-                       toStringWithoutConsuming(EC));
+                       toString(std::move(EC)));
           return EC;
         }
         return Error::success();
@@ -1835,9 +1836,9 @@ Error DumpOutputStyle::dumpSectionContribs() {
   class Visitor : public ISectionContribVisitor {
   public:
     Visitor(LinePrinter &P, ArrayRef<std::string> Names) : P(P), Names(Names) {
-      auto Max = llvm::max_element(Names, [](StringRef S1, StringRef S2) {
-        return S1.size() < S2.size();
-      });
+      auto Max = std::max_element(
+          Names.begin(), Names.end(),
+          [](StringRef S1, StringRef S2) { return S1.size() < S2.size(); });
       MaxNameLen = (Max == Names.end() ? 0 : Max->size());
     }
     void visit(const SectionContrib &SC) override {

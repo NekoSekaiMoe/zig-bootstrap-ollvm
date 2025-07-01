@@ -15,11 +15,6 @@ else:
 # RegEx: this is where the magic happens.
 
 ##### Assembly parser
-#
-# The set of per-arch regular expressions define several groups.
-# The required groups are "func" (function name) and "body" (body of the function).
-# Although some backends require some additional groups like: "directives"
-# and "func_name_separator"
 
 ASM_FUNCTION_X86_RE = re.compile(
     r'^_?(?P<func>[^:]+):[ \t]*#+[ \t]*(@"?(?P=func)"?| -- Begin function (?P=func))\n(?:\s*\.?Lfunc_begin[^:\n]*:\n)?'
@@ -51,9 +46,7 @@ ASM_FUNCTION_AARCH64_RE = re.compile(
 )
 
 ASM_FUNCTION_AMDGPU_RE = re.compile(
-    r"\.type\s+_?(?P<func>[^,\n]+),@function\n"
-    r"(^\s*\.amdgpu_hsa_kernel (?P=func)\n)?"
-    r'^_?(?P=func):(?:[ \t]*;+[ \t]*@"?(?P=func)"?)?\n'
+    r'^_?(?P<func>[^:]+):[ \t]*;+[ \t]*@"?(?P=func)"?\n[^:]*?'
     r"(?P<body>.*?)\n"  # (body of the function)
     # This list is incomplete
     r"^\s*(\.Lfunc_end[0-9]+:\n|\.section)",
@@ -204,14 +197,6 @@ ASM_FUNCTION_WASM_RE = re.compile(
     flags=(re.M | re.S),
 )
 
-# We parse the function name from OpName, and grab the variable name 'var'
-# for this function. Then we match that when the variable is assigned with
-# OpFunction and match its body.
-ASM_FUNCTION_SPIRV_RE = re.compile(
-    r'OpName (?P<var>%[0-9]+) "(?P<func>[^"]+)(?P<func_name_separator>)".*(?P<body>(?P=var) = OpFunction.+?OpFunctionEnd)',
-    flags=(re.M | re.S),
-)
-
 ASM_FUNCTION_VE_RE = re.compile(
     r"^_?(?P<func>[^:]+):[ \t]*#+[ \t]*@(?P=func)\n"
     r"(?:\s*\.?L(?P=func)\$local:\n)?"  # optional .L<func>$local: due to -fno-semantic-interposition
@@ -219,11 +204,6 @@ ASM_FUNCTION_VE_RE = re.compile(
     r"(?:\s*\.?Lfunc_begin[^:\n]*:\n)?[^:]*?"
     r"(?P<body>^##?[ \t]+[^:]+:.*?)\s*"
     r".Lfunc_end[0-9]+:\n",
-    flags=(re.M | re.S),
-)
-
-ASM_FUNCTION_XTENSA_RE = re.compile(
-    r"^(?P<func>[^:]+): +# @(?P=func)\n(?P<body>.*?)\n\.Lfunc_end\d+:\n",
     flags=(re.M | re.S),
 )
 
@@ -453,17 +433,6 @@ def scrub_asm_sparc(asm, args):
     return asm
 
 
-def scrub_asm_spirv(asm, args):
-    # Scrub runs of whitespace out of the assembly, but leave the leading
-    # whitespace in place.
-    asm = common.SCRUB_WHITESPACE_RE.sub(r" ", asm)
-    # Expand the tabs used for indentation.
-    asm = string.expandtabs(asm, 2)
-    # Strip trailing whitespace.
-    asm = common.SCRUB_TRAILING_WHITESPACE_RE.sub(r"", asm)
-    return asm
-
-
 def scrub_asm_systemz(asm, args):
     # Scrub runs of whitespace out of the assembly, but leave the leading
     # whitespace in place.
@@ -487,17 +456,6 @@ def scrub_asm_wasm(asm, args):
 
 
 def scrub_asm_ve(asm, args):
-    # Scrub runs of whitespace out of the assembly, but leave the leading
-    # whitespace in place.
-    asm = common.SCRUB_WHITESPACE_RE.sub(r" ", asm)
-    # Expand the tabs used for indentation.
-    asm = string.expandtabs(asm, 2)
-    # Strip trailing whitespace.
-    asm = common.SCRUB_TRAILING_WHITESPACE_RE.sub(r"", asm)
-    return asm
-
-
-def scrub_asm_xtensa(asm, args):
     # Scrub runs of whitespace out of the assembly, but leave the leading
     # whitespace in place.
     asm = common.SCRUB_WHITESPACE_RE.sub(r" ", asm)
@@ -551,7 +509,11 @@ def get_run_handler(triple):
         "i686": (scrub_asm_x86, ASM_FUNCTION_X86_RE),
         "x86": (scrub_asm_x86, ASM_FUNCTION_X86_RE),
         "i386": (scrub_asm_x86, ASM_FUNCTION_X86_RE),
-        "arm64_32": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
+        "arm64_32-apple-ios": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
+        "arm64_32-apple-watchos2.0.0": (
+            scrub_asm_arm_eabi,
+            ASM_FUNCTION_AARCH64_DARWIN_RE,
+        ),
         "aarch64": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_RE),
         "aarch64-apple-darwin": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
         "aarch64-apple-ios": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
@@ -566,7 +528,6 @@ def get_run_handler(triple):
         "arm64e": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
         "arm64ec": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_RE),
         "arm64-apple-ios": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
-        "arm64-apple-macosx": (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
         "armv7-apple-ios": (scrub_asm_arm_eabi, ASM_FUNCTION_ARM_IOS_RE),
         "armv7-apple-darwin": (scrub_asm_arm_eabi, ASM_FUNCTION_ARM_DARWIN_RE),
         "thumb": (scrub_asm_arm_eabi, ASM_FUNCTION_ARM_RE),
@@ -586,13 +547,10 @@ def get_run_handler(triple):
         "riscv64": (scrub_asm_riscv, ASM_FUNCTION_RISCV_RE),
         "lanai": (scrub_asm_lanai, ASM_FUNCTION_LANAI_RE),
         "sparc": (scrub_asm_sparc, ASM_FUNCTION_SPARC_RE),
-        "spirv32": (scrub_asm_spirv, ASM_FUNCTION_SPIRV_RE),
-        "spirv64": (scrub_asm_spirv, ASM_FUNCTION_SPIRV_RE),
         "s390x": (scrub_asm_systemz, ASM_FUNCTION_SYSTEMZ_RE),
         "wasm32": (scrub_asm_wasm, ASM_FUNCTION_WASM_RE),
         "wasm64": (scrub_asm_wasm, ASM_FUNCTION_WASM_RE),
         "ve": (scrub_asm_ve, ASM_FUNCTION_VE_RE),
-        "xtensa": (scrub_asm_xtensa, ASM_FUNCTION_XTENSA_RE),
         "csky": (scrub_asm_csky, ASM_FUNCTION_CSKY_RE),
         "nvptx": (scrub_asm_nvptx, ASM_FUNCTION_NVPTX_RE),
         "loongarch32": (scrub_asm_loongarch, ASM_FUNCTION_LOONGARCH_RE),
@@ -620,7 +578,6 @@ def add_checks(
     prefix_list,
     func_dict,
     func_name,
-    ginfo: common.GeneralizerInfo,
     global_vars_seen_dict,
     is_filtered,
 ):
@@ -633,7 +590,9 @@ def add_checks(
         func_dict,
         func_name,
         check_label_format,
-        ginfo,
+        True,
+        False,
+        1,
         global_vars_seen_dict,
         is_filtered=is_filtered,
     )

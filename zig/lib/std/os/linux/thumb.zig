@@ -141,9 +141,7 @@ pub fn syscall6(
     );
 }
 
-pub const clone = @import("arm.zig").clone;
-
-pub fn restore() callconv(.naked) noreturn {
+pub fn restore() callconv(.Naked) noreturn {
     asm volatile (
         \\ mov r7, %[number]
         \\ svc #0
@@ -152,7 +150,7 @@ pub fn restore() callconv(.naked) noreturn {
     );
 }
 
-pub fn restore_rt() callconv(.naked) noreturn {
+pub fn restore_rt() callconv(.Naked) noreturn {
     asm volatile (
         \\ mov r7, %[number]
         \\ svc #0

@@ -15,7 +15,7 @@
 
 namespace clang::dataflow {
 // Forward declarations so we can use Logger anywhere in the framework.
-class AdornedCFG;
+class ControlFlowContext;
 class TypeErasedDataflowAnalysis;
 struct TypeErasedDataflowAnalysisState;
 
@@ -40,8 +40,8 @@ public:
 
   /// Called by the framework as we start analyzing a new function or statement.
   /// Forms a pair with endAnalysis().
-  virtual void beginAnalysis(const AdornedCFG &, TypeErasedDataflowAnalysis &) {
-  }
+  virtual void beginAnalysis(const ControlFlowContext &,
+                             TypeErasedDataflowAnalysis &) {}
   virtual void endAnalysis() {}
 
   // At any time during the analysis, we're computing the state for some target
@@ -50,9 +50,7 @@ public:
   /// Called when we start (re-)processing a block in the CFG.
   /// The target program point is the entry to the specified block.
   /// Calls to log() describe transferBranch(), join() etc.
-  /// `PostVisit` specifies whether we're processing the block for the
-  /// post-visit callback.
-  virtual void enterBlock(const CFGBlock &, bool PostVisit) {}
+  virtual void enterBlock(const CFGBlock &) {}
   /// Called when we start processing an element in the current CFG block.
   /// The target program point is after the specified element.
   /// Calls to log() describe the transfer() function.

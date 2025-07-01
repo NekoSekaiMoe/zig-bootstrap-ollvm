@@ -29,8 +29,7 @@ public:
   void emitPrologue(MachineFunction &, MachineBasicBlock &) const override {}
   void emitEpilogue(MachineFunction &, MachineBasicBlock &) const override {}
 
-protected:
-  bool hasFPImpl(const MachineFunction &) const override { return false; }
+  bool hasFP(const MachineFunction &) const override { return false; }
 };
 } // namespace llvm
 #endif // LLVM_DIRECTX_DIRECTXFRAMELOWERING_H

@@ -37,6 +37,7 @@
 
 #include "llvm-c/lto.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/GlobalValue.h"
@@ -93,19 +94,17 @@ struct LTOCodeGenerator {
   }
 
   /// Set the file type to be emitted (assembly or object code).
-  /// The default is CodeGenFileType::ObjectFile.
+  /// The default is CGFT_ObjectFile.
   void setFileType(CodeGenFileType FT) { Config.CGFileType = FT; }
 
   void setCpu(StringRef MCpu) { Config.CPU = std::string(MCpu); }
-  void setAttrs(std::vector<std::string> MAttrs) {
-    Config.MAttrs = std::move(MAttrs);
-  }
+  void setAttrs(std::vector<std::string> MAttrs) { Config.MAttrs = MAttrs; }
   void setOptLevel(unsigned OptLevel);
 
   void setShouldInternalize(bool Value) { ShouldInternalize = Value; }
   void setShouldEmbedUselists(bool Value) { ShouldEmbedUselists = Value; }
   void setSaveIRBeforeOptPath(std::string Value) {
-    SaveIRBeforeOptPath = std::move(Value);
+    SaveIRBeforeOptPath = Value;
   }
 
   /// Restore linkage of globals

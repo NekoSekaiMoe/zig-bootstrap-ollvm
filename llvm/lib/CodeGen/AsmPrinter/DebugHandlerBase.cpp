@@ -18,7 +18,6 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DebugInfo.h"
-#include "llvm/IR/Module.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -100,8 +99,6 @@ DbgVariableLocation::extractFromMachineInstruction(
 
 DebugHandlerBase::DebugHandlerBase(AsmPrinter *A) : Asm(A), MMI(Asm->MMI) {}
 
-DebugHandlerBase::~DebugHandlerBase() = default;
-
 void DebugHandlerBase::beginModule(Module *M) {
   if (M->debug_compile_units().empty())
     Asm = nullptr;
@@ -157,8 +154,7 @@ uint64_t DebugHandlerBase::getBaseTypeSize(const DIType *Ty) {
   if (Tag != dwarf::DW_TAG_member && Tag != dwarf::DW_TAG_typedef &&
       Tag != dwarf::DW_TAG_const_type && Tag != dwarf::DW_TAG_volatile_type &&
       Tag != dwarf::DW_TAG_restrict_type && Tag != dwarf::DW_TAG_atomic_type &&
-      Tag != dwarf::DW_TAG_immutable_type &&
-      Tag != dwarf::DW_TAG_template_alias)
+      Tag != dwarf::DW_TAG_immutable_type)
     return DDTy->getSizeInBits();
 
   DIType *BaseType = DDTy->getBaseType();
@@ -214,8 +210,7 @@ bool DebugHandlerBase::isUnsignedDIType(const DIType *Ty) {
     assert(T == dwarf::DW_TAG_typedef || T == dwarf::DW_TAG_const_type ||
            T == dwarf::DW_TAG_volatile_type ||
            T == dwarf::DW_TAG_restrict_type || T == dwarf::DW_TAG_atomic_type ||
-           T == dwarf::DW_TAG_immutable_type ||
-           T == dwarf::DW_TAG_template_alias);
+           T == dwarf::DW_TAG_immutable_type);
     assert(DTy->getBaseType() && "Expected valid base type");
     return isUnsignedDIType(DTy->getBaseType());
   }
@@ -229,19 +224,19 @@ bool DebugHandlerBase::isUnsignedDIType(const DIType *Ty) {
           Encoding == dwarf::DW_ATE_float || Encoding == dwarf::DW_ATE_UTF ||
           Encoding == dwarf::DW_ATE_boolean ||
           Encoding == dwarf::DW_ATE_complex_float ||
-          Encoding == dwarf::DW_ATE_signed_fixed ||
-          Encoding == dwarf::DW_ATE_unsigned_fixed ||
           (Ty->getTag() == dwarf::DW_TAG_unspecified_type &&
            Ty->getName() == "decltype(nullptr)")) &&
          "Unsupported encoding");
   return Encoding == dwarf::DW_ATE_unsigned ||
          Encoding == dwarf::DW_ATE_unsigned_char ||
          Encoding == dwarf::DW_ATE_UTF || Encoding == dwarf::DW_ATE_boolean ||
-         Encoding == llvm::dwarf::DW_ATE_unsigned_fixed ||
          Ty->getTag() == dwarf::DW_TAG_unspecified_type;
 }
 
-static bool hasDebugInfo(const MachineFunction *MF) {
+static bool hasDebugInfo(const MachineModuleInfo *MMI,
+                         const MachineFunction *MF) {
+  if (!MMI->hasDebugInfo())
+    return false;
   auto *SP = MF->getFunction().getSubprogram();
   if (!SP)
     return false;
@@ -255,7 +250,7 @@ static bool hasDebugInfo(const MachineFunction *MF) {
 void DebugHandlerBase::beginFunction(const MachineFunction *MF) {
   PrevInstBB = nullptr;
 
-  if (!Asm || !hasDebugInfo(MF)) {
+  if (!Asm || !hasDebugInfo(MMI, MF)) {
     skippedNonDebugFunction();
     return;
   }
@@ -351,7 +346,7 @@ void DebugHandlerBase::beginFunction(const MachineFunction *MF) {
 }
 
 void DebugHandlerBase::beginInstruction(const MachineInstr *MI) {
-  if (!Asm || !Asm->hasDebugInfo())
+  if (!Asm || !MMI->hasDebugInfo())
     return;
 
   assert(CurMI == nullptr);
@@ -377,7 +372,7 @@ void DebugHandlerBase::beginInstruction(const MachineInstr *MI) {
 }
 
 void DebugHandlerBase::endInstruction() {
-  if (!Asm || !Asm->hasDebugInfo())
+  if (!Asm || !MMI->hasDebugInfo())
     return;
 
   assert(CurMI != nullptr);
@@ -412,7 +407,7 @@ void DebugHandlerBase::endInstruction() {
 }
 
 void DebugHandlerBase::endFunction(const MachineFunction *MF) {
-  if (Asm && hasDebugInfo(MF))
+  if (Asm && hasDebugInfo(MMI, MF))
     endFunctionImpl(MF);
   DbgValues.clear();
   DbgLabels.clear();

@@ -14,6 +14,7 @@
 #define LLVM_EXECUTIONENGINE_ORC_RTDYLDOBJECTLINKINGLAYER_H
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
@@ -137,7 +138,7 @@ private:
                  object::OwningBinary<object::ObjectFile> O,
                  std::unique_ptr<RuntimeDyld::MemoryManager> MemMgr,
                  std::unique_ptr<RuntimeDyld::LoadedObjectInfo> LoadedObjInfo,
-                 std::unique_ptr<SymbolDependenceMap> Deps, Error Err);
+                 Error Err);
 
   Error handleRemoveResources(JITDylib &JD, ResourceKey K) override;
   void handleTransferResources(JITDylib &JD, ResourceKey DstKey,

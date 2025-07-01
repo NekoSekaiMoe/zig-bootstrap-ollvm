@@ -43,7 +43,6 @@ add_clang_library(clangAnalysis
 
   DEPENDS
   omp_gen
-  ClangDriverOptions
   )
 
 add_subdirectory(plugins)

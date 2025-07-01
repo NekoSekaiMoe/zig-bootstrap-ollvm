@@ -13,11 +13,11 @@
 
 #include "llvm/CodeGen/GlobalISel/LegalizerInfo.h"
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
-#include "llvm/CodeGenTypes/LowLevelType.h"
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/Support/Debug.h"
@@ -77,11 +77,13 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, LegalizeAction Action) {
 }
 
 raw_ostream &LegalityQuery::print(raw_ostream &OS) const {
-  OS << "Opcode=" << Opcode << ", Tys={";
+  OS << Opcode << ", Tys={";
   for (const auto &Type : Types) {
     OS << Type << ", ";
   }
-  OS << "}, MMOs={";
+  OS << "}, Opcode=";
+
+  OS << Opcode << ", MMOs={";
   for (const auto &MMODescr : MMODescrs) {
     OS << MMODescr.MemoryTy << ", ";
   }
@@ -100,7 +102,6 @@ static bool hasNoSimpleLoops(const LegalizeRule &Rule, const LegalityQuery &Q,
   case Lower:
   case MoreElements:
   case FewerElements:
-  case Libcall:
     break;
   default:
     return Q.Types[Mutation.first] != Mutation.second;
@@ -115,10 +116,6 @@ static bool mutationIsSane(const LegalizeRule &Rule,
   // If the user wants a custom mutation, then we can't really say much about
   // it. Return true, and trust that they're doing the right thing.
   if (Rule.getAction() == Custom || Rule.getAction() == Legal)
-    return true;
-
-  // Skip null mutation.
-  if (!Mutation.second.isValid())
     return true;
 
   const unsigned TypeIdx = Mutation.first;
@@ -154,8 +151,7 @@ static bool mutationIsSane(const LegalizeRule &Rule,
   case WidenScalar: {
     if (OldTy.isVector()) {
       // Number of elements should not change.
-      if (!NewTy.isVector() ||
-          OldTy.getElementCount() != NewTy.getElementCount())
+      if (!NewTy.isVector() || OldTy.getNumElements() != NewTy.getNumElements())
         return false;
     } else {
       // Both types must be vectors

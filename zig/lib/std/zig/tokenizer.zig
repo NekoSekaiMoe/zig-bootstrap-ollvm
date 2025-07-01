@@ -320,7 +320,7 @@ pub const Token = struct {
 
         pub fn symbol(tag: Tag) []const u8 {
             return tag.lexeme() orelse switch (tag) {
-                .invalid => "invalid token",
+                .invalid => "invalid bytes",
                 .identifier => "an identifier",
                 .string_literal, .multiline_string_literal_line => "a string literal",
                 .char_literal => "a character literal",
@@ -337,23 +337,25 @@ pub const Token = struct {
 pub const Tokenizer = struct {
     buffer: [:0]const u8,
     index: usize,
+    pending_invalid_token: ?Token,
 
-    /// For debugging purposes.
+    /// For debugging purposes
     pub fn dump(self: *Tokenizer, token: *const Token) void {
         std.debug.print("{s} \"{s}\"\n", .{ @tagName(token.tag), self.buffer[token.loc.start..token.loc.end] });
     }
 
     pub fn init(buffer: [:0]const u8) Tokenizer {
-        // Skip the UTF-8 BOM if present.
-        return .{
+        // Skip the UTF-8 BOM if present
+        const src_start: usize = if (std.mem.startsWith(u8, buffer, "\xEF\xBB\xBF")) 3 else 0;
+        return Tokenizer{
             .buffer = buffer,
-            .index = if (std.mem.startsWith(u8, buffer, "\xEF\xBB\xBF")) 3 else 0,
+            .index = src_start,
+            .pending_invalid_token = null,
         };
     }
 
     const State = enum {
         start,
-        expect_newline,
         identifier,
         builtin,
         string_literal,
@@ -361,6 +363,12 @@ pub const Tokenizer = struct {
         multiline_string_literal_line,
         char_literal,
         char_literal_backslash,
+        char_literal_hex_escape,
+        char_literal_unicode_escape_saw_u,
+        char_literal_unicode_escape,
+        char_literal_unicode_invalid,
+        char_literal_unicode,
+        char_literal_end,
         backslash,
         equal,
         bang,
@@ -396,714 +404,913 @@ pub const Tokenizer = struct {
         period_2,
         period_asterisk,
         saw_at_sign,
-        invalid,
     };
 
-    /// After this returns invalid, it will reset on the next newline, returning tokens starting from there.
-    /// An eof token will always be returned at the end.
+    /// This is a workaround to the fact that the tokenizer can queue up
+    /// 'pending_invalid_token's when parsing literals, which means that we need
+    /// to scan from the start of the current line to find a matching tag - just
+    /// in case it was an invalid character generated during literal
+    /// tokenization. Ideally this processing of this would be pushed to the AST
+    /// parser or another later stage, both to give more useful error messages
+    /// with that extra context and in order to be able to remove this
+    /// workaround.
+    pub fn findTagAtCurrentIndex(self: *Tokenizer, tag: Token.Tag) Token {
+        if (tag == .invalid) {
+            const target_index = self.index;
+            var starting_index = target_index;
+            while (starting_index > 0) {
+                if (self.buffer[starting_index] == '\n') {
+                    break;
+                }
+                starting_index -= 1;
+            }
+
+            self.index = starting_index;
+            while (self.index <= target_index or self.pending_invalid_token != null) {
+                const result = self.next();
+                if (result.loc.start == target_index and result.tag == tag) {
+                    return result;
+                }
+            }
+            unreachable;
+        } else {
+            return self.next();
+        }
+    }
+
     pub fn next(self: *Tokenizer) Token {
-        var result: Token = .{
-            .tag = undefined,
+        if (self.pending_invalid_token) |token| {
+            self.pending_invalid_token = null;
+            return token;
+        }
+        var state: State = .start;
+        var result = Token{
+            .tag = .eof,
             .loc = .{
                 .start = self.index,
                 .end = undefined,
             },
         };
-        state: switch (State.start) {
-            .start => switch (self.buffer[self.index]) {
-                0 => {
-                    if (self.index == self.buffer.len) {
-                        return .{
-                            .tag = .eof,
-                            .loc = .{
-                                .start = self.index,
-                                .end = self.index,
-                            },
-                        };
-                    } else {
-                        continue :state .invalid;
-                    }
-                },
-                ' ', '\n', '\t', '\r' => {
-                    self.index += 1;
-                    result.loc.start = self.index;
-                    continue :state .start;
-                },
-                '"' => {
-                    result.tag = .string_literal;
-                    continue :state .string_literal;
-                },
-                '\'' => {
-                    result.tag = .char_literal;
-                    continue :state .char_literal;
-                },
-                'a'...'z', 'A'...'Z', '_' => {
-                    result.tag = .identifier;
-                    continue :state .identifier;
-                },
-                '@' => continue :state .saw_at_sign,
-                '=' => continue :state .equal,
-                '!' => continue :state .bang,
-                '|' => continue :state .pipe,
-                '(' => {
-                    result.tag = .l_paren;
-                    self.index += 1;
-                },
-                ')' => {
-                    result.tag = .r_paren;
-                    self.index += 1;
-                },
-                '[' => {
-                    result.tag = .l_bracket;
-                    self.index += 1;
-                },
-                ']' => {
-                    result.tag = .r_bracket;
-                    self.index += 1;
-                },
-                ';' => {
-                    result.tag = .semicolon;
-                    self.index += 1;
-                },
-                ',' => {
-                    result.tag = .comma;
-                    self.index += 1;
-                },
-                '?' => {
-                    result.tag = .question_mark;
-                    self.index += 1;
-                },
-                ':' => {
-                    result.tag = .colon;
-                    self.index += 1;
-                },
-                '%' => continue :state .percent,
-                '*' => continue :state .asterisk,
-                '+' => continue :state .plus,
-                '<' => continue :state .angle_bracket_left,
-                '>' => continue :state .angle_bracket_right,
-                '^' => continue :state .caret,
-                '\\' => {
-                    result.tag = .multiline_string_literal_line;
-                    continue :state .backslash;
-                },
-                '{' => {
-                    result.tag = .l_brace;
-                    self.index += 1;
-                },
-                '}' => {
-                    result.tag = .r_brace;
-                    self.index += 1;
-                },
-                '~' => {
-                    result.tag = .tilde;
-                    self.index += 1;
-                },
-                '.' => continue :state .period,
-                '-' => continue :state .minus,
-                '/' => continue :state .slash,
-                '&' => continue :state .ampersand,
-                '0'...'9' => {
-                    result.tag = .number_literal;
-                    self.index += 1;
-                    continue :state .int;
-                },
-                else => continue :state .invalid,
-            },
-
-            .expect_newline => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+        var seen_escape_digits: usize = undefined;
+        var remaining_code_units: usize = undefined;
+        while (true) : (self.index += 1) {
+            const c = self.buffer[self.index];
+            switch (state) {
+                .start => switch (c) {
                     0 => {
-                        if (self.index == self.buffer.len) {
+                        if (self.index != self.buffer.len) {
                             result.tag = .invalid;
-                        } else {
-                            continue :state .invalid;
+                            result.loc.start = self.index;
+                            self.index += 1;
+                            result.loc.end = self.index;
+                            return result;
                         }
+                        break;
                     },
-                    '\n' => {
-                        self.index += 1;
-                        result.loc.start = self.index;
-                        continue :state .start;
+                    ' ', '\n', '\t', '\r' => {
+                        result.loc.start = self.index + 1;
                     },
-                    else => continue :state .invalid,
-                }
-            },
-
-            .invalid => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0 => if (self.index == self.buffer.len) {
-                        result.tag = .invalid;
-                    } else {
-                        continue :state .invalid;
-                    },
-                    '\n' => result.tag = .invalid,
-                    else => continue :state .invalid,
-                }
-            },
-
-            .saw_at_sign => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0, '\n' => result.tag = .invalid,
                     '"' => {
-                        result.tag = .identifier;
-                        continue :state .string_literal;
+                        state = .string_literal;
+                        result.tag = .string_literal;
+                    },
+                    '\'' => {
+                        state = .char_literal;
                     },
                     'a'...'z', 'A'...'Z', '_' => {
-                        result.tag = .builtin;
-                        continue :state .builtin;
+                        state = .identifier;
+                        result.tag = .identifier;
                     },
-                    else => continue :state .invalid,
-                }
-            },
+                    '@' => {
+                        state = .saw_at_sign;
+                    },
+                    '=' => {
+                        state = .equal;
+                    },
+                    '!' => {
+                        state = .bang;
+                    },
+                    '|' => {
+                        state = .pipe;
+                    },
+                    '(' => {
+                        result.tag = .l_paren;
+                        self.index += 1;
+                        break;
+                    },
+                    ')' => {
+                        result.tag = .r_paren;
+                        self.index += 1;
+                        break;
+                    },
+                    '[' => {
+                        result.tag = .l_bracket;
+                        self.index += 1;
+                        break;
+                    },
+                    ']' => {
+                        result.tag = .r_bracket;
+                        self.index += 1;
+                        break;
+                    },
+                    ';' => {
+                        result.tag = .semicolon;
+                        self.index += 1;
+                        break;
+                    },
+                    ',' => {
+                        result.tag = .comma;
+                        self.index += 1;
+                        break;
+                    },
+                    '?' => {
+                        result.tag = .question_mark;
+                        self.index += 1;
+                        break;
+                    },
+                    ':' => {
+                        result.tag = .colon;
+                        self.index += 1;
+                        break;
+                    },
+                    '%' => {
+                        state = .percent;
+                    },
+                    '*' => {
+                        state = .asterisk;
+                    },
+                    '+' => {
+                        state = .plus;
+                    },
+                    '<' => {
+                        state = .angle_bracket_left;
+                    },
+                    '>' => {
+                        state = .angle_bracket_right;
+                    },
+                    '^' => {
+                        state = .caret;
+                    },
+                    '\\' => {
+                        state = .backslash;
+                        result.tag = .multiline_string_literal_line;
+                    },
+                    '{' => {
+                        result.tag = .l_brace;
+                        self.index += 1;
+                        break;
+                    },
+                    '}' => {
+                        result.tag = .r_brace;
+                        self.index += 1;
+                        break;
+                    },
+                    '~' => {
+                        result.tag = .tilde;
+                        self.index += 1;
+                        break;
+                    },
+                    '.' => {
+                        state = .period;
+                    },
+                    '-' => {
+                        state = .minus;
+                    },
+                    '/' => {
+                        state = .slash;
+                    },
+                    '&' => {
+                        state = .ampersand;
+                    },
+                    '0'...'9' => {
+                        state = .int;
+                        result.tag = .number_literal;
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        result.loc.end = self.index;
+                        self.index += 1;
+                        return result;
+                    },
+                },
 
-            .ampersand => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .saw_at_sign => switch (c) {
+                    '"' => {
+                        result.tag = .identifier;
+                        state = .string_literal;
+                    },
+                    'a'...'z', 'A'...'Z', '_' => {
+                        state = .builtin;
+                        result.tag = .builtin;
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                },
+
+                .ampersand => switch (c) {
                     '=' => {
                         result.tag = .ampersand_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .ampersand,
-                }
-            },
+                    else => {
+                        result.tag = .ampersand;
+                        break;
+                    },
+                },
 
-            .asterisk => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .asterisk => switch (c) {
                     '=' => {
                         result.tag = .asterisk_equal;
                         self.index += 1;
+                        break;
                     },
                     '*' => {
                         result.tag = .asterisk_asterisk;
                         self.index += 1;
+                        break;
                     },
-                    '%' => continue :state .asterisk_percent,
-                    '|' => continue :state .asterisk_pipe,
-                    else => result.tag = .asterisk,
-                }
-            },
+                    '%' => {
+                        state = .asterisk_percent;
+                    },
+                    '|' => {
+                        state = .asterisk_pipe;
+                    },
+                    else => {
+                        result.tag = .asterisk;
+                        break;
+                    },
+                },
 
-            .asterisk_percent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .asterisk_percent => switch (c) {
                     '=' => {
                         result.tag = .asterisk_percent_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .asterisk_percent,
-                }
-            },
+                    else => {
+                        result.tag = .asterisk_percent;
+                        break;
+                    },
+                },
 
-            .asterisk_pipe => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .asterisk_pipe => switch (c) {
                     '=' => {
                         result.tag = .asterisk_pipe_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .asterisk_pipe,
-                }
-            },
+                    else => {
+                        result.tag = .asterisk_pipe;
+                        break;
+                    },
+                },
 
-            .percent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .percent => switch (c) {
                     '=' => {
                         result.tag = .percent_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .percent,
-                }
-            },
+                    else => {
+                        result.tag = .percent;
+                        break;
+                    },
+                },
 
-            .plus => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .plus => switch (c) {
                     '=' => {
                         result.tag = .plus_equal;
                         self.index += 1;
+                        break;
                     },
                     '+' => {
                         result.tag = .plus_plus;
                         self.index += 1;
+                        break;
                     },
-                    '%' => continue :state .plus_percent,
-                    '|' => continue :state .plus_pipe,
-                    else => result.tag = .plus,
-                }
-            },
+                    '%' => {
+                        state = .plus_percent;
+                    },
+                    '|' => {
+                        state = .plus_pipe;
+                    },
+                    else => {
+                        result.tag = .plus;
+                        break;
+                    },
+                },
 
-            .plus_percent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .plus_percent => switch (c) {
                     '=' => {
                         result.tag = .plus_percent_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .plus_percent,
-                }
-            },
+                    else => {
+                        result.tag = .plus_percent;
+                        break;
+                    },
+                },
 
-            .plus_pipe => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .plus_pipe => switch (c) {
                     '=' => {
                         result.tag = .plus_pipe_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .plus_pipe,
-                }
-            },
+                    else => {
+                        result.tag = .plus_pipe;
+                        break;
+                    },
+                },
 
-            .caret => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .caret => switch (c) {
                     '=' => {
                         result.tag = .caret_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .caret,
-                }
-            },
-
-            .identifier => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    'a'...'z', 'A'...'Z', '_', '0'...'9' => continue :state .identifier,
                     else => {
-                        const ident = self.buffer[result.loc.start..self.index];
-                        if (Token.getKeyword(ident)) |tag| {
+                        result.tag = .caret;
+                        break;
+                    },
+                },
+
+                .identifier => switch (c) {
+                    'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+                    else => {
+                        if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
                             result.tag = tag;
                         }
+                        break;
                     },
-                }
-            },
-            .builtin => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    'a'...'z', 'A'...'Z', '_', '0'...'9' => continue :state .builtin,
-                    else => {},
-                }
-            },
-            .backslash => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0 => result.tag = .invalid,
-                    '\\' => continue :state .multiline_string_literal_line,
-                    '\n' => result.tag = .invalid,
-                    else => continue :state .invalid,
-                }
-            },
-            .string_literal => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                },
+                .builtin => switch (c) {
+                    'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+                    else => break,
+                },
+                .backslash => switch (c) {
+                    '\\' => {
+                        state = .multiline_string_literal_line;
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                },
+                .string_literal => switch (c) {
+                    '\\' => {
+                        state = .string_literal_backslash;
+                    },
+                    '"' => {
+                        self.index += 1;
+                        break;
+                    },
                     0 => {
-                        if (self.index != self.buffer.len) {
-                            continue :state .invalid;
-                        } else {
+                        if (self.index == self.buffer.len) {
                             result.tag = .invalid;
+                            break;
+                        } else {
+                            self.checkLiteralCharacter();
                         }
                     },
-                    '\n' => result.tag = .invalid,
-                    '\\' => continue :state .string_literal_backslash,
-                    '"' => self.index += 1,
-                    0x01...0x09, 0x0b...0x1f, 0x7f => {
-                        continue :state .invalid;
+                    '\n' => {
+                        result.tag = .invalid;
+                        break;
                     },
-                    else => continue :state .string_literal,
-                }
-            },
+                    else => self.checkLiteralCharacter(),
+                },
 
-            .string_literal_backslash => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0, '\n' => result.tag = .invalid,
-                    else => continue :state .string_literal,
-                }
-            },
+                .string_literal_backslash => switch (c) {
+                    0, '\n' => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                    else => {
+                        state = .string_literal;
+                    },
+                },
 
-            .char_literal => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .char_literal => switch (c) {
                     0 => {
-                        if (self.index != self.buffer.len) {
-                            continue :state .invalid;
-                        } else {
-                            result.tag = .invalid;
+                        result.tag = .invalid;
+                        break;
+                    },
+                    '\\' => {
+                        state = .char_literal_backslash;
+                    },
+                    '\'', 0x80...0xbf, 0xf8...0xff => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                    0xc0...0xdf => { // 110xxxxx
+                        remaining_code_units = 1;
+                        state = .char_literal_unicode;
+                    },
+                    0xe0...0xef => { // 1110xxxx
+                        remaining_code_units = 2;
+                        state = .char_literal_unicode;
+                    },
+                    0xf0...0xf7 => { // 11110xxx
+                        remaining_code_units = 3;
+                        state = .char_literal_unicode;
+                    },
+                    '\n' => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                    else => {
+                        state = .char_literal_end;
+                    },
+                },
+
+                .char_literal_backslash => switch (c) {
+                    0, '\n' => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                    'x' => {
+                        state = .char_literal_hex_escape;
+                        seen_escape_digits = 0;
+                    },
+                    'u' => {
+                        state = .char_literal_unicode_escape_saw_u;
+                    },
+                    else => {
+                        state = .char_literal_end;
+                    },
+                },
+
+                .char_literal_hex_escape => switch (c) {
+                    '0'...'9', 'a'...'f', 'A'...'F' => {
+                        seen_escape_digits += 1;
+                        if (seen_escape_digits == 2) {
+                            state = .char_literal_end;
                         }
                     },
-                    '\n' => result.tag = .invalid,
-                    '\\' => continue :state .char_literal_backslash,
-                    '\'' => self.index += 1,
-                    0x01...0x09, 0x0b...0x1f, 0x7f => {
-                        continue :state .invalid;
+                    else => {
+                        result.tag = .invalid;
+                        break;
                     },
-                    else => continue :state .char_literal,
-                }
-            },
+                },
 
-            .char_literal_backslash => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .char_literal_unicode_escape_saw_u => switch (c) {
                     0 => {
-                        if (self.index != self.buffer.len) {
-                            continue :state .invalid;
-                        } else {
-                            result.tag = .invalid;
+                        result.tag = .invalid;
+                        break;
+                    },
+                    '{' => {
+                        state = .char_literal_unicode_escape;
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        state = .char_literal_unicode_invalid;
+                    },
+                },
+
+                .char_literal_unicode_escape => switch (c) {
+                    0 => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                    '0'...'9', 'a'...'f', 'A'...'F' => {},
+                    '}' => {
+                        state = .char_literal_end; // too many/few digits handled later
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        state = .char_literal_unicode_invalid;
+                    },
+                },
+
+                .char_literal_unicode_invalid => switch (c) {
+                    // Keep consuming characters until an obvious stopping point.
+                    // This consolidates e.g. `u{0ab1Q}` into a single invalid token
+                    // instead of creating the tokens `u{0ab1`, `Q`, `}`
+                    '0'...'9', 'a'...'z', 'A'...'Z', '}' => {},
+                    else => break,
+                },
+
+                .char_literal_end => switch (c) {
+                    '\'' => {
+                        result.tag = .char_literal;
+                        self.index += 1;
+                        break;
+                    },
+                    else => {
+                        result.tag = .invalid;
+                        break;
+                    },
+                },
+
+                .char_literal_unicode => switch (c) {
+                    0x80...0xbf => {
+                        remaining_code_units -= 1;
+                        if (remaining_code_units == 0) {
+                            state = .char_literal_end;
                         }
                     },
-                    '\n' => result.tag = .invalid,
-                    0x01...0x09, 0x0b...0x1f, 0x7f => {
-                        continue :state .invalid;
+                    else => {
+                        result.tag = .invalid;
+                        break;
                     },
-                    else => continue :state .char_literal,
-                }
-            },
+                },
 
-            .multiline_string_literal_line => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0 => if (self.index != self.buffer.len) {
-                        continue :state .invalid;
+                .multiline_string_literal_line => switch (c) {
+                    0 => break,
+                    '\n' => {
+                        self.index += 1;
+                        break;
                     },
-                    '\n' => {},
-                    '\r' => if (self.buffer[self.index + 1] != '\n') {
-                        continue :state .invalid;
-                    },
-                    0x01...0x09, 0x0b...0x0c, 0x0e...0x1f, 0x7f => continue :state .invalid,
-                    else => continue :state .multiline_string_literal_line,
-                }
-            },
+                    '\t' => {},
+                    else => self.checkLiteralCharacter(),
+                },
 
-            .bang => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .bang => switch (c) {
                     '=' => {
                         result.tag = .bang_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .bang,
-                }
-            },
+                    else => {
+                        result.tag = .bang;
+                        break;
+                    },
+                },
 
-            .pipe => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .pipe => switch (c) {
                     '=' => {
                         result.tag = .pipe_equal;
                         self.index += 1;
+                        break;
                     },
                     '|' => {
                         result.tag = .pipe_pipe;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .pipe,
-                }
-            },
+                    else => {
+                        result.tag = .pipe;
+                        break;
+                    },
+                },
 
-            .equal => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .equal => switch (c) {
                     '=' => {
                         result.tag = .equal_equal;
                         self.index += 1;
+                        break;
                     },
                     '>' => {
                         result.tag = .equal_angle_bracket_right;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .equal,
-                }
-            },
+                    else => {
+                        result.tag = .equal;
+                        break;
+                    },
+                },
 
-            .minus => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .minus => switch (c) {
                     '>' => {
                         result.tag = .arrow;
                         self.index += 1;
+                        break;
                     },
                     '=' => {
                         result.tag = .minus_equal;
                         self.index += 1;
+                        break;
                     },
-                    '%' => continue :state .minus_percent,
-                    '|' => continue :state .minus_pipe,
-                    else => result.tag = .minus,
-                }
-            },
+                    '%' => {
+                        state = .minus_percent;
+                    },
+                    '|' => {
+                        state = .minus_pipe;
+                    },
+                    else => {
+                        result.tag = .minus;
+                        break;
+                    },
+                },
 
-            .minus_percent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .minus_percent => switch (c) {
                     '=' => {
                         result.tag = .minus_percent_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .minus_percent,
-                }
-            },
-            .minus_pipe => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                    else => {
+                        result.tag = .minus_percent;
+                        break;
+                    },
+                },
+                .minus_pipe => switch (c) {
                     '=' => {
                         result.tag = .minus_pipe_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .minus_pipe,
-                }
-            },
+                    else => {
+                        result.tag = .minus_pipe;
+                        break;
+                    },
+                },
 
-            .angle_bracket_left => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '<' => continue :state .angle_bracket_angle_bracket_left,
+                .angle_bracket_left => switch (c) {
+                    '<' => {
+                        state = .angle_bracket_angle_bracket_left;
+                    },
                     '=' => {
                         result.tag = .angle_bracket_left_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .angle_bracket_left,
-                }
-            },
+                    else => {
+                        result.tag = .angle_bracket_left;
+                        break;
+                    },
+                },
 
-            .angle_bracket_angle_bracket_left => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .angle_bracket_angle_bracket_left => switch (c) {
                     '=' => {
                         result.tag = .angle_bracket_angle_bracket_left_equal;
                         self.index += 1;
+                        break;
                     },
-                    '|' => continue :state .angle_bracket_angle_bracket_left_pipe,
-                    else => result.tag = .angle_bracket_angle_bracket_left,
-                }
-            },
+                    '|' => {
+                        state = .angle_bracket_angle_bracket_left_pipe;
+                    },
+                    else => {
+                        result.tag = .angle_bracket_angle_bracket_left;
+                        break;
+                    },
+                },
 
-            .angle_bracket_angle_bracket_left_pipe => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .angle_bracket_angle_bracket_left_pipe => switch (c) {
                     '=' => {
                         result.tag = .angle_bracket_angle_bracket_left_pipe_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .angle_bracket_angle_bracket_left_pipe,
-                }
-            },
+                    else => {
+                        result.tag = .angle_bracket_angle_bracket_left_pipe;
+                        break;
+                    },
+                },
 
-            .angle_bracket_right => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '>' => continue :state .angle_bracket_angle_bracket_right,
+                .angle_bracket_right => switch (c) {
+                    '>' => {
+                        state = .angle_bracket_angle_bracket_right;
+                    },
                     '=' => {
                         result.tag = .angle_bracket_right_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .angle_bracket_right,
-                }
-            },
+                    else => {
+                        result.tag = .angle_bracket_right;
+                        break;
+                    },
+                },
 
-            .angle_bracket_angle_bracket_right => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .angle_bracket_angle_bracket_right => switch (c) {
                     '=' => {
                         result.tag = .angle_bracket_angle_bracket_right_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .angle_bracket_angle_bracket_right,
-                }
-            },
+                    else => {
+                        result.tag = .angle_bracket_angle_bracket_right;
+                        break;
+                    },
+                },
 
-            .period => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '.' => continue :state .period_2,
-                    '*' => continue :state .period_asterisk,
-                    else => result.tag = .period,
-                }
-            },
+                .period => switch (c) {
+                    '.' => {
+                        state = .period_2;
+                    },
+                    '*' => {
+                        state = .period_asterisk;
+                    },
+                    else => {
+                        result.tag = .period;
+                        break;
+                    },
+                },
 
-            .period_2 => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .period_2 => switch (c) {
                     '.' => {
                         result.tag = .ellipsis3;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .ellipsis2,
-                }
-            },
+                    else => {
+                        result.tag = .ellipsis2;
+                        break;
+                    },
+                },
 
-            .period_asterisk => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '*' => result.tag = .invalid_periodasterisks,
-                    else => result.tag = .period_asterisk,
-                }
-            },
+                .period_asterisk => switch (c) {
+                    '*' => {
+                        result.tag = .invalid_periodasterisks;
+                        break;
+                    },
+                    else => {
+                        result.tag = .period_asterisk;
+                        break;
+                    },
+                },
 
-            .slash => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '/' => continue :state .line_comment_start,
+                .slash => switch (c) {
+                    '/' => {
+                        state = .line_comment_start;
+                    },
                     '=' => {
                         result.tag = .slash_equal;
                         self.index += 1;
+                        break;
                     },
-                    else => result.tag = .slash,
-                }
-            },
-            .line_comment_start => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                    else => {
+                        result.tag = .slash;
+                        break;
+                    },
+                },
+                .line_comment_start => switch (c) {
                     0 => {
                         if (self.index != self.buffer.len) {
-                            continue :state .invalid;
-                        } else return .{
-                            .tag = .eof,
-                            .loc = .{
-                                .start = self.index,
-                                .end = self.index,
-                            },
-                        };
+                            result.tag = .invalid;
+                            self.index += 1;
+                        }
+                        break;
+                    },
+                    '/' => {
+                        state = .doc_comment_start;
                     },
                     '!' => {
                         result.tag = .container_doc_comment;
-                        continue :state .doc_comment;
+                        state = .doc_comment;
                     },
                     '\n' => {
-                        self.index += 1;
-                        result.loc.start = self.index;
-                        continue :state .start;
+                        state = .start;
+                        result.loc.start = self.index + 1;
                     },
-                    '/' => continue :state .doc_comment_start,
-                    '\r' => continue :state .expect_newline,
-                    0x01...0x09, 0x0b...0x0c, 0x0e...0x1f, 0x7f => {
-                        continue :state .invalid;
+                    '\t' => state = .line_comment,
+                    else => {
+                        state = .line_comment;
+                        self.checkLiteralCharacter();
                     },
-                    else => continue :state .line_comment,
-                }
-            },
-            .doc_comment_start => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0, '\n' => result.tag = .doc_comment,
-                    '\r' => {
-                        if (self.buffer[self.index + 1] == '\n') {
-                            result.tag = .doc_comment;
-                        } else {
-                            continue :state .invalid;
-                        }
+                },
+                .doc_comment_start => switch (c) {
+                    '/' => {
+                        state = .line_comment;
                     },
-                    '/' => continue :state .line_comment,
-                    0x01...0x09, 0x0b...0x0c, 0x0e...0x1f, 0x7f => {
-                        continue :state .invalid;
+                    0, '\n' => {
+                        result.tag = .doc_comment;
+                        break;
+                    },
+                    '\t' => {
+                        state = .doc_comment;
+                        result.tag = .doc_comment;
                     },
                     else => {
+                        state = .doc_comment;
                         result.tag = .doc_comment;
-                        continue :state .doc_comment;
+                        self.checkLiteralCharacter();
                     },
-                }
-            },
-            .line_comment => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                },
+                .line_comment => switch (c) {
                     0 => {
                         if (self.index != self.buffer.len) {
-                            continue :state .invalid;
-                        } else return .{
-                            .tag = .eof,
-                            .loc = .{
-                                .start = self.index,
-                                .end = self.index,
-                            },
-                        };
+                            result.tag = .invalid;
+                            self.index += 1;
+                        }
+                        break;
                     },
                     '\n' => {
-                        self.index += 1;
-                        result.loc.start = self.index;
-                        continue :state .start;
+                        state = .start;
+                        result.loc.start = self.index + 1;
                     },
-                    '\r' => continue :state .expect_newline,
-                    0x01...0x09, 0x0b...0x0c, 0x0e...0x1f, 0x7f => {
-                        continue :state .invalid;
-                    },
-                    else => continue :state .line_comment,
-                }
-            },
-            .doc_comment => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    0, '\n' => {},
-                    '\r' => if (self.buffer[self.index + 1] != '\n') {
-                        continue :state .invalid;
-                    },
-                    0x01...0x09, 0x0b...0x0c, 0x0e...0x1f, 0x7f => {
-                        continue :state .invalid;
-                    },
-                    else => continue :state .doc_comment,
-                }
-            },
-            .int => switch (self.buffer[self.index]) {
-                '.' => continue :state .int_period,
-                '_', 'a'...'d', 'f'...'o', 'q'...'z', 'A'...'D', 'F'...'O', 'Q'...'Z', '0'...'9' => {
-                    self.index += 1;
-                    continue :state .int;
+                    '\t' => {},
+                    else => self.checkLiteralCharacter(),
                 },
-                'e', 'E', 'p', 'P' => {
-                    continue :state .int_exponent;
+                .doc_comment => switch (c) {
+                    0, '\n' => break,
+                    '\t' => {},
+                    else => self.checkLiteralCharacter(),
                 },
-                else => {},
-            },
-            .int_exponent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                .int => switch (c) {
+                    '.' => state = .int_period,
+                    '_', 'a'...'d', 'f'...'o', 'q'...'z', 'A'...'D', 'F'...'O', 'Q'...'Z', '0'...'9' => {},
+                    'e', 'E', 'p', 'P' => state = .int_exponent,
+                    else => break,
+                },
+                .int_exponent => switch (c) {
                     '-', '+' => {
-                        self.index += 1;
-                        continue :state .float;
+                        state = .float;
                     },
-                    else => continue :state .int,
-                }
-            },
-            .int_period => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
+                    else => {
+                        self.index -= 1;
+                        state = .int;
+                    },
+                },
+                .int_period => switch (c) {
                     '_', 'a'...'d', 'f'...'o', 'q'...'z', 'A'...'D', 'F'...'O', 'Q'...'Z', '0'...'9' => {
-                        self.index += 1;
-                        continue :state .float;
+                        state = .float;
                     },
-                    'e', 'E', 'p', 'P' => {
-                        continue :state .float_exponent;
+                    'e', 'E', 'p', 'P' => state = .float_exponent,
+                    else => {
+                        self.index -= 1;
+                        break;
                     },
-                    else => self.index -= 1,
-                }
-            },
-            .float => switch (self.buffer[self.index]) {
-                '_', 'a'...'d', 'f'...'o', 'q'...'z', 'A'...'D', 'F'...'O', 'Q'...'Z', '0'...'9' => {
-                    self.index += 1;
-                    continue :state .float;
                 },
-                'e', 'E', 'p', 'P' => {
-                    continue :state .float_exponent;
+                .float => switch (c) {
+                    '_', 'a'...'d', 'f'...'o', 'q'...'z', 'A'...'D', 'F'...'O', 'Q'...'Z', '0'...'9' => {},
+                    'e', 'E', 'p', 'P' => state = .float_exponent,
+                    else => break,
                 },
-                else => {},
-            },
-            .float_exponent => {
-                self.index += 1;
-                switch (self.buffer[self.index]) {
-                    '-', '+' => {
-                        self.index += 1;
-                        continue :state .float;
+                .float_exponent => switch (c) {
+                    '-', '+' => state = .float,
+                    else => {
+                        self.index -= 1;
+                        state = .float;
                     },
-                    else => continue :state .float,
-                }
-            },
+                },
+            }
+        }
+
+        if (result.tag == .eof) {
+            if (self.pending_invalid_token) |token| {
+                self.pending_invalid_token = null;
+                return token;
+            }
+            result.loc.start = self.index;
         }
 
         result.loc.end = self.index;
         return result;
+    }
+
+    fn checkLiteralCharacter(self: *Tokenizer) void {
+        if (self.pending_invalid_token != null) return;
+        const invalid_length = self.getInvalidCharacterLength();
+        if (invalid_length == 0) return;
+        self.pending_invalid_token = .{
+            .tag = .invalid,
+            .loc = .{
+                .start = self.index,
+                .end = self.index + invalid_length,
+            },
+        };
+    }
+
+    fn getInvalidCharacterLength(self: *Tokenizer) u3 {
+        const c0 = self.buffer[self.index];
+        if (std.ascii.isASCII(c0)) {
+            if (c0 == '\r') {
+                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '\n') {
+                    // Carriage returns are *only* allowed just before a linefeed as part of a CRLF pair, otherwise
+                    // they constitute an illegal byte!
+                    return 0;
+                } else {
+                    return 1;
+                }
+            } else if (std.ascii.isControl(c0)) {
+                // ascii control codes are never allowed
+                // (note that \n was checked before we got here)
+                return 1;
+            }
+            // looks fine to me.
+            return 0;
+        } else {
+            // check utf8-encoded character.
+            const length = std.unicode.utf8ByteSequenceLength(c0) catch return 1;
+            if (self.index + length > self.buffer.len) {
+                return @as(u3, @intCast(self.buffer.len - self.index));
+            }
+            const bytes = self.buffer[self.index .. self.index + length];
+            switch (length) {
+                2 => {
+                    const value = std.unicode.utf8Decode2(bytes) catch return length;
+                    if (value == 0x85) return length; // U+0085 (NEL)
+                },
+                3 => {
+                    const value = std.unicode.utf8Decode3(bytes) catch return length;
+                    if (value == 0x2028) return length; // U+2028 (LS)
+                    if (value == 0x2029) return length; // U+2029 (PS)
+                },
+                4 => {
+                    _ = std.unicode.utf8Decode4(bytes) catch return length;
+                },
+                else => unreachable,
+            }
+            self.index += length - 1;
+            return 0;
+        }
     }
 };
 
@@ -1146,7 +1353,7 @@ test "code point literal with hex escape" {
     , &.{.char_literal});
     try testTokenize(
         \\'\x1'
-    , &.{.char_literal});
+    , &.{ .invalid, .invalid });
 }
 
 test "newline in char literal" {
@@ -1187,30 +1394,30 @@ test "code point literal with unicode escapes" {
     // Invalid unicode escapes
     try testTokenize(
         \\'\u'
-    , &.{.char_literal});
+    , &.{.invalid});
     try testTokenize(
         \\'\u{{'
-    , &.{.char_literal});
+    , &.{ .invalid, .invalid });
     try testTokenize(
         \\'\u{}'
     , &.{.char_literal});
     try testTokenize(
         \\'\u{s}'
-    , &.{.char_literal});
+    , &.{ .invalid, .invalid });
     try testTokenize(
         \\'\u{2z}'
-    , &.{.char_literal});
+    , &.{ .invalid, .invalid });
     try testTokenize(
         \\'\u{4a'
-    , &.{.char_literal});
+    , &.{.invalid});
 
     // Test old-style unicode literals
     try testTokenize(
         \\'\u0333'
-    , &.{.char_literal});
+    , &.{ .invalid, .invalid });
     try testTokenize(
         \\'\U0333'
-    , &.{.char_literal});
+    , &.{ .invalid, .number_literal, .invalid });
 }
 
 test "code point literal with unicode code point" {
@@ -1246,16 +1453,23 @@ test "invalid token characters" {
     try testTokenize("`", &.{.invalid});
     try testTokenize("'c", &.{.invalid});
     try testTokenize("'", &.{.invalid});
-    try testTokenize("''", &.{.char_literal});
-    try testTokenize("'\n'", &.{ .invalid, .invalid });
+    try testTokenize("''", &.{ .invalid, .invalid });
 }
 
 test "invalid literal/comment characters" {
-    try testTokenize("\"\x00\"", &.{.invalid});
-    try testTokenize("`\x00`", &.{.invalid});
-    try testTokenize("//\x00", &.{.invalid});
-    try testTokenize("//\x1f", &.{.invalid});
-    try testTokenize("//\x7f", &.{.invalid});
+    try testTokenize("\"\x00\"", &.{
+        .string_literal,
+        .invalid,
+    });
+    try testTokenize("//\x00", &.{
+        .invalid,
+    });
+    try testTokenize("//\x1f", &.{
+        .invalid,
+    });
+    try testTokenize("//\x7f", &.{
+        .invalid,
+    });
 }
 
 test "utf8" {
@@ -1264,24 +1478,46 @@ test "utf8" {
 }
 
 test "invalid utf8" {
-    try testTokenize("//\x80", &.{});
-    try testTokenize("//\xbf", &.{});
-    try testTokenize("//\xf8", &.{});
-    try testTokenize("//\xff", &.{});
-    try testTokenize("//\xc2\xc0", &.{});
-    try testTokenize("//\xe0", &.{});
-    try testTokenize("//\xf0", &.{});
-    try testTokenize("//\xf0\x90\x80\xc0", &.{});
+    try testTokenize("//\x80", &.{
+        .invalid,
+    });
+    try testTokenize("//\xbf", &.{
+        .invalid,
+    });
+    try testTokenize("//\xf8", &.{
+        .invalid,
+    });
+    try testTokenize("//\xff", &.{
+        .invalid,
+    });
+    try testTokenize("//\xc2\xc0", &.{
+        .invalid,
+    });
+    try testTokenize("//\xe0", &.{
+        .invalid,
+    });
+    try testTokenize("//\xf0", &.{
+        .invalid,
+    });
+    try testTokenize("//\xf0\x90\x80\xc0", &.{
+        .invalid,
+    });
 }
 
 test "illegal unicode codepoints" {
     // unicode newline characters.U+0085, U+2028, U+2029
     try testTokenize("//\xc2\x84", &.{});
-    try testTokenize("//\xc2\x85", &.{});
+    try testTokenize("//\xc2\x85", &.{
+        .invalid,
+    });
     try testTokenize("//\xc2\x86", &.{});
     try testTokenize("//\xe2\x80\xa7", &.{});
-    try testTokenize("//\xe2\x80\xa8", &.{});
-    try testTokenize("//\xe2\x80\xa9", &.{});
+    try testTokenize("//\xe2\x80\xa8", &.{
+        .invalid,
+    });
+    try testTokenize("//\xe2\x80\xa9", &.{
+        .invalid,
+    });
     try testTokenize("//\xe2\x80\xaa", &.{});
 }
 
@@ -1297,6 +1533,30 @@ test "string identifier and builtin fns" {
         .string_literal,
         .r_paren,
         .semicolon,
+    });
+}
+
+test "multiline string literal with literal tab" {
+    try testTokenize(
+        \\\\foo	bar
+    , &.{
+        .multiline_string_literal_line,
+    });
+}
+
+test "comments with literal tab" {
+    try testTokenize(
+        \\//foo	bar
+        \\//!foo	bar
+        \\///foo	bar
+        \\//	foo
+        \\///	foo
+        \\///	/foo
+    , &.{
+        .container_doc_comment,
+        .doc_comment,
+        .doc_comment,
+        .doc_comment,
     });
 }
 
@@ -1619,8 +1879,8 @@ test "multi line string literal with only 1 backslash" {
 }
 
 test "invalid builtin identifiers" {
-    try testTokenize("@()", &.{.invalid});
-    try testTokenize("@0()", &.{.invalid});
+    try testTokenize("@()", &.{ .invalid, .l_paren, .r_paren });
+    try testTokenize("@0()", &.{ .invalid, .number_literal, .l_paren, .r_paren });
 }
 
 test "invalid token with unfinished escape right before eof" {
@@ -1648,71 +1908,13 @@ test "saturating operators" {
 }
 
 test "null byte before eof" {
-    try testTokenize("123 \x00 456", &.{ .number_literal, .invalid });
+    try testTokenize("123 \x00 456", &.{ .number_literal, .invalid, .number_literal });
     try testTokenize("//\x00", &.{.invalid});
-    try testTokenize("\\\\\x00", &.{.invalid});
+    try testTokenize("\\\\\x00", &.{ .multiline_string_literal_line, .invalid });
     try testTokenize("\x00", &.{.invalid});
     try testTokenize("// NUL\x00\n", &.{.invalid});
     try testTokenize("///\x00\n", &.{ .doc_comment, .invalid });
     try testTokenize("/// NUL\x00\n", &.{ .doc_comment, .invalid });
-}
-
-test "invalid tabs and carriage returns" {
-    // "Inside Line Comments and Documentation Comments, Any TAB is rejected by
-    // the grammar since it is ambiguous how it should be rendered."
-    // https://github.com/ziglang/zig-spec/issues/38
-    try testTokenize("//\t", &.{.invalid});
-    try testTokenize("// \t", &.{.invalid});
-    try testTokenize("///\t", &.{.invalid});
-    try testTokenize("/// \t", &.{.invalid});
-    try testTokenize("//!\t", &.{.invalid});
-    try testTokenize("//! \t", &.{.invalid});
-
-    // "Inside Line Comments and Documentation Comments, CR directly preceding
-    // NL is unambiguously part of the newline sequence. It is accepted by the
-    // grammar and removed by zig fmt, leaving only NL. CR anywhere else is
-    // rejected by the grammar."
-    // https://github.com/ziglang/zig-spec/issues/38
-    try testTokenize("//\r", &.{.invalid});
-    try testTokenize("// \r", &.{.invalid});
-    try testTokenize("///\r", &.{.invalid});
-    try testTokenize("/// \r", &.{.invalid});
-    try testTokenize("//\r ", &.{.invalid});
-    try testTokenize("// \r ", &.{.invalid});
-    try testTokenize("///\r ", &.{.invalid});
-    try testTokenize("/// \r ", &.{.invalid});
-    try testTokenize("//\r\n", &.{});
-    try testTokenize("// \r\n", &.{});
-    try testTokenize("///\r\n", &.{.doc_comment});
-    try testTokenize("/// \r\n", &.{.doc_comment});
-    try testTokenize("//!\r", &.{.invalid});
-    try testTokenize("//! \r", &.{.invalid});
-    try testTokenize("//!\r ", &.{.invalid});
-    try testTokenize("//! \r ", &.{.invalid});
-    try testTokenize("//!\r\n", &.{.container_doc_comment});
-    try testTokenize("//! \r\n", &.{.container_doc_comment});
-
-    // The control characters TAB and CR are rejected by the grammar inside multi-line string literals,
-    // except if CR is directly before NL.
-    // https://github.com/ziglang/zig-spec/issues/38
-    try testTokenize("\\\\\r", &.{.invalid});
-    try testTokenize("\\\\\r ", &.{.invalid});
-    try testTokenize("\\\\ \r", &.{.invalid});
-    try testTokenize("\\\\\t", &.{.invalid});
-    try testTokenize("\\\\\t ", &.{.invalid});
-    try testTokenize("\\\\ \t", &.{.invalid});
-    try testTokenize("\\\\\r\n", &.{.multiline_string_literal_line});
-
-    // "TAB used as whitespace is...accepted by the grammar. CR used as
-    // whitespace, whether directly preceding NL or stray, is...accepted by the
-    // grammar."
-    // https://github.com/ziglang/zig-spec/issues/38
-    try testTokenize("\tpub\tswitch\t", &.{ .keyword_pub, .keyword_switch });
-    try testTokenize("\rpub\rswitch\r", &.{ .keyword_pub, .keyword_switch });
-}
-
-test "fuzzable properties upheld" {
-    return std.testing.fuzz({}, testPropertiesUpheld, .{});
 }
 
 fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !void {
@@ -1721,56 +1923,8 @@ fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !v
         const token = tokenizer.next();
         try std.testing.expectEqual(expected_token_tag, token.tag);
     }
-    // Last token should always be eof, even when the last token was invalid,
-    // in which case the tokenizer is in an invalid state, which can only be
-    // recovered by opinionated means outside the scope of this implementation.
     const last_token = tokenizer.next();
     try std.testing.expectEqual(Token.Tag.eof, last_token.tag);
     try std.testing.expectEqual(source.len, last_token.loc.start);
     try std.testing.expectEqual(source.len, last_token.loc.end);
-}
-
-fn testPropertiesUpheld(context: void, source: []const u8) anyerror!void {
-    _ = context;
-    const source0 = try std.testing.allocator.dupeZ(u8, source);
-    defer std.testing.allocator.free(source0);
-    var tokenizer = Tokenizer.init(source0);
-    var tokenization_failed = false;
-    while (true) {
-        const token = tokenizer.next();
-
-        // Property: token end location after start location (or equal)
-        try std.testing.expect(token.loc.end >= token.loc.start);
-
-        switch (token.tag) {
-            .invalid => {
-                tokenization_failed = true;
-
-                // Property: invalid token always ends at newline or eof
-                try std.testing.expect(source0[token.loc.end] == '\n' or source0[token.loc.end] == 0);
-            },
-            .eof => {
-                // Property: EOF token is always 0-length at end of source.
-                try std.testing.expectEqual(source0.len, token.loc.start);
-                try std.testing.expectEqual(source0.len, token.loc.end);
-                break;
-            },
-            else => continue,
-        }
-    }
-
-    if (source0.len > 0) for (source0, source0[1..][0..source0.len]) |cur, next| {
-        // Property: No null byte allowed except at end.
-        if (cur == 0) {
-            try std.testing.expect(tokenization_failed);
-        }
-        // Property: No ASCII control characters other than \n and \t are allowed.
-        if (std.ascii.isControl(cur) and cur != '\n' and cur != '\t') {
-            try std.testing.expect(tokenization_failed);
-        }
-        // Property: All '\r' must be followed by '\n'.
-        if (cur == '\r' and next != '\n') {
-            try std.testing.expect(tokenization_failed);
-        }
-    };
 }

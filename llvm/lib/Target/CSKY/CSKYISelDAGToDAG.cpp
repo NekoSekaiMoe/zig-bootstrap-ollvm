@@ -28,8 +28,10 @@ class CSKYDAGToDAGISel : public SelectionDAGISel {
   const CSKYSubtarget *Subtarget;
 
 public:
-  explicit CSKYDAGToDAGISel(CSKYTargetMachine &TM, CodeGenOptLevel OptLevel)
-      : SelectionDAGISel(TM, OptLevel) {}
+  static char ID;
+
+  explicit CSKYDAGToDAGISel(CSKYTargetMachine &TM, CodeGenOpt::Level OptLevel)
+      : SelectionDAGISel(ID, TM, OptLevel) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     // Reset the subtarget each time through.
@@ -46,26 +48,16 @@ public:
 
   SDNode *createGPRPairNode(EVT VT, SDValue V0, SDValue V1);
 
-  bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                    InlineAsm::ConstraintCode ConstraintID,
+  bool SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
 
 #include "CSKYGenDAGISel.inc"
 };
-
-class CSKYDAGToDAGISelLegacy : public SelectionDAGISelLegacy {
-public:
-  static char ID;
-  explicit CSKYDAGToDAGISelLegacy(CSKYTargetMachine &TM,
-                                  CodeGenOptLevel OptLevel)
-      : SelectionDAGISelLegacy(
-            ID, std::make_unique<CSKYDAGToDAGISel>(TM, OptLevel)) {}
-};
 } // namespace
 
-char CSKYDAGToDAGISelLegacy::ID = 0;
+char CSKYDAGToDAGISel::ID = 0;
 
-INITIALIZE_PASS(CSKYDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
+INITIALIZE_PASS(CSKYDAGToDAGISel, DEBUG_TYPE, PASS_NAME, false, false)
 
 void CSKYDAGToDAGISel::Select(SDNode *N) {
   // If we have a custom node, we have already selected
@@ -124,7 +116,7 @@ void CSKYDAGToDAGISel::Select(SDNode *N) {
 
 bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
   std::vector<SDValue> AsmNodeOperands;
-  InlineAsm::Flag Flag;
+  unsigned Flag, Kind;
   bool Changed = false;
   unsigned NumOps = N->getNumOperands();
 
@@ -147,22 +139,23 @@ bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
     if (i < InlineAsm::Op_FirstOperand)
       continue;
 
-    if (const auto *C = dyn_cast<ConstantSDNode>(N->getOperand(i)))
-      Flag = InlineAsm::Flag(C->getZExtValue());
-    else
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N->getOperand(i))) {
+      Flag = C->getZExtValue();
+      Kind = InlineAsm::getKind(Flag);
+    } else
       continue;
 
     // Immediate operands to inline asm in the SelectionDAG are modeled with
-    // two operands. The first is a constant of value InlineAsm::Kind::Imm, and
+    // two operands. The first is a constant of value InlineAsm::Kind_Imm, and
     // the second is a constant with the value of the immediate. If we get here
-    // and we have a Kind::Imm, skip the next operand, and continue.
-    if (Flag.isImmKind()) {
+    // and we have a Kind_Imm, skip the next operand, and continue.
+    if (Kind == InlineAsm::Kind_Imm) {
       SDValue op = N->getOperand(++i);
       AsmNodeOperands.push_back(op);
       continue;
     }
 
-    const unsigned NumRegs = Flag.getNumOperandRegisters();
+    unsigned NumRegs = InlineAsm::getNumOperandRegisters(Flag);
     if (NumRegs)
       OpChanged.push_back(false);
 
@@ -170,26 +163,26 @@ bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
     bool IsTiedToChangedOp = false;
     // If it's a use that is tied with a previous def, it has no
     // reg class constraint.
-    if (Changed && Flag.isUseOperandTiedToDef(DefIdx))
+    if (Changed && InlineAsm::isUseOperandTiedToDef(Flag, DefIdx))
       IsTiedToChangedOp = OpChanged[DefIdx];
 
     // Memory operands to inline asm in the SelectionDAG are modeled with two
-    // operands: a constant of value InlineAsm::Kind::Mem followed by the input
-    // operand. If we get here and we have a Kind::Mem, skip the next operand
-    // (so it doesn't get misinterpreted), and continue. We do this here because
+    // operands: a constant of value InlineAsm::Kind_Mem followed by the input
+    // operand. If we get here and we have a Kind_Mem, skip the next operand (so
+    // it doesn't get misinterpreted), and continue. We do this here because
     // it's important to update the OpChanged array correctly before moving on.
-    if (Flag.isMemKind()) {
+    if (Kind == InlineAsm::Kind_Mem) {
       SDValue op = N->getOperand(++i);
       AsmNodeOperands.push_back(op);
       continue;
     }
 
-    if (!Flag.isRegUseKind() && !Flag.isRegDefKind() &&
-        !Flag.isRegDefEarlyClobberKind())
+    if (Kind != InlineAsm::Kind_RegUse && Kind != InlineAsm::Kind_RegDef &&
+        Kind != InlineAsm::Kind_RegDefEarlyClobber)
       continue;
 
     unsigned RC;
-    const bool HasRC = Flag.hasRegClassConstraint(RC);
+    bool HasRC = InlineAsm::hasRegClassConstraint(Flag, RC);
     if ((!IsTiedToChangedOp && (!HasRC || RC != CSKY::GPRRegClassID)) ||
         NumRegs != 2)
       continue;
@@ -202,7 +195,8 @@ bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
     SDValue PairedReg;
     MachineRegisterInfo &MRI = MF->getRegInfo();
 
-    if (Flag.isRegDefKind() || Flag.isRegDefEarlyClobberKind()) {
+    if (Kind == InlineAsm::Kind_RegDef ||
+        Kind == InlineAsm::Kind_RegDefEarlyClobber) {
       // Replace the two GPRs with 1 GPRPair and copy values from GPRPair to
       // the original GPRs.
 
@@ -228,7 +222,7 @@ bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
       Ops.push_back(T1.getValue(1));
       CurDAG->UpdateNodeOperands(GU, Ops);
     } else {
-      // For Kind  == InlineAsm::Kind::RegUse, we first copy two GPRs into a
+      // For Kind  == InlineAsm::Kind_RegUse, we first copy two GPRs into a
       // GPRPair and then pass the GPRPair to the inline asm.
       SDValue Chain = AsmNodeOperands[InlineAsm::Op_InputChain];
 
@@ -253,12 +247,11 @@ bool CSKYDAGToDAGISel::selectInlineAsm(SDNode *N) {
 
     if (PairedReg.getNode()) {
       OpChanged[OpChanged.size() - 1] = true;
-      // TODO: maybe a setter for getNumOperandRegisters?
-      Flag = InlineAsm::Flag(Flag.getKind(), 1 /* RegNum*/);
+      Flag = InlineAsm::getFlagWord(Kind, 1 /* RegNum*/);
       if (IsTiedToChangedOp)
-        Flag.setMatchingOp(DefIdx);
+        Flag = InlineAsm::getFlagWordForMatchingOp(Flag, DefIdx);
       else
-        Flag.setRegClass(CSKY::GPRPairRegClassID);
+        Flag = InlineAsm::getFlagWordForRegClass(Flag, CSKY::GPRPairRegClassID);
       // Replace the current flag.
       AsmNodeOperands[AsmNodeOperands.size() - 1] =
           CurDAG->getTargetConstant(Flag, dl, MVT::i32);
@@ -391,10 +384,9 @@ SDNode *CSKYDAGToDAGISel::createGPRPairNode(EVT VT, SDValue V0, SDValue V1) {
 }
 
 bool CSKYDAGToDAGISel::SelectInlineAsmMemoryOperand(
-    const SDValue &Op, const InlineAsm::ConstraintCode ConstraintID,
-    std::vector<SDValue> &OutOps) {
+    const SDValue &Op, unsigned ConstraintID, std::vector<SDValue> &OutOps) {
   switch (ConstraintID) {
-  case InlineAsm::ConstraintCode::m:
+  case InlineAsm::Constraint_m:
     // We just support simple memory operands that have a single address
     // operand and need no special handling.
     OutOps.push_back(Op);
@@ -407,6 +399,6 @@ bool CSKYDAGToDAGISel::SelectInlineAsmMemoryOperand(
 }
 
 FunctionPass *llvm::createCSKYISelDag(CSKYTargetMachine &TM,
-                                      CodeGenOptLevel OptLevel) {
-  return new CSKYDAGToDAGISelLegacy(TM, OptLevel);
+                                      CodeGenOpt::Level OptLevel) {
+  return new CSKYDAGToDAGISel(TM, OptLevel);
 }

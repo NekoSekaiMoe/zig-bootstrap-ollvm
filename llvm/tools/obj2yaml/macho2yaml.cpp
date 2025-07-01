@@ -15,7 +15,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LEB128.h"
-#include "llvm/Support/SystemZ/zOSSupport.h"
 
 #include <string.h> // for memcpy
 
@@ -140,8 +139,10 @@ MachODumper::constructSection(MachO::section_64 Sec, size_t SecIndex) {
 
 static Error dumpDebugSection(StringRef SecName, DWARFContext &DCtx,
                               DWARFYAML::Data &DWARF) {
-  if (SecName == "__debug_abbrev")
-    return dumpDebugAbbrev(DCtx, DWARF);
+  if (SecName == "__debug_abbrev") {
+    dumpDebugAbbrev(DCtx, DWARF);
+    return Error::success();
+  }
   if (SecName == "__debug_aranges")
     return dumpDebugARanges(DCtx, DWARF);
   if (SecName == "__debug_info") {
@@ -152,7 +153,7 @@ static Error dumpDebugSection(StringRef SecName, DWARFContext &DCtx,
     dumpDebugLines(DCtx, DWARF);
     return Error::success();
   }
-  if (SecName.starts_with("__debug_pub")) {
+  if (SecName.startswith("__debug_pub")) {
     // FIXME: We should extract pub-section dumpers from this function.
     dumpDebugPubSections(DCtx, DWARF);
     return Error::success();
@@ -184,11 +185,11 @@ Expected<const char *> MachODumper::extractSections(
 
       // Copy data sections if requested.
       if ((RawSegment & ::RawSegments::data) &&
-          StringRef(S->segname).starts_with("__DATA"))
+          StringRef(S->segname).startswith("__DATA"))
         S->content =
             yaml::BinaryRef(Obj.getSectionContents(Sec.offset, Sec.size));
 
-      if (SecName.starts_with("__debug_")) {
+      if (SecName.startswith("__debug_")) {
         // If the DWARF section cannot be successfully parsed, emit raw content
         // instead of an entry in the DWARF section of the YAML.
         if (Error Err = dumpDebugSection(SecName, *DWARFCtx, Y.DWARF))
@@ -532,7 +533,7 @@ void MachODumper::dumpBindOpcodes(
  * terminal.
 */
 
-const uint8_t *processExportNode(const uint8_t *Start, const uint8_t *CurrPtr,
+const uint8_t *processExportNode(const uint8_t *CurrPtr,
                                  const uint8_t *const End,
                                  MachOYAML::ExportEntry &Entry) {
   if (CurrPtr >= End)
@@ -571,7 +572,7 @@ const uint8_t *processExportNode(const uint8_t *Start, const uint8_t *CurrPtr,
     CurrPtr += Count;
   }
   for (auto &Child : Entry.Children) {
-    CurrPtr = processExportNode(Start, Start + Child.NodeOffset, End, Child);
+    CurrPtr = processExportNode(CurrPtr, End, Child);
   }
   return CurrPtr;
 }
@@ -582,8 +583,7 @@ void MachODumper::dumpExportTrie(std::unique_ptr<MachOYAML::Object> &Y) {
   auto ExportsTrie = Obj.getDyldInfoExportsTrie();
   if (ExportsTrie.empty())
     ExportsTrie = Obj.getDyldExportsTrie();
-  processExportNode(ExportsTrie.begin(), ExportsTrie.begin(), ExportsTrie.end(),
-                    LEData.ExportTrie);
+  processExportNode(ExportsTrie.begin(), ExportsTrie.end(), LEData.ExportTrie);
 }
 
 template <typename nlist_t>

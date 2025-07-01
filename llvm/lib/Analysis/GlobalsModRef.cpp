@@ -241,7 +241,7 @@ MemoryEffects GlobalsAAResult::getMemoryEffects(const Function *F) {
   if (FunctionInfo *FI = getFunctionInfo(F))
     return MemoryEffects(FI->getModRefInfo());
 
-  return MemoryEffects::unknown();
+  return AAResultBase::getMemoryEffects(F);
 }
 
 /// Returns the function info for the function, or null if we don't have
@@ -344,14 +344,6 @@ bool GlobalsAAResult::AnalyzeUsesOfPointer(Value *V,
       if (AnalyzeUsesOfPointer(I, Readers, Writers, OkayStoreDest))
         return true;
     } else if (auto *Call = dyn_cast<CallBase>(I)) {
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
-        if (II->getIntrinsicID() == Intrinsic::threadlocal_address &&
-            V == II->getArgOperand(0)) {
-          if (AnalyzeUsesOfPointer(II, Readers, Writers))
-            return true;
-          continue;
-        }
-      }
       // Make sure that this is just the function being called, not that it is
       // passing into the function.
       if (Call->isDataOperand(&U)) {
@@ -799,7 +791,10 @@ bool GlobalsAAResult::isNonEscapingGlobalNoAlias(const GlobalValue *GV,
 
     // FIXME: It would be good to handle other obvious no-alias cases here, but
     // it isn't clear how to do so reasonably without building a small version
-    // of BasicAA into this code.
+    // of BasicAA into this code. We could recurse into AAResultBase::alias
+    // here but that seems likely to go poorly as we're inside the
+    // implementation of such a query. Until then, just conservatively return
+    // false.
     return false;
   } while (!Inputs.empty());
 
@@ -897,7 +892,7 @@ AliasResult GlobalsAAResult::alias(const MemoryLocation &LocA,
     if ((GV1 || GV2) && GV1 != GV2)
       return AliasResult::NoAlias;
 
-  return AliasResult::MayAlias;
+  return AAResultBase::alias(LocA, LocB, AAQI, nullptr);
 }
 
 ModRefInfo GlobalsAAResult::getModRefInfoForArgument(const CallBase *Call,

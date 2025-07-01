@@ -12,6 +12,7 @@
 
 #include "BPF.h"
 #include "BPFCORE.h"
+#include "BPFTargetMachine.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsBPF.h"
@@ -125,10 +126,10 @@ bool BPFAdjustOptImpl::adjustICmpToBuiltin() {
 
         Constant *Opcode =
             ConstantInt::get(Type::getInt32Ty(BB.getContext()), Op);
-        Function *Fn = Intrinsic::getOrInsertDeclaration(
+        Function *Fn = Intrinsic::getDeclaration(
             M, Intrinsic::bpf_compare, {Op0->getType(), ConstOp1->getType()});
         auto *NewInst = CallInst::Create(Fn, {Opcode, Op0, ConstOp1});
-        NewInst->insertBefore(I.getIterator());
+        NewInst->insertBefore(&I);
         Icmp->replaceAllUsesWith(NewInst);
         Changed = true;
         ToBeDeleted = Icmp;
@@ -222,7 +223,7 @@ bool BPFAdjustOptImpl::serializeICMPCrossBB(BasicBlock &BB) {
   if (!BI || !BI->isConditional())
     return false;
   auto *Cond = dyn_cast<ICmpInst>(BI->getCondition());
-  if (!Cond || &*B2->getFirstNonPHIIt() != Cond)
+  if (!Cond || B2->getFirstNonPHI() != Cond)
     return false;
   Value *B2Op0 = Cond->getOperand(0);
   auto Cond2Op = Cond->getPredicate();

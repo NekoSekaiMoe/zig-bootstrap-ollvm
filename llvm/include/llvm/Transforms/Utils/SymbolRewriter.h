@@ -41,6 +41,7 @@ namespace llvm {
 
 class MemoryBuffer;
 class Module;
+class ModulePass;
 
 namespace yaml {
 

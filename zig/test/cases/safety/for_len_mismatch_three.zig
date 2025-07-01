@@ -20,5 +20,5 @@ pub fn main() !void {
     return error.TestFailed;
 }
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

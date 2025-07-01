@@ -6,25 +6,20 @@ pub fn build(b: *std.Build) void {
 
     const optimize: std.builtin.OptimizeMode = .Debug;
 
-    const foo = b.addLibrary(.{
-        .linkage = .static,
+    const foo = b.addStaticLibrary(.{
         .name = "foo",
-        .root_module = b.createModule(.{
-            .root_source_file = null,
-            .optimize = optimize,
-            .target = b.graph.host,
-        }),
-    });
-    foo.root_module.addCSourceFile(.{ .file = b.path("foo.c"), .flags = &[_][]const u8{} });
-    foo.root_module.addIncludePath(b.path("."));
-
-    const test_exe = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("foo.zig"),
-        .target = b.graph.host,
         .optimize = optimize,
-    }) });
-    test_exe.root_module.linkLibrary(foo);
-    test_exe.root_module.addIncludePath(b.path("."));
+        .target = b.host,
+    });
+    foo.addCSourceFile(.{ .file = b.path("foo.c"), .flags = &[_][]const u8{} });
+    foo.addIncludePath(b.path("."));
+
+    const test_exe = b.addTest(.{
+        .root_source_file = b.path("foo.zig"),
+        .optimize = optimize,
+    });
+    test_exe.linkLibrary(foo);
+    test_exe.addIncludePath(b.path("."));
 
     test_step.dependOn(&b.addRunArtifact(test_exe).step);
 }

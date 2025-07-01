@@ -35,6 +35,9 @@ class M68kRegisterBankInfo final : public M68kGenRegisterBankInfo {
 public:
   M68kRegisterBankInfo(const TargetRegisterInfo &TRI);
 
+  const RegisterBank &getRegBankFromRegClass(const TargetRegisterClass &RC,
+                                             LLT) const override;
+
   const InstructionMapping &
   getInstrMapping(const MachineInstr &MI) const override;
 };

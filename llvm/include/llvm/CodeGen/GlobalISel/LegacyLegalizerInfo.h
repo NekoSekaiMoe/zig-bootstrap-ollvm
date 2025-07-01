@@ -16,10 +16,9 @@
 #define LLVM_CODEGEN_GLOBALISEL_LEGACYLEGALIZERINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
-#include "llvm/CodeGenTypes/LowLevelType.h"
 #include <unordered_map>
-#include <vector>
 
 namespace llvm {
 struct LegalityQuery;
@@ -241,6 +240,16 @@ public:
                                                        Unsupported);
   }
 
+  static SizeAndActionsVec
+  narrowToSmallerAndWidenToSmallest(const SizeAndActionsVec &v) {
+    using namespace LegacyLegalizeActions;
+    assert(v.size() > 0 &&
+           "At least one size that can be legalized towards is needed"
+           " for this SizeChangeStrategy");
+    return decreaseToSmallerTypesAndIncreaseToSmallest(v, NarrowScalar,
+                                                       WidenScalar);
+  }
+
   /// A SizeChangeStrategy for the common case where legalization for a
   /// particular vector operation consists of having more elements in the
   /// vector, to a type that is legal. Unless there is no such type and then
@@ -318,8 +327,11 @@ private:
                         const unsigned AddressSpace,
                         const SizeAndActionsVec &SizeAndActions) {
     const unsigned OpcodeIdx = Opcode - FirstOp;
+    if (AddrSpace2PointerActions[OpcodeIdx].find(AddressSpace) ==
+        AddrSpace2PointerActions[OpcodeIdx].end())
+      AddrSpace2PointerActions[OpcodeIdx][AddressSpace] = {{}};
     SmallVector<SizeAndActionsVec, 1> &Actions =
-        AddrSpace2PointerActions[OpcodeIdx][AddressSpace];
+        AddrSpace2PointerActions[OpcodeIdx].find(AddressSpace)->second;
     setActions(TypeIndex, Actions, SizeAndActions);
   }
 
@@ -344,8 +356,11 @@ private:
                                  const unsigned ElementSize,
                                  const SizeAndActionsVec &SizeAndActions) {
     const unsigned OpcodeIdx = Opcode - FirstOp;
+    if (NumElements2Actions[OpcodeIdx].find(ElementSize) ==
+        NumElements2Actions[OpcodeIdx].end())
+      NumElements2Actions[OpcodeIdx][ElementSize] = {{}};
     SmallVector<SizeAndActionsVec, 1> &Actions =
-        NumElements2Actions[OpcodeIdx][ElementSize];
+        NumElements2Actions[OpcodeIdx].find(ElementSize)->second;
     setActions(TypeIndex, Actions, SizeAndActions);
   }
 

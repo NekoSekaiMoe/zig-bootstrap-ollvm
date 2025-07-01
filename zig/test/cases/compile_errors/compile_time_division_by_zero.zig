@@ -8,6 +8,8 @@ export fn entry() usize {
 }
 
 // error
+// backend=llvm
+// target=native
 //
-// :3:16: error: division by zero here causes illegal behavior
-// :1:14: note: called at comptime here
+// :3:16: error: division by zero here causes undefined behavior
+// :1:14: note: called from here

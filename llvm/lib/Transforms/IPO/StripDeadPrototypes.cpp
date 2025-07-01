@@ -16,6 +16,7 @@
 #include "llvm/Transforms/IPO/StripDeadPrototypes.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Transforms/IPO.h"
 
 using namespace llvm;
 

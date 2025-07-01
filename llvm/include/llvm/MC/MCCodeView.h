@@ -22,7 +22,7 @@
 #include <vector>
 
 namespace llvm {
-class MCAssembler;
+class MCAsmLayout;
 class MCCVDefRangeFragment;
 class MCCVInlineLineTableFragment;
 class MCDataFragment;
@@ -143,12 +143,11 @@ struct MCCVFunctionInfo {
 /// Holds state from .cv_file and .cv_loc directives for later emission.
 class CodeViewContext {
 public:
-  CodeViewContext(MCContext *MCCtx) : MCCtx(MCCtx) {}
+  CodeViewContext();
+  ~CodeViewContext();
 
   CodeViewContext &operator=(const CodeViewContext &other) = delete;
   CodeViewContext(const CodeViewContext &other) = delete;
-
-  void finish();
 
   bool isValidFileNumber(unsigned FileNumber) const;
   bool addFile(MCStreamer &OS, unsigned FileNumber, StringRef Filename,
@@ -183,7 +182,6 @@ public:
   std::vector<MCCVLoc> getFunctionLineEntries(unsigned FuncId);
 
   std::pair<size_t, size_t> getLineExtent(unsigned FuncId);
-  std::pair<size_t, size_t> getLineExtentIncludingInlinees(unsigned FuncId);
 
   ArrayRef<MCCVLoc> getLinesForExtent(size_t L, size_t R);
 
@@ -200,7 +198,7 @@ public:
                                       const MCSymbol *FnEndSym);
 
   /// Encodes the binary annotations once we have a layout.
-  void encodeInlineLineTable(const MCAssembler &Asm,
+  void encodeInlineLineTable(MCAsmLayout &Layout,
                              MCCVInlineLineTableFragment &F);
 
   MCFragment *
@@ -208,7 +206,7 @@ public:
                ArrayRef<std::pair<const MCSymbol *, const MCSymbol *>> Ranges,
                StringRef FixedSizePortion);
 
-  void encodeDefRange(const MCAssembler &Asm, MCCVDefRangeFragment &F);
+  void encodeDefRange(MCAsmLayout &Layout, MCCVDefRangeFragment &F);
 
   /// Emits the string table substream.
   void emitStringTable(MCObjectStreamer &OS);
@@ -224,14 +222,14 @@ public:
   std::pair<StringRef, unsigned> addToStringTable(StringRef S);
 
 private:
-  MCContext *MCCtx;
-
   /// Map from string to string table offset.
   StringMap<unsigned> StringTable;
 
   /// The fragment that ultimately holds our strings.
   MCDataFragment *StrTabFragment = nullptr;
-  SmallVector<char, 0> StrTab = {'\0'};
+  bool InsertedStrTabFragment = false;
+
+  MCDataFragment *getStringTableFragment();
 
   /// Get a string table offset.
   unsigned getStringTableOffset(StringRef S);

@@ -4,14 +4,14 @@
  * No warranty is given; refer to the file DISCLAIMER.PD within this package.
  */
 #ifndef __RPCNDR_H_VERSION__
-#define __RPCNDR_H_VERSION__ (501)
+#define __RPCNDR_H_VERSION__ (475)
 #endif
 
 #ifndef __RPCNDR_H__
 #define __RPCNDR_H__
 
 #ifdef __REQUIRED_RPCNDR_H_VERSION__
-#if (__RPCNDR_H_VERSION__ < __REQUIRED_RPCNDR_H_VERSION__)
+#if (475 < __REQUIRED_RPCNDR_H_VERSION__)
 #error incorrect <rpcndr.h> version. Use the header that matches with the MIDL compiler.
 #endif
 #endif
@@ -41,36 +41,6 @@ extern "C" {
 
 #define NDR_LOCAL_DATA_REPRESENTATION __MSABI_LONG(0X00000010U)
 #define NDR_LOCAL_ENDIAN NDR_LITTLE_ENDIAN
-
-#if NTDDI_VERSION >= NTDDI_WIN10_NI
-#define TARGET_IS_NT1012_OR_LATER 1
-#else
-#define TARGET_IS_NT1012_OR_LATER 0
-#endif
-
-#if NTDDI_VERSION >= NTDDI_WIN10_RS1
-#define TARGET_IS_NT102_OR_LATER 1
-#else
-#define TARGET_IS_NT102_OR_LATER 0
-#endif
-
-#if _WIN32_WINNT >= 0x0A00
-#define TARGET_IS_NT100_OR_LATER 1
-#else
-#define TARGET_IS_NT100_OR_LATER 0
-#endif
-
-#if _WIN32_WINNT >= 0x603
-#define TARGET_IS_NT63_OR_LATER 1
-#else
-#define TARGET_IS_NT63_OR_LATER 0
-#endif
-
-#if _WIN32_WINNT >= 0x602
-#define TARGET_IS_NT62_OR_LATER 1
-#else
-#define TARGET_IS_NT62_OR_LATER 0
-#endif
 
 #if _WIN32_WINNT >= 0x601
 #define TARGET_IS_NT61_OR_LATER 1
@@ -289,7 +259,7 @@ typedef unsigned __LONG32 error_status_t;
     struct NDR_POINTER_QUEUE_STATE *pPointerQueueState;
     int IgnoreEmbeddedPointers;
     unsigned char *PointerBufferMark;
-    unsigned char CorrDespIncrement;
+    unsigned char fBufferValid;
     unsigned char uFlags;
     unsigned short UniquePtrCount;
     ULONG_PTR MaxCount;
@@ -307,19 +277,14 @@ typedef unsigned __LONG32 error_status_t;
     unsigned __LONG32 PointerLength;
     int fInDontFree : 1;
     int fDontCallFreeInst : 1;
-    int fUnused1 : 1;
+    int fInOnlyParam : 1;
     int fHasReturn : 1;
     int fHasExtensions : 1;
     int fHasNewCorrDesc : 1;
-    int fIsIn : 1;
-    int fIsOut : 1;
-    int fIsOicf : 1;
-    int fBufferValid : 1;
+    int fIsOicfServer : 1;
     int fHasMemoryValidateCallback : 1;
-    int fInFree : 1;
-    int fNeedMCCP : 1;
-    int fUnused2 : 3;
-    int fUnused3 : 16;
+    int fUnused : 8;
+    int fUnused2 : 16;
     unsigned __LONG32 dwDestContext;
     void *pvDestContext;
     NDR_SCONTEXT *SavedContextHandles;
@@ -345,9 +310,9 @@ typedef unsigned __LONG32 error_status_t;
     INT_PTR Unused;
 #endif
     struct _NDR_PROC_CONTEXT *pContext;
-    void *ContextHandleHash;
     void *pUserMarshalList;
-    unsigned char *pFullPtrFormat;
+    INT_PTR Reserved51_2;
+    INT_PTR Reserved51_3;
     INT_PTR Reserved51_4;
     INT_PTR Reserved51_5;
   } MIDL_STUB_MESSAGE,*PMIDL_STUB_MESSAGE;
@@ -447,11 +412,6 @@ typedef unsigned __LONG32 error_status_t;
     CS_TAG_GETTING_ROUTINE *pTagGettingRoutines;
   } NDR_CS_ROUTINES;
 
-  typedef struct _NDR_EXPR_DESC {
-    const unsigned short *pOffset;
-    PFORMAT_STRING pFormatExpr;
-  } NDR_EXPR_DESC;
-
   typedef struct _MIDL_STUB_DESC {
     void *RpcInterfaceInformation;
     void *(__RPC_API *pfnAllocate)(size_t);
@@ -475,8 +435,8 @@ typedef unsigned __LONG32 error_status_t;
     const NDR_NOTIFY_ROUTINE *NotifyRoutineTable;
     ULONG_PTR mFlags;
     const NDR_CS_ROUTINES *CsRoutineTables;
-    void *ProxyServerInfo;
-    const NDR_EXPR_DESC *pExprInfo;
+    void *Reserved4;
+    ULONG_PTR Reserved5;
   } MIDL_STUB_DESC;
 
   typedef const MIDL_STUB_DESC *PMIDL_STUB_DESC;
@@ -514,21 +474,6 @@ typedef unsigned __LONG32 error_status_t;
 
   typedef MIDL_STUBLESS_PROXY_INFO *PMIDL_STUBLESS_PROXY_INFO;
 
-  typedef struct _MIDL_METHOD_PROPERTY {
-    unsigned __LONG32 Id;
-    ULONG_PTR Value;
-  } MIDL_METHOD_PROPERTY, *PMIDL_METHOD_PROPERTY;
-
-  typedef struct _MIDL_METHOD_PROPERTY_MAP {
-    unsigned __LONG32 Count;
-    const MIDL_METHOD_PROPERTY *Properties;
-  } MIDL_METHOD_PROPERTY_MAP, *PMIDL_METHOD_PROPERTY_MAP;
-
-  typedef struct _MIDL_INTERFACE_METHOD_PROPERTIES {
-    unsigned short MethodCount;
-    const MIDL_METHOD_PROPERTY_MAP *const *MethodProperties;
-  } MIDL_INTERFACE_METHOD_PROPERTIES;
-
   struct _MIDL_SYNTAX_INFO {
     RPC_SYNTAX_IDENTIFIER TransferSyntax;
     RPC_DISPATCH_TABLE *DispatchTable;
@@ -536,7 +481,7 @@ typedef unsigned __LONG32 error_status_t;
     const unsigned short *FmtStringOffset;
     PFORMAT_STRING TypeString;
     const void *aUserMarshalQuadruple;
-    const MIDL_INTERFACE_METHOD_PROPERTIES *pMethodProperties;
+    ULONG_PTR pReserved1;
     ULONG_PTR pReserved2;
   };
 
@@ -573,50 +518,6 @@ typedef unsigned __LONG32 error_status_t;
     unsigned __LONG32 NextRefId;
     XLAT_SIDE XlatSide;
   } FULL_PTR_XLAT_TABLES,*PFULL_PTR_XLAT_TABLES;
-
-  typedef enum _system_handle_t {
-    SYSTEM_HANDLE_FILE = 0,
-    SYSTEM_HANDLE_SEMAPHORE = 1,
-    SYSTEM_HANDLE_EVENT = 2,
-    SYSTEM_HANDLE_MUTEX = 3,
-    SYSTEM_HANDLE_PROCESS = 4,
-    SYSTEM_HANDLE_TOKEN = 5,
-    SYSTEM_HANDLE_SECTION = 6,
-    SYSTEM_HANDLE_REG_KEY = 7,
-    SYSTEM_HANDLE_THREAD = 8,
-    SYSTEM_HANDLE_COMPOSITION_OBJECT = 9,
-    SYSTEM_HANDLE_SOCKET = 10,
-    SYSTEM_HANDLE_JOB = 11,
-    SYSTEM_HANDLE_PIPE = 12,
-    SYSTEM_HANDLE_MAX = 12,
-    SYSTEM_HANDLE_INVALID = 0xff
-  } system_handle_t;
-
-  enum {
-    MidlInterceptionInfoVersionOne = 1
-  };
-
-  enum {
-    MidlWinrtTypeSerializationInfoVersionOne = 1
-  };
-
-#define MIDL_WINRT_TYPE_SERIALIZATION_INFO_CURRENT_VERSION MidlWinrtTypeSerializationInfoVersionOne
-
-  typedef struct _MIDL_INTERCEPTION_INFO {
-    unsigned __LONG32 Version;
-    PFORMAT_STRING ProcString;
-    const unsigned short *ProcFormatOffsetTable;
-    unsigned __LONG32 ProcCount;
-    PFORMAT_STRING TypeString;
-  } MIDL_INTERCEPTION_INFO, *PMIDL_INTERCEPTION_INFO;
-
-  typedef struct _MIDL_WINRT_TYPE_SERIALIZATION_INFO {
-    unsigned __LONG32 Version;
-    PFORMAT_STRING TypeFormatString;
-    unsigned short FormatStringSize;
-    unsigned short TypeOffset;
-    PMIDL_STUB_DESC StubDesc;
-  } MIDL_WINRT_TYPE_SERIALIZATION_INFO, *PMIDL_WINRT_TYPE_SERIALIZATION_INFO;
 
   RPC_STATUS RPC_ENTRY NdrClientGetSupportedSyntaxes(RPC_CLIENT_INTERFACE *pInf,unsigned __LONG32 *pCount,MIDL_SYNTAX_INFO **pArr);
   RPC_STATUS RPC_ENTRY NdrServerGetSupportedSyntaxes(RPC_SERVER_INTERFACE *pInf,unsigned __LONG32 *pCount,MIDL_SYNTAX_INFO **pArr,unsigned __LONG32 *pPreferSyntaxIndex);

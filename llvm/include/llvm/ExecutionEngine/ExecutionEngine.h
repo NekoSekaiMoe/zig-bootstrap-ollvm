@@ -87,7 +87,7 @@ public:
 
   /// Erase an entry from the mapping table.
   ///
-  /// \returns The address that \p ToUnmap was mapped to.
+  /// \returns The address that \p ToUnmap was happed to.
   uint64_t RemoveMapping(StringRef Name);
 };
 
@@ -261,7 +261,7 @@ public:
   /// locally can use the getFunctionAddress call, which will generate code
   /// and apply final preparations all in one step.
   ///
-  /// This method has no effect for the interpreter.
+  /// This method has no effect for the interpeter.
   virtual void generateCodeForModule(Module *M) {}
 
   /// finalizeObject - ensure the module is fully processed and is usable.
@@ -270,7 +270,7 @@ public:
   /// object usable for execution.  It should be called after sections within an
   /// object have been relocated using mapSectionAddress.  When this method is
   /// called the MCJIT execution engine will reapply relocations for a loaded
-  /// object.  This method has no effect for the interpreter.
+  /// object.  This method has no effect for the interpeter.
   ///
   /// Returns true on success, false on failure. Error messages can be retrieved
   /// by calling getError();
@@ -536,7 +536,7 @@ private:
   std::unique_ptr<Module> M;
   EngineKind::Kind WhichEngine;
   std::string *ErrorStr;
-  CodeGenOptLevel OptLevel;
+  CodeGenOpt::Level OptLevel;
   std::shared_ptr<MCJITMemoryManager> MemMgr;
   std::shared_ptr<LegacyJITSymbolResolver> Resolver;
   TargetOptions Options;
@@ -586,8 +586,8 @@ public:
   }
 
   /// setOptLevel - Set the optimization level for the JIT.  This option
-  /// defaults to CodeGenOptLevel::Default.
-  EngineBuilder &setOptLevel(CodeGenOptLevel l) {
+  /// defaults to CodeGenOpt::Default.
+  EngineBuilder &setOptLevel(CodeGenOpt::Level l) {
     OptLevel = l;
     return *this;
   }

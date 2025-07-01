@@ -8,6 +8,7 @@
 
 #include "clang/Driver/Distro.h"
 #include "clang/Basic/LLVM.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ErrorOr.h"
@@ -33,7 +34,7 @@ static Distro::DistroType DetectOsRelease(llvm::vfs::FileSystem &VFS) {
 
   // Obviously this can be improved a lot.
   for (StringRef Line : Lines)
-    if (Version == Distro::UnknownDistro && Line.starts_with("ID="))
+    if (Version == Distro::UnknownDistro && Line.startswith("ID="))
       Version = llvm::StringSwitch<Distro::DistroType>(Line.substr(3))
                     .Case("alpine", Distro::AlpineLinux)
                     .Case("fedora", Distro::Fedora)
@@ -59,7 +60,7 @@ static Distro::DistroType DetectLsbRelease(llvm::vfs::FileSystem &VFS) {
 
   for (StringRef Line : Lines)
     if (Version == Distro::UnknownDistro &&
-        Line.starts_with("DISTRIB_CODENAME="))
+        Line.startswith("DISTRIB_CODENAME="))
       Version = llvm::StringSwitch<Distro::DistroType>(Line.substr(17))
                     .Case("hardy", Distro::UbuntuHardy)
                     .Case("intrepid", Distro::UbuntuIntrepid)
@@ -93,9 +94,6 @@ static Distro::DistroType DetectLsbRelease(llvm::vfs::FileSystem &VFS) {
                     .Case("kinetic", Distro::UbuntuKinetic)
                     .Case("lunar", Distro::UbuntuLunar)
                     .Case("mantic", Distro::UbuntuMantic)
-                    .Case("noble", Distro::UbuntuNoble)
-                    .Case("oracular", Distro::UbuntuOracular)
-                    .Case("plucky", Distro::UbuntuPlucky)
                     .Default(Distro::UnknownDistro);
   return Version;
 }
@@ -114,16 +112,16 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
   if (Version != Distro::UnknownDistro)
     return Version;
 
-  // Otherwise try some distro-specific quirks for Red Hat...
+  // Otherwise try some distro-specific quirks for RedHat...
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> File =
       VFS.getBufferForFile("/etc/redhat-release");
 
   if (File) {
     StringRef Data = File.get()->getBuffer();
-    if (Data.starts_with("Fedora release"))
+    if (Data.startswith("Fedora release"))
       return Distro::Fedora;
-    if (Data.starts_with("Red Hat Enterprise Linux") ||
-        Data.starts_with("CentOS") || Data.starts_with("Scientific Linux")) {
+    if (Data.startswith("Red Hat Enterprise Linux") ||
+        Data.startswith("CentOS") || Data.startswith("Scientific Linux")) {
       if (Data.contains("release 7"))
         return Distro::RHEL7;
       else if (Data.contains("release 6"))
@@ -183,7 +181,7 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
     SmallVector<StringRef, 8> Lines;
     Data.split(Lines, "\n");
     for (const StringRef &Line : Lines) {
-      if (!Line.trim().starts_with("VERSION"))
+      if (!Line.trim().startswith("VERSION"))
         continue;
       std::pair<StringRef, StringRef> SplitLine = Line.split('=');
       // Old versions have split VERSION and PATCHLEVEL

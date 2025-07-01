@@ -14,6 +14,14 @@
 #ifndef __AVXVNNIINT8INTRIN_H
 #define __AVXVNNIINT8INTRIN_H
 
+/* Define the default attributes for the functions in this file. */
+#define __DEFAULT_FN_ATTRS256                                                  \
+  __attribute__((__always_inline__, __nodebug__, __target__("avxvnniint8"),    \
+                 __min_vector_width__(256)))
+#define __DEFAULT_FN_ATTRS128                                                  \
+  __attribute__((__always_inline__, __nodebug__, __target__("avxvnniint8"),    \
+                 __min_vector_width__(128)))
+
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding signed 8-bit integers in \a __B, producing 4 intermediate
 ///    signed 16-bit results. Sum these 4 results with the corresponding
@@ -44,9 +52,12 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbssd_epi32(__W, __A, __B)                                        \
-  ((__m128i)__builtin_ia32_vpdpbssd128((__v4si)(__W), (__v4si)(__A),           \
-                                       (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbssd_epi32(__m128i __W,
+                                                                 __m128i __A,
+                                                                 __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbssd128((__v4si)__W, (__v4si)__A,
+                                             (__v4si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding signed 8-bit integers in \a __B, producing 4 intermediate
@@ -78,9 +89,11 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbssd_epi32(__W, __A, __B)                                     \
-  ((__m256i)__builtin_ia32_vpdpbssd256((__v8si)(__W), (__v8si)(__A),           \
-                                       (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbssd_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbssd256((__v8si)__W, (__v8si)__A,
+                                             (__v8si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding signed 8-bit integers in \a __B, producing 4 intermediate
@@ -113,9 +126,12 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbssds_epi32(__W, __A, __B)                                       \
-  ((__m128i)__builtin_ia32_vpdpbssds128((__v4si)(__W), (__v4si)(__A),          \
-                                        (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbssds_epi32(__m128i __W,
+                                                                  __m128i __A,
+                                                                  __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbssds128((__v4si)__W, (__v4si)__A,
+                                              (__v4si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding signed 8-bit integers in \a __B, producing 4 intermediate
@@ -148,9 +164,11 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbssds_epi32(__W, __A, __B)                                    \
-  ((__m256i)__builtin_ia32_vpdpbssds256((__v8si)(__W), (__v8si)(__A),          \
-                                        (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbssds_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbssds256((__v8si)__W, (__v8si)__A,
+                                              (__v8si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -182,9 +200,12 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbsud_epi32(__W, __A, __B)                                        \
-  ((__m128i)__builtin_ia32_vpdpbsud128((__v4si)(__W), (__v4si)(__A),           \
-                                       (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbsud_epi32(__m128i __W,
+                                                                 __m128i __A,
+                                                                 __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbsud128((__v4si)__W, (__v4si)__A,
+                                             (__v4si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -216,9 +237,11 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbsud_epi32(__W, __A, __B)                                     \
-  ((__m256i)__builtin_ia32_vpdpbsud256((__v8si)(__W), (__v8si)(__A),           \
-                                       (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbsud_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbsud256((__v8si)__W, (__v8si)__A,
+                                             (__v8si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -251,9 +274,12 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbsuds_epi32(__W, __A, __B)                                       \
-  ((__m128i)__builtin_ia32_vpdpbsuds128((__v4si)(__W), (__v4si)(__A),          \
-                                        (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbsuds_epi32(__m128i __W,
+                                                                  __m128i __A,
+                                                                  __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbsuds128((__v4si)__W, (__v4si)__A,
+                                              (__v4si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -286,9 +312,11 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbsuds_epi32(__W, __A, __B)                                    \
-  ((__m256i)__builtin_ia32_vpdpbsuds256((__v8si)(__W), (__v8si)(__A),          \
-                                        (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbsuds_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbsuds256((__v8si)__W, (__v8si)__A,
+                                              (__v8si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of unsigned 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -320,9 +348,12 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbuud_epi32(__W, __A, __B)                                        \
-  ((__m128i)__builtin_ia32_vpdpbuud128((__v4si)(__W), (__v4si)(__A),           \
-                                       (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbuud_epi32(__m128i __W,
+                                                                 __m128i __A,
+                                                                 __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbuud128((__v4si)__W, (__v4si)__A,
+                                             (__v4si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of unsigned 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -354,9 +385,11 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbuud_epi32(__W, __A, __B)                                     \
-  ((__m256i)__builtin_ia32_vpdpbuud256((__v8si)(__W), (__v8si)(__A),           \
-                                       (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbuud_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbuud256((__v8si)__W, (__v8si)__A,
+                                             (__v8si)__B);
+}
 
 /// Multiply groups of 4 adjacent pairs of unsigned 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
@@ -389,10 +422,14 @@
 /// ENDFOR
 /// dst[MAX:128] := 0
 /// \endcode
-#define _mm_dpbuuds_epi32(__W, __A, __B)                                       \
-  ((__m128i)__builtin_ia32_vpdpbuuds128((__v4si)(__W), (__v4si)(__A),          \
-                                        (__v4si)(__B)))
+static __inline__ __m128i __DEFAULT_FN_ATTRS128 _mm_dpbuuds_epi32(__m128i __W,
+                                                                  __m128i __A,
+                                                                  __m128i __B) {
+  return (__m128i)__builtin_ia32_vpdpbuuds128((__v4si)__W, (__v4si)__A,
+                                              (__v4si)__B);
+}
 
+/// Multiply groups of 4 adjacent pairs of signed 8-bit integers in \a __A with
 ///    corresponding unsigned 8-bit integers in \a __B, producing 4 intermediate
 ///    signed 16-bit results. Sum these 4 results with the corresponding
 ///    32-bit integer in \a __W with signed saturation, and store the packed
@@ -423,8 +460,12 @@
 /// ENDFOR
 /// dst[MAX:256] := 0
 /// \endcode
-#define _mm256_dpbuuds_epi32(__W, __A, __B)                                    \
-  ((__m256i)__builtin_ia32_vpdpbuuds256((__v8si)(__W), (__v8si)(__A),          \
-                                        (__v8si)(__B)))
+static __inline__ __m256i __DEFAULT_FN_ATTRS256
+_mm256_dpbuuds_epi32(__m256i __W, __m256i __A, __m256i __B) {
+  return (__m256i)__builtin_ia32_vpdpbuuds256((__v8si)__W, (__v8si)__A,
+                                              (__v8si)__B);
+}
+#undef __DEFAULT_FN_ATTRS128
+#undef __DEFAULT_FN_ATTRS256
 
 #endif // __AVXVNNIINT8INTRIN_H

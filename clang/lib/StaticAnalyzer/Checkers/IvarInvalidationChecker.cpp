@@ -64,12 +64,12 @@ class IvarInvalidationCheckerImpl {
 
   struct InvalidationInfo {
     /// Has the ivar been invalidated?
-    bool IsInvalidated = false;
+    bool IsInvalidated;
 
     /// The methods which can be used to invalidate the ivar.
     MethodSet InvalidationMethods;
 
-    InvalidationInfo() = default;
+    InvalidationInfo() : IsInvalidated(false) {}
     void addInvalidationMethod(const ObjCMethodDecl *MD) {
       InvalidationMethods.insert(MD);
     }

@@ -264,8 +264,7 @@ ProgramStateRef ExprEngine::handleLValueBitCast(
   }
   // Delegate to SValBuilder to process.
   SVal OrigV = state->getSVal(Ex, LCtx);
-  SVal SimplifiedOrigV = svalBuilder.simplifySVal(state, OrigV);
-  SVal V = svalBuilder.evalCast(SimplifiedOrigV, T, ExTy);
+  SVal V = svalBuilder.evalCast(OrigV, T, ExTy);
   // Negate the result if we're treating the boolean as a signed i1
   if (CastE->getCastKind() == CK_BooleanToSignedIntegral && V.isValid())
     V = svalBuilder.evalMinus(V.castAs<NonLoc>());
@@ -330,8 +329,7 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
       case CK_ConstructorConversion:
       case CK_UserDefinedConversion:
       case CK_FunctionToPointerDecay:
-      case CK_BuiltinFnToFnPtr:
-      case CK_HLSLArrayRValue: {
+      case CK_BuiltinFnToFnPtr: {
         // Copy the SVal of Ex to CastE.
         ProgramStateRef state = Pred->getState();
         const LocationContext *LCtx = Pred->getLocationContext();
@@ -521,8 +519,7 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
       // Various C++ casts that are not handled yet.
       case CK_ToUnion:
       case CK_MatrixCast:
-      case CK_VectorSplat:
-      case CK_HLSLVectorTruncation: {
+      case CK_VectorSplat: {
         QualType resultType = CastE->getType();
         if (CastE->isGLValue())
           resultType = getContext().getPointerType(resultType);

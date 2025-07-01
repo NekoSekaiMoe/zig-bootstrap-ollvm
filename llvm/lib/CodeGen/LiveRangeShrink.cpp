@@ -23,7 +23,6 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
@@ -110,7 +109,6 @@ bool LiveRangeShrink::runOnMachineFunction(MachineFunction &MF) {
     return false;
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
-  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
 
   LLVM_DEBUG(dbgs() << "**** Analysing " << MF.getName() << '\n');
 
@@ -124,24 +122,15 @@ bool LiveRangeShrink::runOnMachineFunction(MachineFunction &MF) {
   for (MachineBasicBlock &MBB : MF) {
     if (MBB.empty())
       continue;
-
-    MachineBasicBlock::iterator Next = MBB.begin();
-    if (MBB.isEHPad()) {
-      // Do not track PHIs in IOM when handling EHPads.
-      // Otherwise their uses may be hoisted outside a landingpad range.
-      Next = MBB.SkipPHIsLabelsAndDebug(Next);
-      if (Next == MBB.end())
-        continue;
-    }
-
-    BuildInstOrderMap(Next, IOM);
-    Next = MBB.SkipPHIsLabelsAndDebug(Next);
-    UseMap.clear();
     bool SawStore = false;
+    BuildInstOrderMap(MBB.begin(), IOM);
+    UseMap.clear();
 
-    while (Next != MBB.end()) {
+    for (MachineBasicBlock::iterator Next = MBB.begin(); Next != MBB.end();) {
       MachineInstr &MI = *Next;
-      Next = MBB.SkipPHIsLabelsAndDebug(++Next);
+      ++Next;
+      if (MI.isPHI() || MI.isDebugOrPseudoInstr())
+        continue;
       if (MI.mayStore())
         SawStore = true;
 
@@ -162,7 +151,7 @@ bool LiveRangeShrink::runOnMachineFunction(MachineFunction &MF) {
           }
       }
 
-      if (!MI.isSafeToMove(SawStore)) {
+      if (!MI.isSafeToMove(nullptr, SawStore)) {
         // If MI has side effects, it should become a barrier for code motion.
         // IOM is rebuild from the next instruction to prevent later
         // instructions from being moved before this MI.
@@ -208,7 +197,7 @@ bool LiveRangeShrink::runOnMachineFunction(MachineFunction &MF) {
           // is because it needs more accurate model to handle register
           // pressure correctly.
           MachineInstr &DefInstr = *MRI.def_instr_begin(Reg);
-          if (!TII.isCopyInstr(DefInstr))
+          if (!DefInstr.isCopy())
             NumEligibleUse++;
           Insert = FindDominatedInstruction(DefInstr, Insert, IOM);
         } else {
@@ -246,7 +235,7 @@ bool LiveRangeShrink::runOnMachineFunction(MachineFunction &MF) {
         if (MI.getOperand(0).isReg())
           for (; EndIter != MBB.end() && EndIter->isDebugValue() &&
                  EndIter->hasDebugOperandForReg(MI.getOperand(0).getReg());
-               ++EndIter)
+               ++EndIter, ++Next)
             IOM[&*EndIter] = NewOrder;
         MBB.splice(I, &MBB, MI.getIterator(), EndIter);
       }

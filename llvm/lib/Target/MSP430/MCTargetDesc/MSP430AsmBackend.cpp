@@ -12,6 +12,7 @@
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCFixupKindInfo.h"
@@ -33,7 +34,7 @@ class MSP430AsmBackend : public MCAsmBackend {
 
 public:
   MSP430AsmBackend(const MCSubtargetInfo &STI, uint8_t OSABI)
-      : MCAsmBackend(llvm::endianness::little), OSABI(OSABI) {}
+      : MCAsmBackend(support::little), OSABI(OSABI) {}
   ~MSP430AsmBackend() override = default;
 
   void applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
@@ -46,10 +47,16 @@ public:
     return createMSP430ELFObjectWriter(OSABI);
   }
 
-  bool fixupNeedsRelaxationAdvanced(const MCAssembler &Asm,
-                                    const MCFixup &Fixup, bool Resolved,
+  bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
+                            const MCRelaxableFragment *DF,
+                            const MCAsmLayout &Layout) const override {
+    return false;
+  }
+
+  bool fixupNeedsRelaxationAdvanced(const MCFixup &Fixup, bool Resolved,
                                     uint64_t Value,
                                     const MCRelaxableFragment *DF,
+                                    const MCAsmLayout &Layout,
                                     const bool WasForced) const override {
     return false;
   }

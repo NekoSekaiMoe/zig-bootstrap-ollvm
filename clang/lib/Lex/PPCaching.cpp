@@ -14,15 +14,6 @@
 #include "clang/Lex/Preprocessor.h"
 using namespace clang;
 
-std::pair<Preprocessor::CachedTokensTy::size_type, bool>
-Preprocessor::LastBacktrackPos() {
-  assert(isBacktrackEnabled());
-  auto BacktrackPos = BacktrackPositions.back();
-  bool Unannotated =
-      static_cast<CachedTokensTy::difference_type>(BacktrackPos) < 0;
-  return {Unannotated ? ~BacktrackPos : BacktrackPos, Unannotated};
-}
-
 // EnableBacktrackAtThisPos - From the point that this method is called, and
 // until CommitBacktrackedTokens() or Backtrack() is called, the Preprocessor
 // keeps track of the lexed tokens so that a subsequent Backtrack() call will
@@ -31,45 +22,26 @@ Preprocessor::LastBacktrackPos() {
 // Nested backtracks are allowed, meaning that EnableBacktrackAtThisPos can
 // be called multiple times and CommitBacktrackedTokens/Backtrack calls will
 // be combined with the EnableBacktrackAtThisPos calls in reverse order.
-void Preprocessor::EnableBacktrackAtThisPos(bool Unannotated) {
+void Preprocessor::EnableBacktrackAtThisPos() {
   assert(LexLevel == 0 && "cannot use lookahead while lexing");
-  BacktrackPositions.push_back(Unannotated ? ~CachedLexPos : CachedLexPos);
-  if (Unannotated)
-    UnannotatedBacktrackTokens.emplace_back(CachedTokens, CachedTokens.size());
+  BacktrackPositions.push_back(CachedLexPos);
   EnterCachingLexMode();
-}
-
-Preprocessor::CachedTokensTy Preprocessor::PopUnannotatedBacktrackTokens() {
-  assert(isUnannotatedBacktrackEnabled() && "missing unannotated tokens?");
-  auto [UnannotatedTokens, NumCachedToks] =
-      std::move(UnannotatedBacktrackTokens.back());
-  UnannotatedBacktrackTokens.pop_back();
-  // If another unannotated backtrack is active, propagate any tokens that were
-  // lexed (not cached) since EnableBacktrackAtThisPos was last called.
-  if (isUnannotatedBacktrackEnabled())
-    UnannotatedBacktrackTokens.back().first.append(
-        UnannotatedTokens.begin() + NumCachedToks, UnannotatedTokens.end());
-  return std::move(UnannotatedTokens);
 }
 
 // Disable the last EnableBacktrackAtThisPos call.
 void Preprocessor::CommitBacktrackedTokens() {
-  assert(isBacktrackEnabled() && "EnableBacktrackAtThisPos was not called!");
-  auto [BacktrackPos, Unannotated] = LastBacktrackPos();
+  assert(!BacktrackPositions.empty()
+         && "EnableBacktrackAtThisPos was not called!");
   BacktrackPositions.pop_back();
-  if (Unannotated)
-    PopUnannotatedBacktrackTokens();
 }
 
 // Make Preprocessor re-lex the tokens that were lexed since
 // EnableBacktrackAtThisPos() was previously called.
 void Preprocessor::Backtrack() {
-  assert(isBacktrackEnabled() && "EnableBacktrackAtThisPos was not called!");
-  auto [BacktrackPos, Unannotated] = LastBacktrackPos();
+  assert(!BacktrackPositions.empty()
+         && "EnableBacktrackAtThisPos was not called!");
+  CachedLexPos = BacktrackPositions.back();
   BacktrackPositions.pop_back();
-  CachedLexPos = BacktrackPos;
-  if (Unannotated)
-    CachedTokens = PopUnannotatedBacktrackTokens();
   recomputeCurLexerKind();
 }
 
@@ -95,8 +67,6 @@ void Preprocessor::CachingLex(Token &Result) {
     EnterCachingLexModeUnchecked();
     CachedTokens.push_back(Result);
     ++CachedLexPos;
-    if (isUnannotatedBacktrackEnabled())
-      UnannotatedBacktrackTokens.back().first.push_back(Result);
     return;
   }
 
@@ -118,7 +88,7 @@ void Preprocessor::EnterCachingLexMode() {
          "entered caching lex mode while lexing something else");
 
   if (InCachingLexMode()) {
-    assert(CurLexerCallback == CLK_CachingLexer && "Unexpected lexer kind");
+    assert(CurLexerKind == CLK_CachingLexer && "Unexpected lexer kind");
     return;
   }
 
@@ -126,9 +96,9 @@ void Preprocessor::EnterCachingLexMode() {
 }
 
 void Preprocessor::EnterCachingLexModeUnchecked() {
-  assert(CurLexerCallback != CLK_CachingLexer && "already in caching lex mode");
+  assert(CurLexerKind != CLK_CachingLexer && "already in caching lex mode");
   PushIncludeMacroStack();
-  CurLexerCallback = CLK_CachingLexer;
+  CurLexerKind = CLK_CachingLexer;
 }
 
 
@@ -138,8 +108,6 @@ const Token &Preprocessor::PeekAhead(unsigned N) {
   for (size_t C = CachedLexPos + N - CachedTokens.size(); C > 0; --C) {
     CachedTokens.push_back(Token());
     Lex(CachedTokens.back());
-    if (isUnannotatedBacktrackEnabled())
-      UnannotatedBacktrackTokens.back().first.push_back(CachedTokens.back());
   }
   EnterCachingLexMode();
   return CachedTokens.back();
@@ -156,7 +124,7 @@ void Preprocessor::AnnotatePreviousCachedTokens(const Token &Tok) {
   for (CachedTokensTy::size_type i = CachedLexPos; i != 0; --i) {
     CachedTokensTy::iterator AnnotBegin = CachedTokens.begin() + i-1;
     if (AnnotBegin->getLocation() == Tok.getLocation()) {
-      assert((!isBacktrackEnabled() || LastBacktrackPos().first <= i) &&
+      assert((BacktrackPositions.empty() || BacktrackPositions.back() <= i) &&
              "The backtrack pos points inside the annotated tokens!");
       // Replace the cached tokens with the single annotation token.
       if (i < CachedLexPos)

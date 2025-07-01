@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
 #include "llvm/CodeGen/GlobalISel/Utils.h"
+#include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/LowLevelTypeUtils.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -30,11 +31,10 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/CodeGenTypes/LowLevelType.h"
-#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -49,13 +49,6 @@
 #include <utility>
 
 using namespace llvm;
-
-// Whether Big-endian GISel is enabled, defaults to off, can be enabled for
-// testing.
-static cl::opt<bool>
-    EnableGISelBigEndian("enable-arm-gisel-bigendian", cl::Hidden,
-                         cl::init(false),
-                         cl::desc("Enable Global-ISel Big Endian Lowering"));
 
 ARMCallLowering::ARMCallLowering(const ARMTargetLowering &TLI)
     : CallLowering(&TLI) {}
@@ -117,7 +110,7 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
   }
 
   void assignValueToReg(Register ValVReg, Register PhysReg,
-                        const CCValAssign &VA) override {
+                        CCValAssign VA) override {
     assert(VA.isRegLoc() && "Value shouldn't be assigned to reg");
     assert(VA.getLocReg() == PhysReg && "Assigning to the wrong reg?");
 
@@ -130,8 +123,7 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
   }
 
   void assignValueToAddress(Register ValVReg, Register Addr, LLT MemTy,
-                            const MachinePointerInfo &MPO,
-                            const CCValAssign &VA) override {
+                            MachinePointerInfo &MPO, CCValAssign &VA) override {
     Register ExtReg = extendRegister(ValVReg, VA);
     auto MMO = MIRBuilder.getMF().getMachineMemOperand(
         MPO, MachineMemOperand::MOStore, MemTy, Align(1));
@@ -143,14 +135,14 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
                              std::function<void()> *Thunk) override {
     assert(Arg.Regs.size() == 1 && "Can't handle multple regs yet");
 
-    const CCValAssign &VA = VAs[0];
+    CCValAssign VA = VAs[0];
     assert(VA.needsCustom() && "Value doesn't need custom handling");
 
     // Custom lowering for other types, such as f16, is currently not supported
     if (VA.getValVT() != MVT::f64)
       return 0;
 
-    const CCValAssign &NextVA = VAs[1];
+    CCValAssign NextVA = VAs[1];
     assert(NextVA.needsCustom() && "Value doesn't need custom handling");
     assert(NextVA.getValVT() == MVT::f64 && "Unsupported type");
 
@@ -173,11 +165,11 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
         assignValueToReg(NewRegs[0], VA.getLocReg(), VA);
         assignValueToReg(NewRegs[1], NextVA.getLocReg(), NextVA);
       };
-      return 2;
+      return 1;
     }
     assignValueToReg(NewRegs[0], VA.getLocReg(), VA);
     assignValueToReg(NewRegs[1], NextVA.getLocReg(), NextVA);
-    return 2;
+    return 1;
   }
 
   MachineInstrBuilder MIB;
@@ -263,8 +255,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
   }
 
   void assignValueToAddress(Register ValVReg, Register Addr, LLT MemTy,
-                            const MachinePointerInfo &MPO,
-                            const CCValAssign &VA) override {
+                            MachinePointerInfo &MPO, CCValAssign &VA) override {
     if (VA.getLocInfo() == CCValAssign::SExt ||
         VA.getLocInfo() == CCValAssign::ZExt) {
       // If the value is zero- or sign-extended, its size becomes 4 bytes, so
@@ -281,7 +272,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
   }
 
   MachineInstrBuilder buildLoad(const DstOp &Res, Register Addr, LLT MemTy,
-                                const MachinePointerInfo &MPO) {
+                                MachinePointerInfo &MPO) {
     MachineFunction &MF = MIRBuilder.getMF();
 
     auto MMO = MF.getMachineMemOperand(MPO, MachineMemOperand::MOLoad, MemTy,
@@ -290,7 +281,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
   }
 
   void assignValueToReg(Register ValVReg, Register PhysReg,
-                        const CCValAssign &VA) override {
+                        CCValAssign VA) override {
     assert(VA.isRegLoc() && "Value shouldn't be assigned to reg");
     assert(VA.getLocReg() == PhysReg && "Assigning to the wrong reg?");
 
@@ -319,14 +310,14 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
                              std::function<void()> *Thunk) override {
     assert(Arg.Regs.size() == 1 && "Can't handle multple regs yet");
 
-    const CCValAssign &VA = VAs[0];
+    CCValAssign VA = VAs[0];
     assert(VA.needsCustom() && "Value doesn't need custom handling");
 
     // Custom lowering for other types, such as f16, is currently not supported
     if (VA.getValVT() != MVT::f64)
       return 0;
 
-    const CCValAssign &NextVA = VAs[1];
+    CCValAssign NextVA = VAs[1];
     assert(NextVA.needsCustom() && "Value doesn't need custom handling");
     assert(NextVA.getValVT() == MVT::f64 && "Unsupported type");
 
@@ -348,7 +339,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
 
     MIRBuilder.buildMergeLikeInstr(Arg.Regs[0], NewRegs);
 
-    return 2;
+    return 1;
   }
 
   /// Marking a physical register as used is different between formal
@@ -546,5 +537,3 @@ bool ARMCallLowering::lowerCall(MachineIRBuilder &MIRBuilder, CallLoweringInfo &
 
   return true;
 }
-
-bool ARMCallLowering::enableBigEndian() const { return EnableGISelBigEndian; }

@@ -11,23 +11,7 @@
 //  llvm-dis [options] x.bc - Read LLVM bitcode from the x.bc file, write asm
 //                            to the x.ll file.
 //  Options:
-//
-//  Color Options:
-//      --color                 - Use colors in output (default=autodetect)
-//
-//  Disassembler Options:
-//      -f                      - Enable binary output on terminals
-//      --materialize-metadata  - Load module without materializing metadata,
-//                                then materialize only the metadata
-//      -o <filename>           - Override output filename
-//      --show-annotations      - Add informational comments to the .ll file
-//
-//  Generic Options:
-//      --help                  - Display available options
-//                                (--help-hidden for more)
-//      --help-list             - Display list of available options
-//                                (--help-list-hidden for more)
-//      --version               - Display the version of this program
+//      --help   - Output information about command line switches
 //
 //===----------------------------------------------------------------------===//
 
@@ -95,10 +79,6 @@ static cl::opt<bool> PrintThinLTOIndexOnly(
     "print-thinlto-index-only",
     cl::desc("Only read thinlto index and print the index as LLVM assembly."),
     cl::init(false), cl::Hidden, cl::cat(DisCategory));
-
-extern cl::opt<bool> WriteNewDbgInfoFormat;
-
-extern cl::opt<cl::boolOrDefault> LoadBitcodeIntoNewDbgInfoFormat;
 
 namespace {
 
@@ -187,9 +167,9 @@ int main(int argc, char **argv) {
   cl::HideUnrelatedOptions({&DisCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "llvm .bc -> .ll disassembler\n");
 
-  // Load bitcode into the new debug info format by default.
-  if (LoadBitcodeIntoNewDbgInfoFormat == cl::boolOrDefault::BOU_UNSET)
-    LoadBitcodeIntoNewDbgInfoFormat = cl::boolOrDefault::BOU_TRUE;
+  LLVMContext Context;
+  Context.setDiagnosticHandler(
+      std::make_unique<LLVMDisDiagnosticHandler>(argv[0]));
 
   if (InputFilenames.size() < 1) {
     InputFilenames.push_back("-");
@@ -199,13 +179,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  for (const auto &InputFilename : InputFilenames) {
-    // Use a fresh context for each input to avoid state
-    // cross-contamination across inputs (e.g. type name collisions).
-    LLVMContext Context;
-    Context.setDiagnosticHandler(
-        std::make_unique<LLVMDisDiagnosticHandler>(argv[0]));
-
+  for (std::string InputFilename : InputFilenames) {
     ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
         MemoryBuffer::getFileOrSTDIN(InputFilename);
     if (std::error_code EC = BufferOrErr.getError()) {
@@ -251,7 +225,7 @@ int main(int argc, char **argv) {
           FinalFilename = "-";
         } else {
           StringRef IFN = InputFilename;
-          FinalFilename = (IFN.ends_with(".bc") ? IFN.drop_back(3) : IFN).str();
+          FinalFilename = (IFN.endswith(".bc") ? IFN.drop_back(3) : IFN).str();
           if (N > 1)
             FinalFilename += std::string(".") + std::to_string(I);
           FinalFilename += ".ll";
@@ -275,12 +249,8 @@ int main(int argc, char **argv) {
 
       // All that llvm-dis does is write the assembly to a file.
       if (!DontPrint) {
-        if (M) {
-          M->setIsNewDbgInfoFormat(WriteNewDbgInfoFormat);
-          if (WriteNewDbgInfoFormat)
-            M->removeDebugIntrinsicDeclarations();
+        if (M)
           M->print(Out->os(), Annotator.get(), PreserveAssemblyUseListOrder);
-        }
         if (Index)
           Index->print(Out->os());
       }

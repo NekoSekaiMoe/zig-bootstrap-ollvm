@@ -61,12 +61,9 @@
 #ifndef _NDBM_H_
 #define	_NDBM_H_
 
-#include <_bounds.h>
 #include <_types.h>
 #include <sys/_types/_mode_t.h>
 #include <sys/_types/_size_t.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 #if !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
 /* Map dbm interface onto db(3). */
@@ -87,7 +84,7 @@ _LIBC_SINGLE_BY_DEFAULT()
 #endif
 
 typedef struct {
-	void *_LIBC_SIZE(dsize) dptr;
+	void *dptr;
 	size_t dsize;
 } datum;
 

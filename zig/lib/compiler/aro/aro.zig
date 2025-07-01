@@ -23,7 +23,6 @@ pub const version_str = backend.version_str;
 pub const version = backend.version;
 
 test {
-    _ = @import("aro/annex_g.zig");
     _ = @import("aro/Builtins.zig");
     _ = @import("aro/char_info.zig");
     _ = @import("aro/Compilation.zig");

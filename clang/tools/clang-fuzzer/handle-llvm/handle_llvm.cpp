@@ -48,9 +48,10 @@ using namespace llvm;
 typedef void (*LLVMFunc)(int*, int*, int*, int);
 
 // Helper function to parse command line args and find the optimization level
-static CodeGenOptLevel getOptLevel(const std::vector<const char *> &ExtraArgs) {
+static CodeGenOpt::Level
+getOptLevel(const std::vector<const char *> &ExtraArgs) {
   // Find the optimization level from the command line args
-  CodeGenOptLevel OLvl = CodeGenOptLevel::Default;
+  CodeGenOpt::Level OLvl = CodeGenOpt::Default;
   for (auto &A : ExtraArgs) {
     if (A[0] == '-' && A[1] == 'O') {
       if (auto Level = CodeGenOpt::parseLevel(A[2])) {
@@ -72,19 +73,19 @@ static void ErrorAndExit(std::string message) {
 // Helper function to add optimization passes to the TargetMachine at the 
 // specified optimization level, OptLevel
 static void RunOptimizationPasses(raw_ostream &OS, Module &M,
-                                  CodeGenOptLevel OptLevel) {
+                                  CodeGenOpt::Level OptLevel) {
   llvm::OptimizationLevel OL;
   switch (OptLevel) {
-  case CodeGenOptLevel::None:
+  case CodeGenOpt::None:
     OL = OptimizationLevel::O0;
     break;
-  case CodeGenOptLevel::Less:
+  case CodeGenOpt::Less:
     OL = OptimizationLevel::O1;
     break;
-  case CodeGenOptLevel::Default:
+  case CodeGenOpt::Default:
     OL = OptimizationLevel::O2;
     break;
-  case CodeGenOptLevel::Aggressive:
+  case CodeGenOpt::Aggressive:
     OL = OptimizationLevel::O3;
     break;
   }
@@ -109,7 +110,7 @@ static void RunOptimizationPasses(raw_ostream &OS, Module &M,
 }
 
 // Mimics the opt tool to run an optimization pass over the provided IR
-static std::string OptLLVM(const std::string &IR, CodeGenOptLevel OLvl) {
+static std::string OptLLVM(const std::string &IR, CodeGenOpt::Level OLvl) {
   // Create a module that will run the optimization passes
   SMDiagnostic Err;
   LLVMContext Context;
@@ -153,7 +154,7 @@ static void RunFuncOnInputs(LLVMFunc f, int Arr[kNumArrays][kArraySize]) {
 }
 
 // Takes a string of IR and compiles it using LLVM's JIT Engine
-static void CreateAndRunJITFunc(const std::string &IR, CodeGenOptLevel OLvl) {
+static void CreateAndRunJITFunc(const std::string &IR, CodeGenOpt::Level OLvl) {
   SMDiagnostic Err;
   LLVMContext Context;
   std::unique_ptr<Module> M = parseIR(MemoryBufferRef(IR, "IR"), Err, Context);
@@ -185,10 +186,26 @@ static void CreateAndRunJITFunc(const std::string &IR, CodeGenOptLevel OLvl) {
   EE->finalizeObject();
   EE->runStaticConstructorsDestructors(false);
 
+#if defined(__GNUC__) && !defined(__clang) &&                                  \
+    ((__GNUC__ == 4) && (__GNUC_MINOR__ < 9))
+// Silence
+//
+//   warning: ISO C++ forbids casting between pointer-to-function and
+//   pointer-to-object [-Wpedantic]
+//
+// Since C++11 this casting is conditionally supported and GCC versions
+// starting from 4.9.0 don't warn about the cast.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
   LLVMFunc f = reinterpret_cast<LLVMFunc>(EE->getPointerToFunction(EntryFunc));
+#if defined(__GNUC__) && !defined(__clang) &&                                  \
+    ((__GNUC__ == 4) && (__GNUC_MINOR__ < 9))
+#pragma GCC diagnostic pop
+#endif
 
   // Figure out if we are running the optimized func or the unoptimized func
-  RunFuncOnInputs(f, (OLvl == CodeGenOptLevel::None) ? UnoptArrays : OptArrays);
+  RunFuncOnInputs(f, (OLvl == CodeGenOpt::None) ? UnoptArrays : OptArrays);
 
   EE->runStaticConstructorsDestructors(true);
 }
@@ -202,13 +219,13 @@ void clang_fuzzer::HandleLLVM(const std::string &IR,
   memcpy(UnoptArrays, InputArrays, kTotalSize);
 
   // Parse ExtraArgs to set the optimization level
-  CodeGenOptLevel OLvl = getOptLevel(ExtraArgs);
+  CodeGenOpt::Level OLvl = getOptLevel(ExtraArgs);
 
   // First we optimize the IR by running a loop vectorizer pass
   std::string OptIR = OptLLVM(IR, OLvl);
 
   CreateAndRunJITFunc(OptIR, OLvl);
-  CreateAndRunJITFunc(IR, CodeGenOptLevel::None);
+  CreateAndRunJITFunc(IR, CodeGenOpt::None);
 
   if (memcmp(OptArrays, UnoptArrays, kTotalSize))
     ErrorAndExit("!!!BUG!!!");

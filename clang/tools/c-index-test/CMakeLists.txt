@@ -27,6 +27,7 @@ else()
     libclang
     clangAST
     clangBasic
+    clangCodeGen
     clangFrontend
     clangIndex
     clangSerialization

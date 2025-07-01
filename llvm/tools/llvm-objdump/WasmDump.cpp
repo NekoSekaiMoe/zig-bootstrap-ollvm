@@ -25,7 +25,7 @@ class WasmDumper : public objdump::Dumper {
 
 public:
   WasmDumper(const WasmObjectFile &O) : Dumper(O), Obj(O) {}
-  void printPrivateHeaders() override;
+  void printPrivateHeaders(bool MachOOnlyFirst) override;
 };
 } // namespace
 
@@ -34,7 +34,7 @@ objdump::createWasmDumper(const object::WasmObjectFile &Obj) {
   return std::make_unique<WasmDumper>(Obj);
 }
 
-void WasmDumper::printPrivateHeaders() {
+void WasmDumper::printPrivateHeaders(bool) {
   outs() << "Program Header:\n";
   outs() << "Version: 0x";
   outs().write_hex(Obj.getHeader().Version);

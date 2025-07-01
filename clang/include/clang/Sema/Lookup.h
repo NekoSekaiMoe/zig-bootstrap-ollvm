@@ -117,17 +117,6 @@ public:
     /// @endcode
     AmbiguousReference,
 
-    /// Name lookup results in an ambiguity because multiple placeholder
-    /// variables were found in the same scope.
-    /// @code
-    /// void f() {
-    ///    int _ = 0;
-    ///    int _ = 0;
-    ///    return _; // ambiguous use of placeholder variable
-    /// }
-    /// @endcode
-    AmbiguousReferenceToPlaceholderVariable,
-
     /// Name lookup results in an ambiguity because an entity with a
     /// tag name was hidden by an entity with an ordinary name from
     /// a different context.
@@ -153,30 +142,26 @@ public:
 
   using iterator = UnresolvedSetImpl::iterator;
 
-  LookupResult(
-      Sema &SemaRef, const DeclarationNameInfo &NameInfo,
-      Sema::LookupNameKind LookupKind,
-      RedeclarationKind Redecl = RedeclarationKind::NotForRedeclaration)
+  LookupResult(Sema &SemaRef, const DeclarationNameInfo &NameInfo,
+               Sema::LookupNameKind LookupKind,
+               Sema::RedeclarationKind Redecl = Sema::NotForRedeclaration)
       : SemaPtr(&SemaRef), NameInfo(NameInfo), LookupKind(LookupKind),
-        Redecl(Redecl != RedeclarationKind::NotForRedeclaration),
-        ExternalRedecl(Redecl == RedeclarationKind::ForExternalRedeclaration),
-        DiagnoseAccess(Redecl == RedeclarationKind::NotForRedeclaration),
-        DiagnoseAmbiguous(Redecl == RedeclarationKind::NotForRedeclaration) {
+        Redecl(Redecl != Sema::NotForRedeclaration),
+        ExternalRedecl(Redecl == Sema::ForExternalRedeclaration),
+        Diagnose(Redecl == Sema::NotForRedeclaration) {
     configure();
   }
 
   // TODO: consider whether this constructor should be restricted to take
   // as input a const IdentifierInfo* (instead of Name),
   // forcing other cases towards the constructor taking a DNInfo.
-  LookupResult(
-      Sema &SemaRef, DeclarationName Name, SourceLocation NameLoc,
-      Sema::LookupNameKind LookupKind,
-      RedeclarationKind Redecl = RedeclarationKind::NotForRedeclaration)
+  LookupResult(Sema &SemaRef, DeclarationName Name,
+               SourceLocation NameLoc, Sema::LookupNameKind LookupKind,
+               Sema::RedeclarationKind Redecl = Sema::NotForRedeclaration)
       : SemaPtr(&SemaRef), NameInfo(Name, NameLoc), LookupKind(LookupKind),
-        Redecl(Redecl != RedeclarationKind::NotForRedeclaration),
-        ExternalRedecl(Redecl == RedeclarationKind::ForExternalRedeclaration),
-        DiagnoseAccess(Redecl == RedeclarationKind::NotForRedeclaration),
-        DiagnoseAmbiguous(Redecl == RedeclarationKind::NotForRedeclaration) {
+        Redecl(Redecl != Sema::NotForRedeclaration),
+        ExternalRedecl(Redecl == Sema::ForExternalRedeclaration),
+        Diagnose(Redecl == Sema::NotForRedeclaration) {
     configure();
   }
 
@@ -207,14 +192,12 @@ public:
         Redecl(std::move(Other.Redecl)),
         ExternalRedecl(std::move(Other.ExternalRedecl)),
         HideTags(std::move(Other.HideTags)),
-        DiagnoseAccess(std::move(Other.DiagnoseAccess)),
-        DiagnoseAmbiguous(std::move(Other.DiagnoseAmbiguous)),
+        Diagnose(std::move(Other.Diagnose)),
         AllowHidden(std::move(Other.AllowHidden)),
         Shadowed(std::move(Other.Shadowed)),
         TemplateNameLookup(std::move(Other.TemplateNameLookup)) {
     Other.Paths = nullptr;
-    Other.DiagnoseAccess = false;
-    Other.DiagnoseAmbiguous = false;
+    Other.Diagnose = false;
   }
 
   LookupResult &operator=(LookupResult &&Other) {
@@ -232,22 +215,17 @@ public:
     Redecl = std::move(Other.Redecl);
     ExternalRedecl = std::move(Other.ExternalRedecl);
     HideTags = std::move(Other.HideTags);
-    DiagnoseAccess = std::move(Other.DiagnoseAccess);
-    DiagnoseAmbiguous = std::move(Other.DiagnoseAmbiguous);
+    Diagnose = std::move(Other.Diagnose);
     AllowHidden = std::move(Other.AllowHidden);
     Shadowed = std::move(Other.Shadowed);
     TemplateNameLookup = std::move(Other.TemplateNameLookup);
     Other.Paths = nullptr;
-    Other.DiagnoseAccess = false;
-    Other.DiagnoseAmbiguous = false;
+    Other.Diagnose = false;
     return *this;
   }
 
   ~LookupResult() {
-    if (DiagnoseAccess)
-      diagnoseAccess();
-    if (DiagnoseAmbiguous)
-      diagnoseAmbiguous();
+    if (Diagnose) diagnose();
     if (Paths) deletePaths(Paths);
   }
 
@@ -287,10 +265,9 @@ public:
     return ExternalRedecl;
   }
 
-  RedeclarationKind redeclarationKind() const {
-    return ExternalRedecl ? RedeclarationKind::ForExternalRedeclaration
-           : Redecl       ? RedeclarationKind::ForVisibleRedeclaration
-                          : RedeclarationKind::NotForRedeclaration;
+  Sema::RedeclarationKind redeclarationKind() const {
+    return ExternalRedecl ? Sema::ForExternalRedeclaration :
+           Redecl ? Sema::ForVisibleRedeclaration : Sema::NotForRedeclaration;
   }
 
   /// Specify whether hidden declarations are visible, e.g.,
@@ -499,9 +476,7 @@ public:
   /// Note that while no result was found in the current instantiation,
   /// there were dependent base classes that could not be searched.
   void setNotFoundInCurrentInstantiation() {
-    assert((ResultKind == NotFound ||
-            ResultKind == NotFoundInCurrentInstantiation) &&
-           Decls.empty());
+    assert(ResultKind == NotFound && Decls.empty());
     ResultKind = NotFoundInCurrentInstantiation;
   }
 
@@ -620,9 +595,9 @@ public:
   }
 
   /// Change this lookup's redeclaration kind.
-  void setRedeclarationKind(RedeclarationKind RK) {
-    Redecl = (RK != RedeclarationKind::NotForRedeclaration);
-    ExternalRedecl = (RK == RedeclarationKind::ForExternalRedeclaration);
+  void setRedeclarationKind(Sema::RedeclarationKind RK) {
+    Redecl = (RK != Sema::NotForRedeclaration);
+    ExternalRedecl = (RK == Sema::ForExternalRedeclaration);
     configure();
   }
 
@@ -632,20 +607,13 @@ public:
   /// Suppress the diagnostics that would normally fire because of this
   /// lookup.  This happens during (e.g.) redeclaration lookups.
   void suppressDiagnostics() {
-    DiagnoseAccess = false;
-    DiagnoseAmbiguous = false;
+    Diagnose = false;
   }
 
-  /// Suppress the diagnostics that would normally fire because of this
-  /// lookup due to access control violations.
-  void suppressAccessDiagnostics() { DiagnoseAccess = false; }
-
-  /// Determines whether this lookup is suppressing access control diagnostics.
-  bool isSuppressingAccessDiagnostics() const { return !DiagnoseAccess; }
-
-  /// Determines whether this lookup is suppressing ambiguous lookup
-  /// diagnostics.
-  bool isSuppressingAmbiguousDiagnostics() const { return !DiagnoseAmbiguous; }
+  /// Determines whether this lookup is suppressing diagnostics.
+  bool isSuppressingDiagnostics() const {
+    return !Diagnose;
+  }
 
   /// Sets a 'context' source range.
   void setContextRange(SourceRange SR) {
@@ -758,15 +726,11 @@ public:
   }
 
 private:
-  void diagnoseAccess() {
-    if (!isAmbiguous() && isClassLookup() &&
-        getSema().getLangOpts().AccessControl)
-      getSema().CheckLookupAccess(*this);
-  }
-
-  void diagnoseAmbiguous() {
+  void diagnose() {
     if (isAmbiguous())
       getSema().DiagnoseAmbiguousLookup(*this);
+    else if (isClassLookup() && getSema().getLangOpts().AccessControl)
+      getSema().CheckLookupAccess(*this);
   }
 
   void setAmbiguous(AmbiguityKind AK) {
@@ -812,8 +776,7 @@ private:
   ///   are present
   bool HideTags = true;
 
-  bool DiagnoseAccess = false;
-  bool DiagnoseAmbiguous = false;
+  bool Diagnose = false;
 
   /// True if we should allow hidden declarations to be 'visible'.
   bool AllowHidden = false;

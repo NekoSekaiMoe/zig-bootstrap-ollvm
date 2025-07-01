@@ -82,8 +82,6 @@ const char *getEdgeKindName(Edge::Kind K) {
     return "CallRelaxable";
   case AlignRelaxable:
     return "AlignRelaxable";
-  case NegDelta32:
-    return "NegDelta32";
   }
   return getGenericEdgeKindName(K);
 }

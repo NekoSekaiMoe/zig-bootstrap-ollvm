@@ -5,5 +5,7 @@
 ;
 LIBRARY "X3DAudio1_2.dll"
 EXPORTS
-X3DAudioCalculate@20 == _X3DAudioCalculate@20
-X3DAudioInitialize@12 == _X3DAudioInitialize@12
+;_X3DAudioCalculate@20@20
+;_X3DAudioInitialize@12@12
+_X3DAudioCalculate@20 == _X3DAudioCalculate@20
+_X3DAudioInitialize@12 == _X3DAudioInitialize@12

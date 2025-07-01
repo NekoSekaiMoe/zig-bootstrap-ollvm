@@ -22,36 +22,37 @@ include "llvm/Target/Target.td"
 // WebAssembly Subtarget features.
 //===----------------------------------------------------------------------===//
 
+def FeatureSIMD128 : SubtargetFeature<"simd128", "SIMDLevel", "SIMD128",
+                                      "Enable 128-bit SIMD">;
+
+def FeatureRelaxedSIMD : SubtargetFeature<"relaxed-simd", "SIMDLevel", "RelaxedSIMD",
+                                      "Enable relaxed-simd instructions">;
+
 def FeatureAtomics : SubtargetFeature<"atomics", "HasAtomics", "true",
                                       "Enable Atomics">;
 
-def FeatureBulkMemory :
-      SubtargetFeature<"bulk-memory", "HasBulkMemory", "true",
-                       "Enable bulk memory operations">;
+def FeatureNontrappingFPToInt :
+      SubtargetFeature<"nontrapping-fptoint",
+                       "HasNontrappingFPToInt", "true",
+                       "Enable non-trapping float-to-int conversion operators">;
 
-def FeatureBulkMemoryOpt :
-      SubtargetFeature<"bulk-memory-opt", "HasBulkMemoryOpt", "true",
-                       "Enable bulk memory optimization operations">;
+def FeatureSignExt :
+      SubtargetFeature<"sign-ext",
+                       "HasSignExt", "true",
+                       "Enable sign extension operators">;
 
-def FeatureCallIndirectOverlong :
-      SubtargetFeature<"call-indirect-overlong", "HasCallIndirectOverlong", "true",
-                       "Enable overlong encoding for call_indirect immediates">;
+def FeatureTailCall :
+      SubtargetFeature<"tail-call",
+                       "HasTailCall", "true",
+                       "Enable tail call instructions">;
 
 def FeatureExceptionHandling :
       SubtargetFeature<"exception-handling", "HasExceptionHandling", "true",
                        "Enable Wasm exception handling">;
 
-def FeatureExtendedConst :
-      SubtargetFeature<"extended-const", "HasExtendedConst", "true",
-                       "Enable extended const expressions">;
-
-def FeatureFP16 :
-      SubtargetFeature<"fp16", "HasFP16", "true",
-                       "Enable FP16 instructions">;
-
-def FeatureMultiMemory :
-      SubtargetFeature<"multimemory", "HasMultiMemory", "true",
-                       "Enable multiple memories">;
+def FeatureBulkMemory :
+      SubtargetFeature<"bulk-memory", "HasBulkMemory", "true",
+                       "Enable bulk memory operations">;
 
 def FeatureMultivalue :
       SubtargetFeature<"multivalue",
@@ -62,33 +63,13 @@ def FeatureMutableGlobals :
       SubtargetFeature<"mutable-globals", "HasMutableGlobals", "true",
                        "Enable mutable globals">;
 
-def FeatureNontrappingFPToInt :
-      SubtargetFeature<"nontrapping-fptoint",
-                       "HasNontrappingFPToInt", "true",
-                       "Enable non-trapping float-to-int conversion operators">;
-
 def FeatureReferenceTypes :
       SubtargetFeature<"reference-types", "HasReferenceTypes", "true",
                        "Enable reference types">;
 
-def FeatureRelaxedSIMD :
-      SubtargetFeature<"relaxed-simd", "SIMDLevel", "RelaxedSIMD",
-                       "Enable relaxed-simd instructions">;
-
-def FeatureSignExt :
-      SubtargetFeature<"sign-ext", "HasSignExt", "true",
-                       "Enable sign extension operators">;
-
-def FeatureSIMD128 : SubtargetFeature<"simd128", "SIMDLevel", "SIMD128",
-                                      "Enable 128-bit SIMD">;
-
-def FeatureTailCall :
-      SubtargetFeature<"tail-call", "HasTailCall", "true",
-                       "Enable tail call instructions">;
-
-def FeatureWideArithmetic :
-      SubtargetFeature<"wide-arithmetic", "HasWideArithmetic", "true",
-                       "Enable wide-arithmetic instructions">;
+def FeatureExtendedConst :
+      SubtargetFeature<"extended-const", "HasExtendedConst", "true",
+                       "Enable extended const expressions">;
 
 //===----------------------------------------------------------------------===//
 // Architectures.
@@ -122,26 +103,13 @@ def : ProcessorModel<"mvp", NoSchedModel, []>;
 // consideration given to available support in relevant engines and tools, and
 // the importance of the features.
 def : ProcessorModel<"generic", NoSchedModel,
-                      [FeatureBulkMemory, FeatureBulkMemoryOpt,
-                       FeatureCallIndirectOverlong, FeatureMultivalue,
-                       FeatureMutableGlobals, FeatureNontrappingFPToInt,
-                       FeatureReferenceTypes, FeatureSignExt]>;
-
-// Lime1: <https://github.com/WebAssembly/tool-conventions/blob/main/Lime.md#lime1>
-def : ProcessorModel<"lime1", NoSchedModel,
-                      [FeatureBulkMemoryOpt, FeatureCallIndirectOverlong,
-                       FeatureExtendedConst, FeatureMultivalue,
-                       FeatureMutableGlobals, FeatureNontrappingFPToInt,
-                       FeatureSignExt]>;
+                      [FeatureSignExt, FeatureMutableGlobals]>;
 
 // Latest and greatest experimental version of WebAssembly. Bugs included!
 def : ProcessorModel<"bleeding-edge", NoSchedModel,
-                      [FeatureAtomics, FeatureBulkMemory, FeatureBulkMemoryOpt,
-                       FeatureCallIndirectOverlong, FeatureExceptionHandling,
-                       FeatureExtendedConst, FeatureFP16, FeatureMultiMemory,
-                       FeatureMultivalue, FeatureMutableGlobals,
-                       FeatureNontrappingFPToInt, FeatureRelaxedSIMD,
-                       FeatureReferenceTypes, FeatureSIMD128, FeatureSignExt,
+                      [FeatureSIMD128, FeatureAtomics,
+                       FeatureNontrappingFPToInt, FeatureSignExt,
+                       FeatureMutableGlobals, FeatureBulkMemory,
                        FeatureTailCall]>;
 
 //===----------------------------------------------------------------------===//

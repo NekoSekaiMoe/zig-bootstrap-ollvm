@@ -11,10 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/CodeGen/OptimizePHIs.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
@@ -33,62 +33,47 @@ STATISTIC(NumDeadPHICycles, "Number of dead PHI cycles");
 
 namespace {
 
-class OptimizePHIs {
-  MachineRegisterInfo *MRI = nullptr;
-  const TargetInstrInfo *TII = nullptr;
+  class OptimizePHIs : public MachineFunctionPass {
+    MachineRegisterInfo *MRI = nullptr;
+    const TargetInstrInfo *TII = nullptr;
 
-public:
-  bool run(MachineFunction &Fn);
+  public:
+    static char ID; // Pass identification
 
-private:
-  using InstrSet = SmallPtrSet<MachineInstr *, 16>;
-  using InstrSetIterator = SmallPtrSetIterator<MachineInstr *>;
+    OptimizePHIs() : MachineFunctionPass(ID) {
+      initializeOptimizePHIsPass(*PassRegistry::getPassRegistry());
+    }
 
-  bool IsSingleValuePHICycle(MachineInstr *MI, unsigned &SingleValReg,
-                             InstrSet &PHIsInCycle);
-  bool IsDeadPHICycle(MachineInstr *MI, InstrSet &PHIsInCycle);
-  bool OptimizeBB(MachineBasicBlock &MBB);
-};
+    bool runOnMachineFunction(MachineFunction &Fn) override;
 
-class OptimizePHIsLegacy : public MachineFunctionPass {
-public:
-  static char ID;
-  OptimizePHIsLegacy() : MachineFunctionPass(ID) {
-    initializeOptimizePHIsLegacyPass(*PassRegistry::getPassRegistry());
-  }
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+      AU.setPreservesCFG();
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
 
-  bool runOnMachineFunction(MachineFunction &MF) override {
-    if (skipFunction(MF.getFunction()))
-      return false;
-    OptimizePHIs OP;
-    return OP.run(MF);
-  }
+  private:
+    using InstrSet = SmallPtrSet<MachineInstr *, 16>;
+    using InstrSetIterator = SmallPtrSetIterator<MachineInstr *>;
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesCFG();
-    MachineFunctionPass::getAnalysisUsage(AU);
-  }
-};
+    bool IsSingleValuePHICycle(MachineInstr *MI, unsigned &SingleValReg,
+                               InstrSet &PHIsInCycle);
+    bool IsDeadPHICycle(MachineInstr *MI, InstrSet &PHIsInCycle);
+    bool OptimizeBB(MachineBasicBlock &MBB);
+  };
+
 } // end anonymous namespace
 
-char OptimizePHIsLegacy::ID = 0;
+char OptimizePHIs::ID = 0;
 
-char &llvm::OptimizePHIsLegacyID = OptimizePHIsLegacy::ID;
+char &llvm::OptimizePHIsID = OptimizePHIs::ID;
 
-INITIALIZE_PASS(OptimizePHIsLegacy, DEBUG_TYPE,
+INITIALIZE_PASS(OptimizePHIs, DEBUG_TYPE,
                 "Optimize machine instruction PHIs", false, false)
 
-PreservedAnalyses OptimizePHIsPass::run(MachineFunction &MF,
-                                        MachineFunctionAnalysisManager &MFAM) {
-  OptimizePHIs OP;
-  if (!OP.run(MF))
-    return PreservedAnalyses::all();
-  auto PA = getMachineFunctionPassPreservedAnalyses();
-  PA.preserveSet<CFGAnalyses>();
-  return PA;
-}
+bool OptimizePHIs::runOnMachineFunction(MachineFunction &Fn) {
+  if (skipFunction(Fn.getFunction()))
+    return false;
 
-bool OptimizePHIs::run(MachineFunction &Fn) {
   MRI = &Fn.getRegInfo();
   TII = Fn.getSubtarget().getInstrInfo();
 

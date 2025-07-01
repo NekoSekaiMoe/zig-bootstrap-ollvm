@@ -85,10 +85,10 @@ namespace {
       AU.setPreservesCFG();
       AU.addRequired<AAResultsWrapperPass>();
       AU.addRequired<TargetPassConfig>();
-      AU.addRequired<MachineDominatorTreeWrapperPass>();
-      AU.addPreserved<MachineDominatorTreeWrapperPass>();
-      AU.addRequired<MachineLoopInfoWrapperPass>();
-      AU.addPreserved<MachineLoopInfoWrapperPass>();
+      AU.addRequired<MachineDominatorTree>();
+      AU.addPreserved<MachineDominatorTree>();
+      AU.addRequired<MachineLoopInfo>();
+      AU.addPreserved<MachineLoopInfo>();
       MachineFunctionPass::getAnalysisUsage(AU);
     }
 
@@ -98,6 +98,12 @@ namespace {
     }
 
     bool runOnMachineFunction(MachineFunction &Fn) override;
+
+  private:
+    bool enablePostRAScheduler(
+        const TargetSubtargetInfo &ST, CodeGenOpt::Level OptLevel,
+        TargetSubtargetInfo::AntiDepBreakMode &Mode,
+        TargetSubtargetInfo::RegClassVector &CriticalPathRCs) const;
   };
   char PostRAScheduler::ID = 0;
 
@@ -253,8 +259,14 @@ LLVM_DUMP_METHOD void SchedulePostRATDList::dumpSchedule() const {
 }
 #endif
 
-static bool enablePostRAScheduler(const TargetSubtargetInfo &ST,
-                                  CodeGenOptLevel OptLevel) {
+bool PostRAScheduler::enablePostRAScheduler(
+    const TargetSubtargetInfo &ST,
+    CodeGenOpt::Level OptLevel,
+    TargetSubtargetInfo::AntiDepBreakMode &Mode,
+    TargetSubtargetInfo::RegClassVector &CriticalPathRCs) const {
+  Mode = ST.getAntiDepBreakMode();
+  ST.getCriticalPathRCs(CriticalPathRCs);
+
   // Check for explicit enable/disable of post-ra scheduling.
   if (EnablePostRAScheduler.getPosition() > 0)
     return EnablePostRAScheduler;
@@ -267,17 +279,24 @@ bool PostRAScheduler::runOnMachineFunction(MachineFunction &Fn) {
   if (skipFunction(Fn.getFunction()))
     return false;
 
-  const auto &Subtarget = Fn.getSubtarget();
+  TII = Fn.getSubtarget().getInstrInfo();
+  MachineLoopInfo &MLI = getAnalysis<MachineLoopInfo>();
+  AliasAnalysis *AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
   TargetPassConfig *PassConfig = &getAnalysis<TargetPassConfig>();
+
+  RegClassInfo.runOnMachineFunction(Fn);
+
+  TargetSubtargetInfo::AntiDepBreakMode AntiDepMode =
+    TargetSubtargetInfo::ANTIDEP_NONE;
+  SmallVector<const TargetRegisterClass*, 4> CriticalPathRCs;
+
   // Check that post-RA scheduling is enabled for this target.
-  if (!enablePostRAScheduler(Subtarget, PassConfig->getOptLevel()))
+  // This may upgrade the AntiDepMode.
+  if (!enablePostRAScheduler(Fn.getSubtarget(), PassConfig->getOptLevel(),
+                             AntiDepMode, CriticalPathRCs))
     return false;
 
-  TII = Subtarget.getInstrInfo();
-  MachineLoopInfo &MLI = getAnalysis<MachineLoopInfoWrapperPass>().getLI();
-  AliasAnalysis *AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  TargetSubtargetInfo::AntiDepBreakMode AntiDepMode =
-      Subtarget.getAntiDepBreakMode();
+  // Check for antidep breaking override...
   if (EnableAntiDepBreaking.getPosition() > 0) {
     AntiDepMode = (EnableAntiDepBreaking == "all")
       ? TargetSubtargetInfo::ANTIDEP_ALL
@@ -285,9 +304,6 @@ bool PostRAScheduler::runOnMachineFunction(MachineFunction &Fn) {
          ? TargetSubtargetInfo::ANTIDEP_CRITICAL
          : TargetSubtargetInfo::ANTIDEP_NONE);
   }
-  SmallVector<const TargetRegisterClass *, 4> CriticalPathRCs;
-  Subtarget.getCriticalPathRCs(CriticalPathRCs);
-  RegClassInfo.runOnMachineFunction(Fn);
 
   LLVM_DEBUG(dbgs() << "PostRAScheduler\n");
 

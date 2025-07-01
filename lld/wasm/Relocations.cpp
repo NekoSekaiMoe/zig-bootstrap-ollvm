@@ -19,16 +19,14 @@ using namespace llvm::wasm;
 namespace lld::wasm {
 
 static bool requiresGOTAccess(const Symbol *sym) {
-  if (sym->isShared())
-    return true;
-  if (!ctx.isPic &&
-      ctx.arg.unresolvedSymbols != UnresolvedPolicy::ImportDynamic)
+  if (!config->isPic &&
+      config->unresolvedSymbols != UnresolvedPolicy::ImportDynamic)
     return false;
   if (sym->isHidden() || sym->isLocal())
     return false;
   // With `-Bsymbolic` (or when building an executable) as don't need to use
   // the GOT for symbols that are defined within the current module.
-  if (sym->isDefined() && (!ctx.arg.shared || ctx.arg.bsymbolic))
+  if (sym->isDefined() && (!config->shared || config->bsymbolic))
     return false;
   return true;
 }
@@ -38,39 +36,38 @@ static bool allowUndefined(const Symbol* sym) {
   // link time.
   if (sym->isImported())
     return true;
-  if (isa<UndefinedFunction>(sym) && ctx.arg.importUndefined)
+  if (isa<UndefinedFunction>(sym) && config->importUndefined)
     return true;
 
-  return ctx.arg.allowUndefinedSymbols.count(sym->getName()) != 0;
+  return config->allowUndefinedSymbols.count(sym->getName()) != 0;
 }
 
-static void reportUndefined(ObjFile *file, Symbol *sym) {
+static void reportUndefined(Symbol *sym) {
   if (!allowUndefined(sym)) {
-    switch (ctx.arg.unresolvedSymbols) {
+    switch (config->unresolvedSymbols) {
     case UnresolvedPolicy::ReportError:
-      error(toString(file) + ": undefined symbol: " + toString(*sym));
+      error(toString(sym->getFile()) + ": undefined symbol: " + toString(*sym));
       break;
     case UnresolvedPolicy::Warn:
-      warn(toString(file) + ": undefined symbol: " + toString(*sym));
+      warn(toString(sym->getFile()) + ": undefined symbol: " + toString(*sym));
       break;
     case UnresolvedPolicy::Ignore:
       LLVM_DEBUG(dbgs() << "ignoring undefined symbol: " + toString(*sym) +
                                "\n");
+      if (!config->importUndefined) {
+        if (auto *f = dyn_cast<UndefinedFunction>(sym)) {
+          if (!f->stubFunction) {
+            f->stubFunction = symtab->createUndefinedStub(*f->getSignature());
+            f->stubFunction->markLive();
+            // Mark the function itself as a stub which prevents it from being
+            // assigned a table entry.
+            f->isStub = true;
+          }
+        }
+      }
       break;
     case UnresolvedPolicy::ImportDynamic:
       break;
-    }
-
-    if (auto *f = dyn_cast<UndefinedFunction>(sym)) {
-      if (!f->stubFunction &&
-          ctx.arg.unresolvedSymbols != UnresolvedPolicy::ImportDynamic &&
-          !ctx.arg.importUndefined) {
-        f->stubFunction = symtab->createUndefinedStub(*f->getSignature());
-        f->stubFunction->markLive();
-        // Mark the function itself as a stub which prevents it from being
-        // assigned a table entry.
-        f->isStub = true;
-      }
     }
   }
 }
@@ -125,7 +122,7 @@ void scanRelocations(InputChunk *chunk) {
       // In single-threaded builds TLS is lowered away and TLS data can be
       // merged with normal data and allowing TLS relocation in non-TLS
       // segments.
-      if (ctx.arg.sharedMemory) {
+      if (config->sharedMemory) {
         if (!sym->isTLS()) {
           error(toString(file) + ": relocation " +
                 relocTypeToString(reloc.Type) +
@@ -144,9 +141,9 @@ void scanRelocations(InputChunk *chunk) {
       break;
     }
 
-    if (ctx.isPic || sym->isShared() ||
+    if (config->isPic ||
         (sym->isUndefined() &&
-         ctx.arg.unresolvedSymbols == UnresolvedPolicy::ImportDynamic)) {
+         config->unresolvedSymbols == UnresolvedPolicy::ImportDynamic)) {
       switch (reloc.Type) {
       case R_WASM_TABLE_INDEX_SLEB:
       case R_WASM_TABLE_INDEX_SLEB64:
@@ -165,33 +162,15 @@ void scanRelocations(InputChunk *chunk) {
       case R_WASM_MEMORY_ADDR_I32:
       case R_WASM_MEMORY_ADDR_I64:
         // These relocation types are only present in the data section and
-        // will be converted into code by `generateRelocationCode`.  This
-        // code requires the symbols to have GOT entries.
+        // will be converted into code by `generateRelocationCode`.  This code
+        // requires the symbols to have GOT entries.
         if (requiresGOTAccess(sym))
           addGOTEntry(sym);
         break;
       }
-    }
-
-    if (!ctx.arg.relocatable && sym->isUndefined()) {
-      switch (reloc.Type) {
-      case R_WASM_TABLE_INDEX_REL_SLEB:
-      case R_WASM_TABLE_INDEX_REL_SLEB64:
-      case R_WASM_MEMORY_ADDR_REL_SLEB:
-      case R_WASM_MEMORY_ADDR_REL_SLEB64:
-        // These relocation types are for symbols that exists relative to
-        // `__memory_base` or `__table_base` and as such only make sense for
-        // defined symbols.
-        error(toString(file) + ": relocation " + relocTypeToString(reloc.Type) +
-              " is not supported against an undefined symbol `" +
-              toString(*sym) + "`");
-        break;
-      }
-
-      if (!sym->isWeak()) {
-        // Report undefined symbols
-        reportUndefined(file, sym);
-      }
+    } else if (sym->isUndefined() && !config->relocatable && !sym->isWeak()) {
+      // Report undefined symbols
+      reportUndefined(sym);
     }
   }
 }

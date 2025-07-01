@@ -13,7 +13,6 @@
 #ifndef LLVM_LIB_TARGET_AARCH64_AARCH64REGISTERBANKINFO_H
 #define LLVM_LIB_TARGET_AARCH64_AARCH64REGISTERBANKINFO_H
 
-#include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
 #include "llvm/CodeGen/RegisterBankInfo.h"
 
 #define GET_REGBANK_DECLARATIONS
@@ -43,9 +42,9 @@ protected:
     PMI_Min = PMI_FirstFPR,
   };
 
-  static const RegisterBankInfo::PartialMapping PartMappings[];
-  static const RegisterBankInfo::ValueMapping ValMappings[];
-  static const PartialMappingIdx BankIDToCopyMapIdx[];
+  static RegisterBankInfo::PartialMapping PartMappings[];
+  static RegisterBankInfo::ValueMapping ValMappings[];
+  static PartialMappingIdx BankIDToCopyMapIdx[];
 
   enum ValueMappingIdx {
     InvalidIdx = 0,
@@ -70,7 +69,7 @@ protected:
                                      PartialMappingIdx LastAlias,
                                      ArrayRef<PartialMappingIdx> Order);
 
-  static unsigned getRegBankBaseIdxOffset(unsigned RBIdx, TypeSize Size);
+  static unsigned getRegBankBaseIdxOffset(unsigned RBIdx, unsigned Size);
 
   /// Get the pointer to the ValueMapping representing the RegisterBank
   /// at \p RBIdx with a size of \p Size.
@@ -80,13 +79,13 @@ protected:
   ///
   /// \pre \p RBIdx != PartialMappingIdx::None
   static const RegisterBankInfo::ValueMapping *
-  getValueMapping(PartialMappingIdx RBIdx, TypeSize Size);
+  getValueMapping(PartialMappingIdx RBIdx, unsigned Size);
 
   /// Get the pointer to the ValueMapping of the operands of a copy
   /// instruction from the \p SrcBankID register bank to the \p DstBankID
   /// register bank with a size of \p Size.
   static const RegisterBankInfo::ValueMapping *
-  getCopyMapping(unsigned DstBankID, unsigned SrcBankID, TypeSize Size);
+  getCopyMapping(unsigned DstBankID, unsigned SrcBankID, unsigned Size);
 
   /// Get the instruction mapping for G_FPEXT.
   ///
@@ -104,8 +103,7 @@ protected:
 /// This class provides the information for the target register banks.
 class AArch64RegisterBankInfo final : public AArch64GenRegisterBankInfo {
   /// See RegisterBankInfo::applyMapping.
-  void applyMappingImpl(MachineIRBuilder &Builder,
-                        const OperandsMapper &OpdMapper) const override;
+  void applyMappingImpl(const OperandsMapper &OpdMapper) const override;
 
   /// Get an instruction mapping where all the operands map to
   /// the same register bank and have similar size.
@@ -120,13 +118,6 @@ class AArch64RegisterBankInfo final : public AArch64GenRegisterBankInfo {
   /// Maximum recursion depth for hasFPConstraints.
   const unsigned MaxFPRSearchDepth = 2;
 
-  /// \returns true if \p MI is a PHI that its def is used by
-  /// any instruction that onlyUsesFP.
-  bool isPHIWithFPContraints(const MachineInstr &MI,
-                             const MachineRegisterInfo &MRI,
-                             const TargetRegisterInfo &TRI,
-                             unsigned Depth = 0) const;
-
   /// \returns true if \p MI only uses and defines FPRs.
   bool hasFPConstraints(const MachineInstr &MI, const MachineRegisterInfo &MRI,
                      const TargetRegisterInfo &TRI, unsigned Depth = 0) const;
@@ -139,18 +130,14 @@ class AArch64RegisterBankInfo final : public AArch64GenRegisterBankInfo {
   bool onlyDefinesFP(const MachineInstr &MI, const MachineRegisterInfo &MRI,
                      const TargetRegisterInfo &TRI, unsigned Depth = 0) const;
 
-  /// \returns true if the load \p MI is likely loading from a floating-point
-  /// type.
-  bool isLoadFromFPType(const MachineInstr &MI) const;
-
 public:
   AArch64RegisterBankInfo(const TargetRegisterInfo &TRI);
 
   unsigned copyCost(const RegisterBank &A, const RegisterBank &B,
-                    TypeSize Size) const override;
+                    unsigned Size) const override;
 
   const RegisterBank &getRegBankFromRegClass(const TargetRegisterClass &RC,
-                                             LLT Ty) const override;
+                                             LLT) const override;
 
   InstructionMappings
   getInstrAlternativeMappings(const MachineInstr &MI) const override;

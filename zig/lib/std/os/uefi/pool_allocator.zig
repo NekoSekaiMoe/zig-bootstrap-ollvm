@@ -15,21 +15,21 @@ const UefiPoolAllocator = struct {
     fn alloc(
         _: *anyopaque,
         len: usize,
-        alignment: mem.Alignment,
+        log2_ptr_align: u8,
         ret_addr: usize,
     ) ?[*]u8 {
         _ = ret_addr;
 
         assert(len > 0);
 
-        const ptr_align = alignment.toByteUnits();
+        const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_ptr_align));
 
         const metadata_len = mem.alignForward(usize, @sizeOf(usize), ptr_align);
 
         const full_len = metadata_len + len;
 
         var unaligned_ptr: [*]align(8) u8 = undefined;
-        if (uefi.system_table.boot_services.?.allocatePool(uefi.efi_pool_memory_type, full_len, &unaligned_ptr) != .success) return null;
+        if (uefi.system_table.boot_services.?.allocatePool(uefi.efi_pool_memory_type, full_len, &unaligned_ptr) != .Success) return null;
 
         const unaligned_addr = @intFromPtr(unaligned_ptr);
         const aligned_addr = mem.alignForward(usize, unaligned_addr + @sizeOf(usize), ptr_align);
@@ -43,38 +43,26 @@ const UefiPoolAllocator = struct {
     fn resize(
         _: *anyopaque,
         buf: []u8,
-        alignment: mem.Alignment,
+        log2_old_ptr_align: u8,
         new_len: usize,
         ret_addr: usize,
     ) bool {
         _ = ret_addr;
-        _ = alignment;
 
         if (new_len > buf.len) return false;
+
+        _ = mem.alignAllocLen(buf.len, new_len, log2_old_ptr_align);
+
         return true;
-    }
-
-    fn remap(
-        _: *anyopaque,
-        buf: []u8,
-        alignment: mem.Alignment,
-        new_len: usize,
-        ret_addr: usize,
-    ) ?[*]u8 {
-        _ = alignment;
-        _ = ret_addr;
-
-        if (new_len > buf.len) return null;
-        return buf.ptr;
     }
 
     fn free(
         _: *anyopaque,
         buf: []u8,
-        alignment: mem.Alignment,
+        log2_old_ptr_align: u8,
         ret_addr: usize,
     ) void {
-        _ = alignment;
+        _ = log2_old_ptr_align;
         _ = ret_addr;
         _ = uefi.system_table.boot_services.?.freePool(getHeader(buf.ptr).*);
     }
@@ -90,7 +78,6 @@ pub const pool_allocator = Allocator{
 const pool_allocator_vtable = Allocator.VTable{
     .alloc = UefiPoolAllocator.alloc,
     .resize = UefiPoolAllocator.resize,
-    .remap = UefiPoolAllocator.remap,
     .free = UefiPoolAllocator.free,
 };
 
@@ -103,22 +90,21 @@ pub const raw_pool_allocator = Allocator{
 const raw_pool_allocator_table = Allocator.VTable{
     .alloc = uefi_alloc,
     .resize = uefi_resize,
-    .remap = uefi_remap,
     .free = uefi_free,
 };
 
 fn uefi_alloc(
     _: *anyopaque,
     len: usize,
-    alignment: mem.Alignment,
+    log2_ptr_align: u8,
     ret_addr: usize,
 ) ?[*]u8 {
     _ = ret_addr;
 
-    std.debug.assert(@intFromEnum(alignment) <= 3);
+    std.debug.assert(log2_ptr_align <= 3);
 
     var ptr: [*]align(8) u8 = undefined;
-    if (uefi.system_table.boot_services.?.allocatePool(uefi.efi_pool_memory_type, len, &ptr) != .success) return null;
+    if (uefi.system_table.boot_services.?.allocatePool(uefi.efi_pool_memory_type, len, &ptr) != .Success) return null;
 
     return ptr;
 }
@@ -126,40 +112,28 @@ fn uefi_alloc(
 fn uefi_resize(
     _: *anyopaque,
     buf: []u8,
-    alignment: mem.Alignment,
+    log2_old_ptr_align: u8,
     new_len: usize,
     ret_addr: usize,
 ) bool {
     _ = ret_addr;
 
-    std.debug.assert(@intFromEnum(alignment) <= 3);
+    std.debug.assert(log2_old_ptr_align <= 3);
 
     if (new_len > buf.len) return false;
+
+    _ = mem.alignAllocLen(buf.len, new_len, 8);
+
     return true;
-}
-
-fn uefi_remap(
-    _: *anyopaque,
-    buf: []u8,
-    alignment: mem.Alignment,
-    new_len: usize,
-    ret_addr: usize,
-) ?[*]u8 {
-    _ = ret_addr;
-
-    std.debug.assert(@intFromEnum(alignment) <= 3);
-
-    if (new_len > buf.len) return null;
-    return buf.ptr;
 }
 
 fn uefi_free(
     _: *anyopaque,
     buf: []u8,
-    alignment: mem.Alignment,
+    log2_old_ptr_align: u8,
     ret_addr: usize,
 ) void {
-    _ = alignment;
+    _ = log2_old_ptr_align;
     _ = ret_addr;
     _ = uefi.system_table.boot_services.?.freePool(@alignCast(buf.ptr));
 }

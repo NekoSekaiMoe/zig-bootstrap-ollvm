@@ -57,7 +57,7 @@ pub fn Field(comptime params: FieldParams) type {
                 mem.writeInt(std.meta.Int(.unsigned, encoded_length * 8), &fos, field_order, .little);
                 break :fos fos;
             };
-            if (crypto.timing_safe.compare(u8, &s, &field_order_s, .little) != .lt) {
+            if (crypto.utils.timingSafeCompare(u8, &s, &field_order_s, .little) != .lt) {
                 return error.NonCanonical;
             }
         }
@@ -197,7 +197,7 @@ pub fn Field(comptime params: FieldParams) type {
         /// Return the inverse of a field element, or 0 if a=0.
         // Field inversion from https://eprint.iacr.org/2021/549.pdf
         pub fn invert(a: Fe) Fe {
-            const iterations = (49 * field_bits + if (field_bits < 46) 80 else 57) / 17;
+            const iterations = (49 * field_bits + 57) / 17;
             const Limbs = @TypeOf(a.limbs);
             const Word = @TypeOf(a.limbs[0]);
             const XLimbs = [a.limbs.len + 1]Word;

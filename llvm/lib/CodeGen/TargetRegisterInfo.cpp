@@ -21,11 +21,11 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
-#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -34,6 +34,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Printable.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
@@ -49,16 +50,19 @@ static cl::opt<unsigned>
                               "high compile time cost in global splitting."),
                      cl::init(5000));
 
-TargetRegisterInfo::TargetRegisterInfo(
-    const TargetRegisterInfoDesc *ID, regclass_iterator RCB,
-    regclass_iterator RCE, const char *const *SRINames,
-    const SubRegCoveredBits *SubIdxRanges, const LaneBitmask *SRILaneMasks,
-    LaneBitmask SRICoveringLanes, const RegClassInfo *const RCIs,
-    const MVT::SimpleValueType *const RCVTLists, unsigned Mode)
-    : InfoDesc(ID), SubRegIndexNames(SRINames), SubRegIdxRanges(SubIdxRanges),
-      SubRegIndexLaneMasks(SRILaneMasks), RegClassBegin(RCB), RegClassEnd(RCE),
-      CoveringLanes(SRICoveringLanes), RCInfos(RCIs), RCVTLists(RCVTLists),
-      HwMode(Mode) {}
+TargetRegisterInfo::TargetRegisterInfo(const TargetRegisterInfoDesc *ID,
+                             regclass_iterator RCB, regclass_iterator RCE,
+                             const char *const *SRINames,
+                             const LaneBitmask *SRILaneMasks,
+                             LaneBitmask SRICoveringLanes,
+                             const RegClassInfo *const RCIs,
+                             unsigned Mode)
+  : InfoDesc(ID), SubRegIndexNames(SRINames),
+    SubRegIndexLaneMasks(SRILaneMasks),
+    RegClassBegin(RCB), RegClassEnd(RCE),
+    CoveringLanes(SRICoveringLanes),
+    RCInfos(RCIs), HwMode(Mode) {
+}
 
 TargetRegisterInfo::~TargetRegisterInfo() = default;
 
@@ -119,7 +123,7 @@ Printable printReg(Register Reg, const TargetRegisterInfo *TRI,
         OS << '%' << Register::virtReg2Index(Reg);
       }
     } else if (!TRI)
-      OS << '$' << "physreg" << Reg.id();
+      OS << '$' << "physreg" << Reg;
     else if (Reg < TRI->getNumRegs()) {
       OS << '$';
       printLowerCase(TRI->getName(Reg), OS);
@@ -201,81 +205,42 @@ TargetRegisterInfo::getAllocatableClass(const TargetRegisterClass *RC) const {
   return nullptr;
 }
 
-template <typename TypeT>
-static const TargetRegisterClass *
-getMinimalPhysRegClass(const TargetRegisterInfo *TRI, MCRegister Reg,
-                       TypeT Ty) {
-  static_assert(std::is_same_v<TypeT, MVT> || std::is_same_v<TypeT, LLT>);
-  assert(Reg.isPhysical() && "reg must be a physical register");
+/// getMinimalPhysRegClass - Returns the Register Class of a physical
+/// register of the given type, picking the most sub register class of
+/// the right type that contains this physreg.
+const TargetRegisterClass *
+TargetRegisterInfo::getMinimalPhysRegClass(MCRegister reg, MVT VT) const {
+  assert(Register::isPhysicalRegister(reg) &&
+         "reg must be a physical register");
 
-  bool IsDefault = [&]() {
-    if constexpr (std::is_same_v<TypeT, MVT>)
-      return Ty == MVT::Other;
-    else
-      return !Ty.isValid();
-  }();
+  // Pick the most sub register class of the right type that contains
+  // this physreg.
+  const TargetRegisterClass* BestRC = nullptr;
+  for (const TargetRegisterClass* RC : regclasses()) {
+    if ((VT == MVT::Other || isTypeLegalForClass(*RC, VT)) &&
+        RC->contains(reg) && (!BestRC || BestRC->hasSubClass(RC)))
+      BestRC = RC;
+  }
+
+  assert(BestRC && "Couldn't find the register class");
+  return BestRC;
+}
+
+const TargetRegisterClass *
+TargetRegisterInfo::getMinimalPhysRegClassLLT(MCRegister reg, LLT Ty) const {
+  assert(Register::isPhysicalRegister(reg) &&
+         "reg must be a physical register");
 
   // Pick the most sub register class of the right type that contains
   // this physreg.
   const TargetRegisterClass *BestRC = nullptr;
-  for (const TargetRegisterClass *RC : TRI->regclasses()) {
-    if ((IsDefault || TRI->isTypeLegalForClass(*RC, Ty)) && RC->contains(Reg) &&
+  for (const TargetRegisterClass *RC : regclasses()) {
+    if ((!Ty.isValid() || isTypeLegalForClass(*RC, Ty)) && RC->contains(reg) &&
         (!BestRC || BestRC->hasSubClass(RC)))
       BestRC = RC;
   }
 
-  if constexpr (std::is_same_v<TypeT, MVT>)
-    assert(BestRC && "Couldn't find the register class");
   return BestRC;
-}
-
-template <typename TypeT>
-static const TargetRegisterClass *
-getCommonMinimalPhysRegClass(const TargetRegisterInfo *TRI, MCRegister Reg1,
-                             MCRegister Reg2, TypeT Ty) {
-  static_assert(std::is_same_v<TypeT, MVT> || std::is_same_v<TypeT, LLT>);
-  assert(Reg1.isPhysical() && Reg2.isPhysical() &&
-         "Reg1/Reg2 must be a physical register");
-
-  bool IsDefault = [&]() {
-    if constexpr (std::is_same_v<TypeT, MVT>)
-      return Ty == MVT::Other;
-    else
-      return !Ty.isValid();
-  }();
-
-  // Pick the most sub register class of the right type that contains
-  // this physreg.
-  const TargetRegisterClass *BestRC = nullptr;
-  for (const TargetRegisterClass *RC : TRI->regclasses()) {
-    if ((IsDefault || TRI->isTypeLegalForClass(*RC, Ty)) &&
-        RC->contains(Reg1, Reg2) && (!BestRC || BestRC->hasSubClass(RC)))
-      BestRC = RC;
-  }
-
-  if constexpr (std::is_same_v<TypeT, MVT>)
-    assert(BestRC && "Couldn't find the register class");
-  return BestRC;
-}
-
-const TargetRegisterClass *
-TargetRegisterInfo::getMinimalPhysRegClass(MCRegister Reg, MVT VT) const {
-  return ::getMinimalPhysRegClass(this, Reg, VT);
-}
-
-const TargetRegisterClass *TargetRegisterInfo::getCommonMinimalPhysRegClass(
-    MCRegister Reg1, MCRegister Reg2, MVT VT) const {
-  return ::getCommonMinimalPhysRegClass(this, Reg1, Reg2, VT);
-}
-
-const TargetRegisterClass *
-TargetRegisterInfo::getMinimalPhysRegClassLLT(MCRegister Reg, LLT Ty) const {
-  return ::getMinimalPhysRegClass(this, Reg, Ty);
-}
-
-const TargetRegisterClass *TargetRegisterInfo::getCommonMinimalPhysRegClassLLT(
-    MCRegister Reg1, MCRegister Reg2, LLT Ty) const {
-  return ::getCommonMinimalPhysRegClass(this, Reg1, Reg2, Ty);
 }
 
 /// getAllocatableSetForRC - Toggle the bits that represent allocatable
@@ -459,16 +424,13 @@ bool TargetRegisterInfo::getRegAllocationHints(
     SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
     const VirtRegMap *VRM, const LiveRegMatrix *Matrix) const {
   const MachineRegisterInfo &MRI = MF.getRegInfo();
-  const std::pair<unsigned, SmallVector<Register, 4>> *Hints_MRI =
+  const std::pair<unsigned, SmallVector<Register, 4>> &Hints_MRI =
       MRI.getRegAllocationHints(VirtReg);
-
-  if (!Hints_MRI)
-    return false;
 
   SmallSet<Register, 32> HintedRegs;
   // First hint may be a target hint.
-  bool Skip = (Hints_MRI->first != 0);
-  for (auto Reg : Hints_MRI->second) {
+  bool Skip = (Hints_MRI.first != 0);
+  for (auto Reg : Hints_MRI.second) {
     if (Skip) {
       Skip = false;
       continue;
@@ -502,23 +464,29 @@ bool TargetRegisterInfo::getRegAllocationHints(
 
 bool TargetRegisterInfo::isCalleeSavedPhysReg(
     MCRegister PhysReg, const MachineFunction &MF) const {
-  if (!PhysReg)
+  if (PhysReg == 0)
     return false;
   const uint32_t *callerPreservedRegs =
       getCallPreservedMask(MF, MF.getFunction().getCallingConv());
   if (callerPreservedRegs) {
-    assert(PhysReg.isPhysical() && "Expected physical register");
-    return (callerPreservedRegs[PhysReg.id() / 32] >> PhysReg.id() % 32) & 1;
+    assert(Register::isPhysicalRegister(PhysReg) &&
+           "Expected physical register");
+    return (callerPreservedRegs[PhysReg / 32] >> PhysReg % 32) & 1;
   }
   return false;
 }
 
 bool TargetRegisterInfo::canRealignStack(const MachineFunction &MF) const {
-  return MF.getFrameInfo().isStackRealignable();
+  return !MF.getFunction().hasFnAttribute("no-realign-stack");
 }
 
 bool TargetRegisterInfo::shouldRealignStack(const MachineFunction &MF) const {
-  return MF.getFrameInfo().shouldRealignStack();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+  const Function &F = MF.getFunction();
+  return F.hasFnAttribute("stackrealign") ||
+         (MFI.getMaxAlign() > TFI->getStackAlign()) ||
+         F.hasFnAttribute(Attribute::StackAlignment);
 }
 
 bool TargetRegisterInfo::regmaskSubsetEqual(const uint32_t *mask0,
@@ -530,7 +498,7 @@ bool TargetRegisterInfo::regmaskSubsetEqual(const uint32_t *mask0,
   return true;
 }
 
-TypeSize
+unsigned
 TargetRegisterInfo::getRegSizeInBits(Register Reg,
                                      const MachineRegisterInfo &MRI) const {
   const TargetRegisterClass *RC{};
@@ -539,22 +507,23 @@ TargetRegisterInfo::getRegSizeInBits(Register Reg,
     // Instead, we need to access a register class that contains Reg and
     // get the size of that register class.
     RC = getMinimalPhysRegClass(Reg);
-    assert(RC && "Unable to deduce the register class");
-    return getRegSizeInBits(*RC);
+  } else {
+    LLT Ty = MRI.getType(Reg);
+    unsigned RegSize = Ty.isValid() ? Ty.getSizeInBits() : 0;
+    // If Reg is not a generic register, query the register class to
+    // get its size.
+    if (RegSize)
+      return RegSize;
+    // Since Reg is not a generic register, it must have a register class.
+    RC = MRI.getRegClass(Reg);
   }
-  LLT Ty = MRI.getType(Reg);
-  if (Ty.isValid())
-    return Ty.getSizeInBits();
-
-  // Since Reg is not a generic register, it may have a register class.
-  RC = MRI.getRegClass(Reg);
   assert(RC && "Unable to deduce the register class");
   return getRegSizeInBits(*RC);
 }
 
 bool TargetRegisterInfo::getCoveringSubRegIndexes(
-    const TargetRegisterClass *RC, LaneBitmask LaneMask,
-    SmallVectorImpl<unsigned> &NeededIndexes) const {
+    const MachineRegisterInfo &MRI, const TargetRegisterClass *RC,
+    LaneBitmask LaneMask, SmallVectorImpl<unsigned> &NeededIndexes) const {
   SmallVector<unsigned, 8> PossibleIndexes;
   unsigned BestIdx = 0;
   unsigned BestCover = 0;
@@ -625,18 +594,6 @@ bool TargetRegisterInfo::getCoveringSubRegIndexes(
   }
 
   return BestIdx;
-}
-
-unsigned TargetRegisterInfo::getSubRegIdxSize(unsigned Idx) const {
-  assert(Idx && Idx < getNumSubRegIndices() &&
-         "This is not a subregister index");
-  return SubRegIdxRanges[HwMode * getNumSubRegIndices() + Idx].Size;
-}
-
-unsigned TargetRegisterInfo::getSubRegIdxOffset(unsigned Idx) const {
-  assert(Idx && Idx < getNumSubRegIndices() &&
-         "This is not a subregister index");
-  return SubRegIdxRanges[HwMode * getNumSubRegIndices() + Idx].Offset;
 }
 
 Register

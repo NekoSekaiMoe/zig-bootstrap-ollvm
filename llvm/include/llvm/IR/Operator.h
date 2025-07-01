@@ -17,7 +17,6 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/FMF.h"
-#include "llvm/IR/GEPNoWrapFlags.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
@@ -65,10 +64,9 @@ public:
   /// to evaluate to poison despite having non-poison inputs.
   bool hasPoisonGeneratingFlags() const;
 
-  /// Return true if this operator has poison-generating flags,
-  /// return attributes or metadata. The latter two is only possible for
-  /// instructions.
-  bool hasPoisonGeneratingAnnotations() const;
+  /// Return true if this operator has poison-generating flags or metadata.
+  /// The latter is only possible for instructions.
+  bool hasPoisonGeneratingFlagsOrMetadata() const;
 };
 
 /// Utility class for integer operators which may exhibit overflow - Add, Sub,
@@ -96,9 +94,6 @@ private:
   }
 
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
   /// Test whether this operation is known to never
   /// undergo unsigned overflow, aka the nuw property.
   bool hasNoUnsignedWrap() const {
@@ -110,21 +105,6 @@ public:
   bool hasNoSignedWrap() const {
     return (SubclassOptionalData & NoSignedWrap) != 0;
   }
-
-  /// Returns the no-wrap kind of the operation.
-  unsigned getNoWrapKind() const {
-    unsigned NoWrapKind = 0;
-    if (hasNoUnsignedWrap())
-      NoWrapKind |= NoUnsignedWrap;
-
-    if (hasNoSignedWrap())
-      NoWrapKind |= NoSignedWrap;
-
-    return NoWrapKind;
-  }
-
-  /// Return true if the instruction is commutative
-  bool isCommutative() const { return Instruction::isCommutative(getOpcode()); }
 
   static bool classof(const Instruction *I) {
     return I->getOpcode() == Instruction::Add ||
@@ -144,12 +124,6 @@ public:
   }
 };
 
-template <>
-struct OperandTraits<OverflowingBinaryOperator>
-    : public FixedNumOperandTraits<OverflowingBinaryOperator, 2> {};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(OverflowingBinaryOperator, Value)
-
 /// A udiv or sdiv instruction, which can be marked as "exact",
 /// indicating that no bits are destroyed.
 class PossiblyExactOperator : public Operator {
@@ -167,9 +141,6 @@ private:
   }
 
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
   /// Test whether this division is known to be exact, with zero remainder.
   bool isExact() const {
     return SubclassOptionalData & IsExact;
@@ -193,12 +164,6 @@ public:
            (isa<ConstantExpr>(V) && classof(cast<ConstantExpr>(V)));
   }
 };
-
-template <>
-struct OperandTraits<PossiblyExactOperator>
-    : public FixedNumOperandTraits<PossiblyExactOperator, 2> {};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(PossiblyExactOperator, Value)
 
 /// Utility class for floating point operations which can have
 /// information about relaxed accuracy requirements attached to them.
@@ -271,21 +236,6 @@ private:
     SubclassOptionalData = FMF.Flags;
   }
 
-  /// Returns true if `Ty` is composed of a single kind of float-poing type
-  /// (possibly repeated within an aggregate).
-  static bool isComposedOfHomogeneousFloatingPointTypes(Type *Ty) {
-    if (auto *StructTy = dyn_cast<StructType>(Ty)) {
-      if (!StructTy->isLiteral() || !StructTy->containsHomogeneousTypes())
-        return false;
-      Ty = StructTy->elements().front();
-    } else if (auto *ArrayTy = dyn_cast<ArrayType>(Ty)) {
-      do {
-        Ty = ArrayTy->getElementType();
-      } while ((ArrayTy = dyn_cast<ArrayType>(Ty)));
-    }
-    return Ty->isFPOrFPVectorTy();
-  };
-
 public:
   /// Test if this operation allows all non-strict floating-point transforms.
   bool isFast() const {
@@ -344,17 +294,12 @@ public:
   /// precision.
   float getFPAccuracy() const;
 
-  /// Returns true if `Ty` is a supported floating-point type for phi, select,
-  /// or call FPMathOperators.
-  static bool isSupportedFloatingPointType(Type *Ty) {
-    return Ty->isFPOrFPVectorTy() ||
-           isComposedOfHomogeneousFloatingPointTypes(Ty);
-  }
-
   static bool classof(const Value *V) {
     unsigned Opcode;
     if (auto *I = dyn_cast<Instruction>(V))
       Opcode = I->getOpcode();
+    else if (auto *CE = dyn_cast<ConstantExpr>(V))
+      Opcode = CE->getOpcode();
     else
       return false;
 
@@ -365,8 +310,6 @@ public:
     case Instruction::FMul:
     case Instruction::FDiv:
     case Instruction::FRem:
-    case Instruction::FPTrunc:
-    case Instruction::FPExt:
     // FIXME: To clean up and correct the semantics of fast-math-flags, FCmp
     //        should not be treated as a math op, but the other opcodes should.
     //        This would make things consistent with Select/PHI (FP value type
@@ -377,7 +320,10 @@ public:
     case Instruction::PHI:
     case Instruction::Select:
     case Instruction::Call: {
-      return isSupportedFloatingPointType(V->getType());
+      Type *Ty = V->getType();
+      while (ArrayType *ArrTy = dyn_cast<ArrayType>(Ty))
+        Ty = ArrTy->getElementType();
+      return Ty->isFPOrFPVectorTy();
     }
     default:
       return false;
@@ -414,6 +360,12 @@ class ShlOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Shl> {
 };
 
+class SDivOperator
+  : public ConcreteOperator<PossiblyExactOperator, Instruction::SDiv> {
+};
+class UDivOperator
+  : public ConcreteOperator<PossiblyExactOperator, Instruction::UDiv> {
+};
 class AShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::AShr> {
 };
@@ -421,30 +373,36 @@ class LShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::LShr> {
 };
 
+class ZExtOperator : public ConcreteOperator<Operator, Instruction::ZExt> {};
+
 class GEPOperator
-    : public ConcreteOperator<Operator, Instruction::GetElementPtr> {
+  : public ConcreteOperator<Operator, Instruction::GetElementPtr> {
+  friend class GetElementPtrInst;
+  friend class ConstantExpr;
+
+  enum {
+    IsInBounds = (1 << 0),
+    // InRangeIndex: bits 1-6
+  };
+
+  void setIsInBounds(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~IsInBounds) | (B * IsInBounds);
+  }
+
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
-  GEPNoWrapFlags getNoWrapFlags() const {
-    return GEPNoWrapFlags::fromRaw(SubclassOptionalData);
-  }
-
   /// Test whether this is an inbounds GEP, as defined by LangRef.html.
-  bool isInBounds() const { return getNoWrapFlags().isInBounds(); }
-
-  bool hasNoUnsignedSignedWrap() const {
-    return getNoWrapFlags().hasNoUnsignedSignedWrap();
-  }
-
-  bool hasNoUnsignedWrap() const {
-    return getNoWrapFlags().hasNoUnsignedWrap();
+  bool isInBounds() const {
+    return SubclassOptionalData & IsInBounds;
   }
 
   /// Returns the offset of the index with an inrange attachment, or
   /// std::nullopt if none.
-  std::optional<ConstantRange> getInRange() const;
+  std::optional<unsigned> getInRangeIndex() const {
+    if (SubclassOptionalData >> 1 == 0)
+      return std::nullopt;
+    return (SubclassOptionalData >> 1) - 1;
+  }
 
   inline op_iterator       idx_begin()       { return op_begin()+1; }
   inline const_op_iterator idx_begin() const { return op_begin()+1; }
@@ -552,15 +510,9 @@ public:
   /// Collect the offset of this GEP as a map of Values to their associated
   /// APInt multipliers, as well as a total Constant Offset.
   bool collectOffset(const DataLayout &DL, unsigned BitWidth,
-                     SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+                     MapVector<Value *, APInt> &VariableOffsets,
                      APInt &ConstantOffset) const;
 };
-
-template <>
-struct OperandTraits<GEPOperator> : public VariadicOperandTraits<GEPOperator> {
-};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(GEPOperator, Value)
 
 class PtrToIntOperator
     : public ConcreteOperator<Operator, Instruction::PtrToInt> {
@@ -568,9 +520,6 @@ class PtrToIntOperator
   friend class ConstantExpr;
 
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
   Value *getPointerOperand() {
     return getOperand(0);
   }
@@ -593,21 +542,12 @@ public:
   }
 };
 
-template <>
-struct OperandTraits<PtrToIntOperator>
-    : public FixedNumOperandTraits<PtrToIntOperator, 1> {};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(PtrToIntOperator, Value)
-
 class BitCastOperator
     : public ConcreteOperator<Operator, Instruction::BitCast> {
   friend class BitCastInst;
   friend class ConstantExpr;
 
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
   Type *getSrcTy() const {
     return getOperand(0)->getType();
   }
@@ -617,21 +557,12 @@ public:
   }
 };
 
-template <>
-struct OperandTraits<BitCastOperator>
-    : public FixedNumOperandTraits<BitCastOperator, 1> {};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(BitCastOperator, Value)
-
 class AddrSpaceCastOperator
     : public ConcreteOperator<Operator, Instruction::AddrSpaceCast> {
   friend class AddrSpaceCastInst;
   friend class ConstantExpr;
 
 public:
-  /// Transparently provide more efficient getOperand methods.
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
   Value *getPointerOperand() { return getOperand(0); }
 
   const Value *getPointerOperand() const { return getOperand(0); }
@@ -644,12 +575,6 @@ public:
     return getType()->getPointerAddressSpace();
   }
 };
-
-template <>
-struct OperandTraits<AddrSpaceCastOperator>
-    : public FixedNumOperandTraits<AddrSpaceCastOperator, 1> {};
-
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(AddrSpaceCastOperator, Value)
 
 } // end namespace llvm
 

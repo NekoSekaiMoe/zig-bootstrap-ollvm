@@ -34,12 +34,16 @@ public:
     Dependencies.push_back(std::string(File));
   }
 
-  // These are ignored for the make format as it can't support the full
-  // set of deps, and handleFileDependency handles enough for implicitly
-  // built modules to work.
-  void handlePrebuiltModuleDependency(PrebuiltModuleDep PMD) override {}
-  void handleModuleDependency(ModuleDeps MD) override {}
-  void handleDirectModuleDependency(ModuleID ID) override {}
+  void handlePrebuiltModuleDependency(PrebuiltModuleDep PMD) override {
+    // Same as `handleModuleDependency`.
+  }
+
+  void handleModuleDependency(ModuleDeps MD) override {
+    // These are ignored for the make format as it can't support the full
+    // set of deps, and handleFileDependency handles enough for implicitly
+    // built modules to work.
+  }
+
   void handleContextHash(std::string Hash) override {}
 
   void printDependencies(std::string &S) {
@@ -141,7 +145,7 @@ llvm::Expected<P1689Rule> DependencyScanningTool::getP1689ModuleDependencyFile(
 llvm::Expected<TranslationUnitDeps>
 DependencyScanningTool::getTranslationUnitDependencies(
     const std::vector<std::string> &CommandLine, StringRef CWD,
-    const llvm::DenseSet<ModuleID> &AlreadySeen,
+    const llvm::StringSet<> &AlreadySeen,
     LookupModuleOutputCallback LookupModuleOutput) {
   FullDependencyConsumer Consumer(AlreadySeen);
   CallbackActionController Controller(LookupModuleOutput);
@@ -154,7 +158,7 @@ DependencyScanningTool::getTranslationUnitDependencies(
 
 llvm::Expected<ModuleDepsGraph> DependencyScanningTool::getModuleDependencies(
     StringRef ModuleName, const std::vector<std::string> &CommandLine,
-    StringRef CWD, const llvm::DenseSet<ModuleID> &AlreadySeen,
+    StringRef CWD, const llvm::StringSet<> &AlreadySeen,
     LookupModuleOutputCallback LookupModuleOutput) {
   FullDependencyConsumer Consumer(AlreadySeen);
   CallbackActionController Controller(LookupModuleOutput);
@@ -175,13 +179,14 @@ TranslationUnitDeps FullDependencyConsumer::takeTranslationUnitDeps() {
 
   for (auto &&M : ClangModuleDeps) {
     auto &MD = M.second;
+    if (MD.ImportedByMainFile)
+      TU.ClangModuleDeps.push_back(MD.ID);
     // TODO: Avoid handleModuleDependency even being called for modules
     //   we've already seen.
     if (AlreadySeen.count(M.first))
       continue;
     TU.ModuleGraph.push_back(std::move(MD));
   }
-  TU.ClangModuleDeps = std::move(DirectModuleDeps);
 
   return TU;
 }

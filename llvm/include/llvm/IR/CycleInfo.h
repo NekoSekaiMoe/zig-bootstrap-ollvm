@@ -20,6 +20,9 @@
 
 namespace llvm {
 
+extern template class GenericCycleInfo<SSAContext>;
+extern template class GenericCycle<SSAContext>;
+
 using CycleInfo = GenericCycleInfo<SSAContext>;
 using Cycle = CycleInfo::CycleT;
 

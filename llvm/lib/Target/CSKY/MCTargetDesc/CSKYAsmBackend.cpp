@@ -9,6 +9,7 @@
 #include "CSKYAsmBackend.h"
 #include "MCTargetDesc/CSKYMCTargetDesc.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/MC/MCAsmLayout.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCFixupKindInfo.h"
@@ -170,10 +171,10 @@ static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
   }
 }
 
-bool CSKYAsmBackend::fixupNeedsRelaxationAdvanced(const MCAssembler &Asm,
-                                                  const MCFixup &Fixup,
+bool CSKYAsmBackend::fixupNeedsRelaxationAdvanced(const MCFixup &Fixup,
                                                   bool Resolved, uint64_t Value,
                                                   const MCRelaxableFragment *DF,
+                                                  const MCAsmLayout &Layout,
                                                   const bool WasForced) const {
   // Return true if the symbol is actually unresolved.
   // Resolved could be always false when shouldForceRelocation return true.
@@ -222,7 +223,7 @@ void CSKYAsmBackend::applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
 
   // For each byte of the fragment that the fixup touches, mask in the
   // bits from the fixup value.
-  bool IsLittleEndian = (Endian == llvm::endianness::little);
+  bool IsLittleEndian = (Endian == support::little);
   bool IsInstFixup = (Kind >= FirstTargetFixupKind);
 
   if (IsLittleEndian && IsInstFixup && (NumBytes == 4)) {
@@ -261,9 +262,7 @@ bool CSKYAsmBackend::mayNeedRelaxation(const MCInst &Inst,
 
 bool CSKYAsmBackend::shouldForceRelocation(const MCAssembler &Asm,
                                            const MCFixup &Fixup,
-                                           const MCValue &Target,
-                                           const uint64_t /*Value*/,
-                                           const MCSubtargetInfo * /*STI*/) {
+                                           const MCValue &Target) {
   if (Fixup.getKind() >= FirstLiteralRelocationKind)
     return true;
   switch (Fixup.getTargetKind()) {
@@ -284,8 +283,9 @@ bool CSKYAsmBackend::shouldForceRelocation(const MCAssembler &Asm,
   return false;
 }
 
-bool CSKYAsmBackend::fixupNeedsRelaxation(const MCFixup &Fixup,
-                                          uint64_t Value) const {
+bool CSKYAsmBackend::fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
+                                          const MCRelaxableFragment *DF,
+                                          const MCAsmLayout &Layout) const {
   return false;
 }
 

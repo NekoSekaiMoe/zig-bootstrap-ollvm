@@ -32,7 +32,6 @@ autoconf/autom4te.cache
 /CMakeSettings.json
 # CLion project configuration
 /.idea
-/cmake-build*
 # Qt Creator project configuration
 /CMakeLists.txt.user
 

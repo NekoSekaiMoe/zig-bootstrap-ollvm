@@ -32,7 +32,6 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
-#include "llvm/CodeGen/PseudoSourceValueManager.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -72,6 +71,7 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -102,7 +102,6 @@ static const char *getPropertyName(MachineFunctionProperties::Property Prop) {
   case P::TracksLiveness: return "TracksLiveness";
   case P::TiedOpsRewritten: return "TiedOpsRewritten";
   case P::FailsVerification: return "FailsVerification";
-  case P::FailedRegAlloc: return "FailedRegAlloc";
   case P::TracksDebugUserValues: return "TracksDebugUserValues";
   }
   // clang-format on
@@ -161,10 +160,10 @@ static inline Align getFnStackAlignment(const TargetSubtargetInfo *STI,
   return STI->getFrameLowering()->getStackAlign();
 }
 
-MachineFunction::MachineFunction(Function &F, const TargetMachine &Target,
-                                 const TargetSubtargetInfo &STI, MCContext &Ctx,
-                                 unsigned FunctionNum)
-    : F(F), Target(Target), STI(&STI), Ctx(Ctx) {
+MachineFunction::MachineFunction(Function &F, const LLVMTargetMachine &Target,
+                                 const TargetSubtargetInfo &STI,
+                                 unsigned FunctionNum, MachineModuleInfo &mmi)
+    : F(F), Target(Target), STI(&STI), Ctx(mmi.getContext()), MMI(mmi) {
   FunctionNumber = FunctionNum;
   init();
 }
@@ -177,12 +176,6 @@ void MachineFunction::handleInsertion(MachineInstr &MI) {
 void MachineFunction::handleRemoval(MachineInstr &MI) {
   if (TheDelegate)
     TheDelegate->MF_HandleRemoval(MI);
-}
-
-void MachineFunction::handleChangeDesc(MachineInstr &MI,
-                                       const MCInstrDesc &TID) {
-  if (TheDelegate)
-    TheDelegate->MF_HandleChangeDesc(MI, TID);
 }
 
 void MachineFunction::init() {
@@ -200,11 +193,10 @@ void MachineFunction::init() {
   // explicitly asked us not to.
   bool CanRealignSP = STI->getFrameLowering()->isStackRealignable() &&
                       !F.hasFnAttribute("no-realign-stack");
-  bool ForceRealignSP = F.hasFnAttribute(Attribute::StackAlignment) ||
-                        F.hasFnAttribute("stackrealign");
   FrameInfo = new (Allocator) MachineFrameInfo(
       getFnStackAlignment(STI, F), /*StackRealignable=*/CanRealignSP,
-      /*ForcedRealign=*/ForceRealignSP && CanRealignSP);
+      /*ForcedRealign=*/CanRealignSP &&
+          F.hasFnAttribute(Attribute::StackAlignment));
 
   setUnsafeStackSize(F, *FrameInfo);
 
@@ -307,7 +299,7 @@ void MachineFunction::clear() {
 }
 
 const DataLayout &MachineFunction::getDataLayout() const {
-  return F.getDataLayout();
+  return F.getParent()->getDataLayout();
 }
 
 /// Get the JumpTableInfo for this function.
@@ -375,38 +367,6 @@ void MachineFunction::RenumberBlocks(MachineBasicBlock *MBB) {
   // numbering, shrink MBBNumbering now.
   assert(BlockNo <= MBBNumbering.size() && "Mismatch!");
   MBBNumbering.resize(BlockNo);
-  MBBNumberingEpoch++;
-}
-
-int64_t MachineFunction::estimateFunctionSizeInBytes() {
-  const TargetInstrInfo &TII = *getSubtarget().getInstrInfo();
-  const Align FunctionAlignment = getAlignment();
-  MachineFunction::iterator MBBI = begin(), E = end();
-  /// Offset - Distance from the beginning of the function to the end
-  /// of the basic block.
-  int64_t Offset = 0;
-
-  for (; MBBI != E; ++MBBI) {
-    const Align Alignment = MBBI->getAlignment();
-    int64_t BlockSize = 0;
-
-    for (auto &MI : *MBBI) {
-      BlockSize += TII.getInstSizeInBytes(MI);
-    }
-
-    int64_t OffsetBB;
-    if (Alignment <= FunctionAlignment) {
-      OffsetBB = alignTo(Offset, Alignment);
-    } else {
-      // The alignment of this MBB is larger than the function's alignment, so
-      // we can't tell whether or not it will insert nops. Assume that it will.
-      OffsetBB = alignTo(Offset, Alignment) + Alignment.value() -
-                 FunctionAlignment.value();
-    }
-    Offset = OffsetBB + BlockSize;
-  }
-
-  return Offset;
 }
 
 /// This method iterates over the basic blocks and assigns their IsBeginSection
@@ -459,11 +419,11 @@ MachineInstr &MachineFunction::cloneMachineInstrBundle(
       break;
     ++I;
   }
-  // Copy over call info to the cloned instruction if needed. If Orig is in
-  // a bundle, copyAdditionalCallInfo takes care of finding the call instruction
-  // in the bundle.
-  if (Orig.shouldUpdateAdditionalCallInfo())
-    copyAdditionalCallInfo(&Orig, FirstClone);
+  // Copy over call site info to the cloned instruction if needed. If Orig is in
+  // a bundle, copyCallSiteInfo takes care of finding the call instruction in
+  // the bundle.
+  if (Orig.shouldUpdateCallSiteInfo())
+    copyCallSiteInfo(&Orig, FirstClone);
   return *FirstClone;
 }
 
@@ -476,13 +436,8 @@ void MachineFunction::deleteMachineInstr(MachineInstr *MI) {
   // be triggered during the implementation of support for the
   // call site info of a new architecture. If the assertion is triggered,
   // back trace will tell where to insert a call to updateCallSiteInfo().
-  assert((!MI->isCandidateForAdditionalCallInfo() ||
-          !CallSitesInfo.contains(MI)) &&
+  assert((!MI->isCandidateForCallSiteEntry() || !CallSitesInfo.contains(MI)) &&
          "Call site info was not updated!");
-  // Verify that the "called globals" info is in a valid state.
-  assert((!MI->isCandidateForAdditionalCallInfo() ||
-          !CalledGlobalsInfo.contains(MI)) &&
-         "Called globals info was not updated!");
   // Strip it for parts. The operand array and the MI object itself are
   // independently recyclable.
   if (MI->Operands)
@@ -496,16 +451,16 @@ void MachineFunction::deleteMachineInstr(MachineInstr *MI) {
 /// Allocate a new MachineBasicBlock. Use this instead of
 /// `new MachineBasicBlock'.
 MachineBasicBlock *
-MachineFunction::CreateMachineBasicBlock(const BasicBlock *BB,
-                                         std::optional<UniqueBBID> BBID) {
+MachineFunction::CreateMachineBasicBlock(const BasicBlock *bb) {
   MachineBasicBlock *MBB =
       new (BasicBlockRecycler.Allocate<MachineBasicBlock>(Allocator))
-          MachineBasicBlock(*this, BB);
-  // Set BBID for `-basic-block-sections=list` and `-basic-block-address-map` to
-  // allow robust mapping of profiles to basic blocks.
-  if (Target.Options.BBAddrMap ||
+          MachineBasicBlock(*this, bb);
+  // Set BBID for `-basic-block=sections=labels` and
+  // `-basic-block-sections=list` to allow robust mapping of profiles to basic
+  // blocks.
+  if (Target.getBBSectionsType() == BasicBlockSection::Labels ||
       Target.getBBSectionsType() == BasicBlockSection::List)
-    MBB->setBBID(BBID.has_value() ? *BBID : UniqueBBID{NextBBID++, 0});
+    MBB->setBBID(NextBBID++);
   return MBB;
 }
 
@@ -520,17 +475,13 @@ void MachineFunction::deleteMachineBasicBlock(MachineBasicBlock *MBB) {
 }
 
 MachineMemOperand *MachineFunction::getMachineMemOperand(
-    MachinePointerInfo PtrInfo, MachineMemOperand::Flags F, LocationSize Size,
-    Align BaseAlignment, const AAMDNodes &AAInfo, const MDNode *Ranges,
+    MachinePointerInfo PtrInfo, MachineMemOperand::Flags f, uint64_t s,
+    Align base_alignment, const AAMDNodes &AAInfo, const MDNode *Ranges,
     SyncScope::ID SSID, AtomicOrdering Ordering,
     AtomicOrdering FailureOrdering) {
-  assert((!Size.hasValue() ||
-          Size.getValue().getKnownMinValue() != ~UINT64_C(0)) &&
-         "Unexpected an unknown size to be represented using "
-         "LocationSize::beforeOrAfter()");
   return new (Allocator)
-      MachineMemOperand(PtrInfo, F, Size, BaseAlignment, AAInfo, Ranges, SSID,
-                        Ordering, FailureOrdering);
+      MachineMemOperand(PtrInfo, f, s, base_alignment, AAInfo, Ranges,
+                        SSID, Ordering, FailureOrdering);
 }
 
 MachineMemOperand *MachineFunction::getMachineMemOperand(
@@ -543,14 +494,8 @@ MachineMemOperand *MachineFunction::getMachineMemOperand(
                         Ordering, FailureOrdering);
 }
 
-MachineMemOperand *
-MachineFunction::getMachineMemOperand(const MachineMemOperand *MMO,
-                                      const MachinePointerInfo &PtrInfo,
-                                      LocationSize Size) {
-  assert((!Size.hasValue() ||
-          Size.getValue().getKnownMinValue() != ~UINT64_C(0)) &&
-         "Unexpected an unknown size to be represented using "
-         "LocationSize::beforeOrAfter()");
+MachineMemOperand *MachineFunction::getMachineMemOperand(
+    const MachineMemOperand *MMO, const MachinePointerInfo &PtrInfo, uint64_t Size) {
   return new (Allocator)
       MachineMemOperand(PtrInfo, MMO->getFlags(), Size, MMO->getBaseAlign(),
                         AAMDNodes(), nullptr, MMO->getSyncScopeID(),
@@ -609,10 +554,10 @@ MachineFunction::getMachineMemOperand(const MachineMemOperand *MMO,
 MachineInstr::ExtraInfo *MachineFunction::createMIExtraInfo(
     ArrayRef<MachineMemOperand *> MMOs, MCSymbol *PreInstrSymbol,
     MCSymbol *PostInstrSymbol, MDNode *HeapAllocMarker, MDNode *PCSections,
-    uint32_t CFIType, MDNode *MMRAs) {
+    uint32_t CFIType) {
   return MachineInstr::ExtraInfo::create(Allocator, MMOs, PreInstrSymbol,
                                          PostInstrSymbol, HeapAllocMarker,
-                                         PCSections, CFIType, MMRAs);
+                                         PCSections, CFIType);
 }
 
 const char *MachineFunction::createExternalSymbolName(StringRef Name) {
@@ -689,14 +634,9 @@ void MachineFunction::print(raw_ostream &OS, const SlotIndexes *Indexes) const {
 
 /// True if this function needs frame moves for debug or exceptions.
 bool MachineFunction::needsFrameMoves() const {
-  // TODO: Ideally, what we'd like is to have a switch that allows emitting
-  // synchronous (precise at call-sites only) CFA into .eh_frame. However, even
-  // under this switch, we'd like .debug_frame to be precise when using -g. At
-  // this moment, there's no way to specify that some CFI directives go into
-  // .eh_frame only, while others go into .debug_frame only.
-  return getTarget().Options.ForceDwarfFrameSection ||
-         F.needsUnwindTableEntry() ||
-         !F.getParent()->debug_compile_units().empty();
+  return getMMI().hasDebugInfo() ||
+         getTarget().Options.ForceDwarfFrameSection ||
+         F.needsUnwindTableEntry();
 }
 
 namespace llvm {
@@ -833,8 +773,7 @@ MCSymbol *MachineFunction::addLandingPad(MachineBasicBlock *LandingPad) {
   LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
   LP.LandingPadLabel = LandingPadLabel;
 
-  BasicBlock::const_iterator FirstI =
-      LandingPad->getBasicBlock()->getFirstNonPHIIt();
+  const Instruction *FirstI = LandingPad->getBasicBlock()->getFirstNonPHI();
   if (const auto *LPI = dyn_cast<LandingPadInst>(FirstI)) {
     // If there's no typeid list specified, then "cleanup" is implicit.
     // Otherwise, id 0 is reserved for the cleanup action.
@@ -917,7 +856,7 @@ try_next:;
 
 MachineFunction::CallSiteInfoMap::iterator
 MachineFunction::getCallSiteInfo(const MachineInstr *MI) {
-  assert(MI->isCandidateForAdditionalCallInfo() &&
+  assert(MI->isCandidateForCallSiteEntry() &&
          "Call site info refers only to call (MI) candidates");
 
   if (!Target.Options.EmitCallSiteInfo)
@@ -932,74 +871,59 @@ static const MachineInstr *getCallInstr(const MachineInstr *MI) {
 
   for (const auto &BMI : make_range(getBundleStart(MI->getIterator()),
                                     getBundleEnd(MI->getIterator())))
-    if (BMI.isCandidateForAdditionalCallInfo())
+    if (BMI.isCandidateForCallSiteEntry())
       return &BMI;
 
   llvm_unreachable("Unexpected bundle without a call site candidate");
 }
 
-void MachineFunction::eraseAdditionalCallInfo(const MachineInstr *MI) {
-  assert(MI->shouldUpdateAdditionalCallInfo() &&
-         "Call info refers only to call (MI) candidates or "
+void MachineFunction::eraseCallSiteInfo(const MachineInstr *MI) {
+  assert(MI->shouldUpdateCallSiteInfo() &&
+         "Call site info refers only to call (MI) candidates or "
          "candidates inside bundles");
 
   const MachineInstr *CallMI = getCallInstr(MI);
-
   CallSiteInfoMap::iterator CSIt = getCallSiteInfo(CallMI);
-  if (CSIt != CallSitesInfo.end())
-    CallSitesInfo.erase(CSIt);
-
-  CalledGlobalsMap::iterator CGIt = CalledGlobalsInfo.find(CallMI);
-  if (CGIt != CalledGlobalsInfo.end())
-    CalledGlobalsInfo.erase(CGIt);
+  if (CSIt == CallSitesInfo.end())
+    return;
+  CallSitesInfo.erase(CSIt);
 }
 
-void MachineFunction::copyAdditionalCallInfo(const MachineInstr *Old,
-                                             const MachineInstr *New) {
-  assert(Old->shouldUpdateAdditionalCallInfo() &&
-         "Call info refers only to call (MI) candidates or "
+void MachineFunction::copyCallSiteInfo(const MachineInstr *Old,
+                                       const MachineInstr *New) {
+  assert(Old->shouldUpdateCallSiteInfo() &&
+         "Call site info refers only to call (MI) candidates or "
          "candidates inside bundles");
 
-  if (!New->isCandidateForAdditionalCallInfo())
-    return eraseAdditionalCallInfo(Old);
+  if (!New->isCandidateForCallSiteEntry())
+    return eraseCallSiteInfo(Old);
 
   const MachineInstr *OldCallMI = getCallInstr(Old);
   CallSiteInfoMap::iterator CSIt = getCallSiteInfo(OldCallMI);
-  if (CSIt != CallSitesInfo.end()) {
-    CallSiteInfo CSInfo = CSIt->second;
-    CallSitesInfo[New] = CSInfo;
-  }
+  if (CSIt == CallSitesInfo.end())
+    return;
 
-  CalledGlobalsMap::iterator CGIt = CalledGlobalsInfo.find(OldCallMI);
-  if (CGIt != CalledGlobalsInfo.end()) {
-    CalledGlobalInfo CGInfo = CGIt->second;
-    CalledGlobalsInfo[New] = CGInfo;
-  }
+  CallSiteInfo CSInfo = CSIt->second;
+  CallSitesInfo[New] = CSInfo;
 }
 
-void MachineFunction::moveAdditionalCallInfo(const MachineInstr *Old,
-                                             const MachineInstr *New) {
-  assert(Old->shouldUpdateAdditionalCallInfo() &&
-         "Call info refers only to call (MI) candidates or "
+void MachineFunction::moveCallSiteInfo(const MachineInstr *Old,
+                                       const MachineInstr *New) {
+  assert(Old->shouldUpdateCallSiteInfo() &&
+         "Call site info refers only to call (MI) candidates or "
          "candidates inside bundles");
 
-  if (!New->isCandidateForAdditionalCallInfo())
-    return eraseAdditionalCallInfo(Old);
+  if (!New->isCandidateForCallSiteEntry())
+    return eraseCallSiteInfo(Old);
 
   const MachineInstr *OldCallMI = getCallInstr(Old);
   CallSiteInfoMap::iterator CSIt = getCallSiteInfo(OldCallMI);
-  if (CSIt != CallSitesInfo.end()) {
-    CallSiteInfo CSInfo = std::move(CSIt->second);
-    CallSitesInfo.erase(CSIt);
-    CallSitesInfo[New] = CSInfo;
-  }
+  if (CSIt == CallSitesInfo.end())
+    return;
 
-  CalledGlobalsMap::iterator CGIt = CalledGlobalsInfo.find(OldCallMI);
-  if (CGIt != CalledGlobalsInfo.end()) {
-    CalledGlobalInfo CGInfo = std::move(CGIt->second);
-    CalledGlobalsInfo.erase(CGIt);
-    CalledGlobalsInfo[New] = CGInfo;
-  }
+  CallSiteInfo CSInfo = std::move(CSIt->second);
+  CallSitesInfo.erase(CSIt);
+  CallSitesInfo[New] = CSInfo;
 }
 
 void MachineFunction::setDebugInstrNumberingCount(unsigned Num) {
@@ -1054,7 +978,7 @@ auto MachineFunction::salvageCopySSA(
   // Check whether this copy-like instruction has already been salvaged into
   // an operand pair.
   Register Dest;
-  if (auto CopyDstSrc = TII.isCopyLikeInstr(MI)) {
+  if (auto CopyDstSrc = TII.isCopyInstr(MI)) {
     Dest = CopyDstSrc->Destination->getReg();
   } else {
     assert(MI.isSubregToReg());
@@ -1138,7 +1062,7 @@ auto MachineFunction::salvageCopySSAImpl(MachineInstr &MI)
     CurInst = Inst.getIterator();
 
     // Any non-copy instruction is the defining instruction we're seeking.
-    if (!Inst.isCopyLike() && !TII.isCopyLikeInstr(Inst))
+    if (!Inst.isCopyLike() && !TII.isCopyInstr(Inst))
       break;
     State = GetRegAndSubreg(Inst);
   };
@@ -1282,7 +1206,7 @@ bool MachineFunction::shouldUseDebugInstrRef() const {
   // have optimized code inlined into this unoptimized code, however with
   // fewer and less aggressive optimizations happening, coverage and accuracy
   // should not suffer.
-  if (getTarget().getOptLevel() == CodeGenOptLevel::None)
+  if (getTarget().getOptLevel() == CodeGenOpt::None)
     return false;
 
   // Don't use instr-ref if this function is marked optnone.
@@ -1312,10 +1236,6 @@ const unsigned MachineFunction::DebugOperandMemNumber = 1000000;
 //  MachineJumpTableInfo implementation
 //===----------------------------------------------------------------------===//
 
-MachineJumpTableEntry::MachineJumpTableEntry(
-    const std::vector<MachineBasicBlock *> &MBBs)
-    : MBBs(MBBs), Hotness(MachineFunctionDataHotness::Unknown) {}
-
 /// Return the size of each entry in the jump table.
 unsigned MachineJumpTableInfo::getEntrySize(const DataLayout &TD) const {
   // The size of a jump table entry is 4 bytes unless the entry is just the
@@ -1324,7 +1244,6 @@ unsigned MachineJumpTableInfo::getEntrySize(const DataLayout &TD) const {
   case MachineJumpTableInfo::EK_BlockAddress:
     return TD.getPointerSize();
   case MachineJumpTableInfo::EK_GPRel64BlockAddress:
-  case MachineJumpTableInfo::EK_LabelDifference64:
     return 8;
   case MachineJumpTableInfo::EK_GPRel32BlockAddress:
   case MachineJumpTableInfo::EK_LabelDifference32:
@@ -1345,7 +1264,6 @@ unsigned MachineJumpTableInfo::getEntryAlignment(const DataLayout &TD) const {
   case MachineJumpTableInfo::EK_BlockAddress:
     return TD.getPointerABIAlignment(0).value();
   case MachineJumpTableInfo::EK_GPRel64BlockAddress:
-  case MachineJumpTableInfo::EK_LabelDifference64:
     return TD.getABIIntegerTypeAlignment(64).value();
   case MachineJumpTableInfo::EK_GPRel32BlockAddress:
   case MachineJumpTableInfo::EK_LabelDifference32:
@@ -1363,17 +1281,6 @@ unsigned MachineJumpTableInfo::createJumpTableIndex(
   assert(!DestBBs.empty() && "Cannot create an empty jump table!");
   JumpTables.push_back(MachineJumpTableEntry(DestBBs));
   return JumpTables.size()-1;
-}
-
-bool MachineJumpTableInfo::updateJumpTableEntryHotness(
-    size_t JTI, MachineFunctionDataHotness Hotness) {
-  assert(JTI < JumpTables.size() && "Invalid JTI!");
-  // Record the largest hotness value.
-  if (Hotness <= JumpTables[JTI].Hotness)
-    return false;
-
-  JumpTables[JTI].Hotness = Hotness;
-  return true;
 }
 
 /// If Old is the target of any jump tables, update the jump tables to branch

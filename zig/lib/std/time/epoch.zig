@@ -64,6 +64,8 @@ pub fn getDaysInYear(year: Year) u9 {
     return if (isLeapYear(year)) 366 else 365;
 }
 
+pub const YearLeapKind = enum(u1) { not_leap, leap };
+
 pub const Month = enum(u4) {
     jan = 1,
     feb,
@@ -85,13 +87,13 @@ pub const Month = enum(u4) {
     }
 };
 
-/// Get the number of days in the given month and year
-pub fn getDaysInMonth(year: Year, month: Month) u5 {
+/// Get the number of days in the given month
+pub fn getDaysInMonth(leap_year: YearLeapKind, month: Month) u5 {
     return switch (month) {
         .jan => 31,
-        .feb => @as(u5, switch (isLeapYear(year)) {
-            true => 29,
-            false => 28,
+        .feb => @as(u5, switch (leap_year) {
+            .leap => 29,
+            .not_leap => 28,
         }),
         .mar => 31,
         .apr => 30,
@@ -114,8 +116,9 @@ pub const YearAndDay = struct {
     pub fn calculateMonthDay(self: YearAndDay) MonthAndDay {
         var month: Month = .jan;
         var days_left = self.day;
+        const leap_kind: YearLeapKind = if (isLeapYear(self.year)) .leap else .not_leap;
         while (true) {
-            const days_in_month = getDaysInMonth(self.year, month);
+            const days_in_month = getDaysInMonth(leap_kind, month);
             if (days_left < days_in_month)
                 break;
             days_left -= days_in_month;
@@ -130,7 +133,7 @@ pub const MonthAndDay = struct {
     day_index: u5, // days into the month (0 to 30)
 };
 
-/// days since epoch Jan 1, 1970
+// days since epoch Oct 1, 1970
 pub const EpochDay = struct {
     day: u47, // u47 = u64 - u17 (because day = sec(u64) / secs_per_day(u17)
     pub fn calculateYearDay(self: EpochDay) YearAndDay {
@@ -165,7 +168,7 @@ pub const DaySeconds = struct {
     }
 };
 
-/// seconds since epoch Jan 1, 1970 at 12:00 AM
+/// seconds since epoch Oct 1, 1970 at 12:00 AM
 pub const EpochSeconds = struct {
     secs: u64,
 

@@ -18,7 +18,6 @@ class LiveIntervals;
 class MachineBlockFrequencyInfo;
 class MachineFunction;
 class MachineLoopInfo;
-class ProfileSummaryInfo;
 class VirtRegMap;
 
   /// Normalize the spill weight of a live interval
@@ -48,7 +47,6 @@ class VirtRegMap;
     LiveIntervals &LIS;
     const VirtRegMap &VRM;
     const MachineLoopInfo &Loops;
-    ProfileSummaryInfo *PSI;
     const MachineBlockFrequencyInfo &MBFI;
 
     /// Returns true if Reg of live interval LI is used in instruction with many
@@ -58,9 +56,8 @@ class VirtRegMap;
   public:
     VirtRegAuxInfo(MachineFunction &MF, LiveIntervals &LIS,
                    const VirtRegMap &VRM, const MachineLoopInfo &Loops,
-                   const MachineBlockFrequencyInfo &MBFI,
-                   ProfileSummaryInfo *PSI = nullptr)
-        : MF(MF), LIS(LIS), VRM(VRM), Loops(Loops), PSI(PSI), MBFI(MBFI) {}
+                   const MachineBlockFrequencyInfo &MBFI)
+        : MF(MF), LIS(LIS), VRM(VRM), Loops(Loops), MBFI(MBFI) {}
 
     virtual ~VirtRegAuxInfo() = default;
 

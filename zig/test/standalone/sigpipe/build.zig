@@ -18,7 +18,7 @@ pub fn build(b: *std.build.Builder) !void {
     {
         const act = posix.Sigaction{
             .handler = .{ .handler = posix.SIG.DFL },
-            .mask = posix.sigemptyset(),
+            .mask = posix.empty_sigset,
             .flags = 0,
         };
         try posix.sigaction(posix.SIG.PIPE, &act, null);

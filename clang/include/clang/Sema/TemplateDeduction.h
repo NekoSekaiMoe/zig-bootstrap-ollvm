@@ -33,7 +33,6 @@ namespace clang {
 class Decl;
 struct DeducedPack;
 class Sema;
-enum class TemplateDeductionResult;
 
 namespace sema {
 
@@ -50,11 +49,6 @@ class TemplateDeductionInfo {
 
   /// Have we suppressed an error during deduction?
   bool HasSFINAEDiagnostic = false;
-
-  /// Have we matched any packs on the parameter side, versus any non-packs on
-  /// the argument side, in a context where the opposite matching is also
-  /// allowed?
-  bool MatchedPackOnParmToNonPackOnArg = false;
 
   /// The template parameter depth for which we're performing deduction.
   unsigned DeducedDepth;
@@ -90,14 +84,6 @@ public:
   /// performed.
   unsigned getDeducedDepth() const {
     return DeducedDepth;
-  }
-
-  bool hasMatchedPackOnParmToNonPackOnArg() const {
-    return MatchedPackOnParmToNonPackOnArg;
-  }
-
-  void setMatchedPackOnParmToNonPackOnArg() {
-    MatchedPackOnParmToNonPackOnArg = true;
   }
 
   /// Get the number of explicitly-specified arguments.
@@ -309,10 +295,6 @@ struct DeductionFailureInfo {
 
   /// Free any memory associated with this deduction failure.
   void Destroy();
-
-  TemplateDeductionResult getResult() const {
-    return static_cast<TemplateDeductionResult>(Result);
-  }
 };
 
 /// TemplateSpecCandidate - This is a generalization of OverloadCandidate

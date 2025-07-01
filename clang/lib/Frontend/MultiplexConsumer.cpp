@@ -20,9 +20,6 @@ using namespace clang;
 
 namespace clang {
 
-class NamespaceDecl;
-class TranslationUnitDecl;
-
 MultiplexASTDeserializationListener::MultiplexASTDeserializationListener(
       const std::vector<ASTDeserializationListener*>& L)
     : Listeners(L) {
@@ -35,7 +32,7 @@ void MultiplexASTDeserializationListener::ReaderInitialized(
 }
 
 void MultiplexASTDeserializationListener::IdentifierRead(
-    serialization::IdentifierID ID, IdentifierInfo *II) {
+    serialization::IdentID ID, IdentifierInfo *II) {
   for (size_t i = 0, e = Listeners.size(); i != e; ++i)
     Listeners[i]->IdentifierRead(ID, II);
 }
@@ -52,15 +49,10 @@ void MultiplexASTDeserializationListener::TypeRead(
     Listeners[i]->TypeRead(Idx, T);
 }
 
-void MultiplexASTDeserializationListener::DeclRead(GlobalDeclID ID,
-                                                   const Decl *D) {
+void MultiplexASTDeserializationListener::DeclRead(
+    serialization::DeclID ID, const Decl *D) {
   for (size_t i = 0, e = Listeners.size(); i != e; ++i)
     Listeners[i]->DeclRead(ID, D);
-}
-
-void MultiplexASTDeserializationListener::PredefinedDeclBuilt(PredefinedDeclIDs ID, const Decl *D) {
-  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
-    Listeners[i]->PredefinedDeclBuilt(ID, D);
 }
 
 void MultiplexASTDeserializationListener::SelectorRead(
@@ -123,11 +115,6 @@ public:
   void RedefinedHiddenDefinition(const NamedDecl *D, Module *M) override;
   void AddedAttributeToRecord(const Attr *Attr,
                               const RecordDecl *Record) override;
-  void EnteringModulePurview() override;
-  void AddedManglingNumber(const Decl *D, unsigned) override;
-  void AddedStaticLocalNumbers(const Decl *D, unsigned) override;
-  void AddedAnonymousNamespace(const TranslationUnitDecl *,
-                               NamespaceDecl *AnonNamespace) override;
 
 private:
   std::vector<ASTMutationListener*> Listeners;
@@ -251,27 +238,6 @@ void MultiplexASTMutationListener::AddedAttributeToRecord(
     L->AddedAttributeToRecord(Attr, Record);
 }
 
-void MultiplexASTMutationListener::EnteringModulePurview() {
-  for (auto *L : Listeners)
-    L->EnteringModulePurview();
-}
-
-void MultiplexASTMutationListener::AddedManglingNumber(const Decl *D,
-                                                       unsigned Number) {
-  for (auto *L : Listeners)
-    L->AddedManglingNumber(D, Number);
-}
-void MultiplexASTMutationListener::AddedStaticLocalNumbers(const Decl *D,
-                                                           unsigned Number) {
-  for (auto *L : Listeners)
-    L->AddedStaticLocalNumbers(D, Number);
-}
-void MultiplexASTMutationListener::AddedAnonymousNamespace(
-    const TranslationUnitDecl *TU, NamespaceDecl *AnonNamespace) {
-  for (auto *L : Listeners)
-    L->AddedAnonymousNamespace(TU, AnonNamespace);
-}
-
 }  // end namespace clang
 
 MultiplexConsumer::MultiplexConsumer(
@@ -297,13 +263,6 @@ MultiplexConsumer::MultiplexConsumer(
             serializationListeners);
   }
 }
-
-MultiplexConsumer::MultiplexConsumer(std::unique_ptr<ASTConsumer> C)
-    : MultiplexConsumer([](std::unique_ptr<ASTConsumer> Consumer) {
-        std::vector<std::unique_ptr<ASTConsumer>> Consumers;
-        Consumers.push_back(std::move(Consumer));
-        return Consumers;
-      }(std::move(C))) {}
 
 MultiplexConsumer::~MultiplexConsumer() {}
 
@@ -369,7 +328,7 @@ void MultiplexConsumer::CompleteTentativeDefinition(VarDecl *D) {
     Consumer->CompleteTentativeDefinition(D);
 }
 
-void MultiplexConsumer::CompleteExternalDeclaration(DeclaratorDecl *D) {
+void MultiplexConsumer::CompleteExternalDeclaration(VarDecl *D) {
   for (auto &Consumer : Consumers)
     Consumer->CompleteExternalDeclaration(D);
 }

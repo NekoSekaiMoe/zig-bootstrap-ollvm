@@ -55,7 +55,7 @@
 #endif
 
 #if defined(__GNUC__) && \
-   (defined(__i386__) || (defined(__x86_64__) && !defined(__arm64ec__)))
+   (defined(__i386__) || defined(__x86_64__))
 #ifndef _MM_MALLOC_H_INCLUDED
 #include <stdlib.h>
 #include <errno.h>
@@ -103,7 +103,7 @@ typedef union __m128i { char v[16]; } __m128i;
 #endif
 #endif
 
-#if (defined(_X86_) || (defined(__x86_64) && !defined(__arm64ec__)))
+#if (defined(_X86_) || defined(__x86_64))
 
 #if defined(__MMX__) || defined(__MINGW_FORCE_SYS_INTRINS)
 #if defined(__cplusplus)
@@ -115,7 +115,15 @@ extern "C" {
 #endif
 #endif
 
-/* Note: mm3dnow.h intentionally not included; 3DNow! is deprecated. */
+#if defined(__3dNOW__) || defined(__MINGW_FORCE_SYS_INTRINS)
+#if defined(__cplusplus)
+extern "C" {
+#endif
+#include <mm3dnow.h>
+#if defined(__cplusplus)
+}
+#endif
+#endif
 
 /* NOTE: it's not included by MS version, but we do it to try work around C++/C linkage differences */
 #if defined(__SSE__) || defined(__MINGW_FORCE_SYS_INTRINS)
@@ -150,6 +158,18 @@ extern "C" {
 
 #endif
 
+#if (defined(_X86_) && !defined(__x86_64))
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+#include <mm3dnow.h>
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif
 
 #define __MACHINEX64 __MACHINE
 #define __MACHINEARMX __MACHINE
@@ -177,7 +197,7 @@ extern "C" {
 #define __MACHINEIA32 __MACHINEZ
 #endif
 
-#if !(defined(_X86_) || defined(__x86_64) || defined(__ia64__)) || defined(__arm64ec__)
+#if !(defined(_X86_) || defined(__x86_64) || defined(__ia64__))
 #undef __MACHINEIW64
 #define __MACHINEIW64 __MACHINEZ
 #endif
@@ -187,17 +207,17 @@ extern "C" {
 #define __MACHINEIA64 __MACHINEZ
 #endif
 
-#if !(defined(__ia64__) || defined(__x86_64)) || defined(__arm64ec__)
+#if !(defined(__ia64__) || defined(__x86_64))
 #undef __MACHINEW64
 #define __MACHINEW64 __MACHINEZ
 #endif
 
-#if !(defined(_X86_) || defined(__x86_64)) || defined(__arm64ec__)
+#if !(defined(_X86_) || defined(__x86_64))
 #undef __MACHINEI
 #define __MACHINEI __MACHINEZ
 #endif
 
-#if !(defined(_X86_) || defined(__x86_64)) || defined(__arm64ec__)
+#if !(defined(_X86_) || defined(__x86_64))
 #undef __MACHINEX86X
 #define __MACHINEX86X __MACHINEZ
 #endif
@@ -207,7 +227,7 @@ extern "C" {
 #define __MACHINEX86X_NOX64 __MACHINEZ
 #endif
 
-#if !(defined(_X86_) || defined(__x86_64)) || defined(__ia64__) || defined(__arm64ec__)
+#if !(defined(_X86_) || defined(__x86_64)) || defined(__ia64__)
 #undef __MACHINEX86X_NOIA64
 #define __MACHINEX86X_NOIA64 __MACHINEZ
 #endif
@@ -228,17 +248,17 @@ extern "C" {
 #define __MACHINECC __MACHINEZ
 #endif
 
-#if !(defined(__aarch64__) || defined(__arm64ec__))
+#if !(defined(__aarch64__))
 #undef __MACHINEARM64
 #define __MACHINEARM64 __MACHINEZ
 #endif
 
-#if !(defined(__arm__) || defined(__aarch64__) || defined(__arm64ec__))
+#if !(defined(__arm__) || defined(__aarch64__))
 #undef __MACHINEARM_ARM64
 #define __MACHINEARM_ARM64 __MACHINEZ
 #endif
 
-#if !(defined(__x86_64)) || defined(__arm64ec__)
+#if !(defined(__x86_64))
 #undef __MACHINEX64
 #define __MACHINEX64 __MACHINEZ
 #endif

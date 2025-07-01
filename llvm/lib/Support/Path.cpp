@@ -16,12 +16,14 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/config.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
 #include <cctype>
+#include <cerrno>
 
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <unistd.h>
@@ -102,7 +104,7 @@ namespace {
 
     if (is_style_windows(style)) {
       if (pos == StringRef::npos)
-        pos = str.find_last_of(':', str.size() - 1);
+        pos = str.find_last_of(':', str.size() - 2);
     }
 
     if (pos == StringRef::npos || (pos == 1 && is_separator(str[0], style)))
@@ -261,7 +263,7 @@ const_iterator &const_iterator::operator++() {
     // Root dir.
     if (was_net ||
         // c:/
-        (is_style_windows(S) && Component.ends_with(":"))) {
+        (is_style_windows(S) && Component.endswith(":"))) {
       Component = Path.substr(Position, 1);
       return *this;
     }
@@ -350,7 +352,7 @@ StringRef root_path(StringRef path, Style style) {
   if (b != e) {
     bool has_net =
         b->size() > 2 && is_separator((*b)[0], style) && (*b)[1] == (*b)[0];
-    bool has_drive = is_style_windows(style) && b->ends_with(":");
+    bool has_drive = is_style_windows(style) && b->endswith(":");
 
     if (has_net || has_drive) {
       if ((++pos != e) && is_separator((*pos)[0], style)) {
@@ -375,7 +377,7 @@ StringRef root_name(StringRef path, Style style) {
   if (b != e) {
     bool has_net =
         b->size() > 2 && is_separator((*b)[0], style) && (*b)[1] == (*b)[0];
-    bool has_drive = is_style_windows(style) && b->ends_with(":");
+    bool has_drive = is_style_windows(style) && b->endswith(":");
 
     if (has_net || has_drive) {
       // just {C:,//net}, return the first component.
@@ -392,7 +394,7 @@ StringRef root_directory(StringRef path, Style style) {
   if (b != e) {
     bool has_net =
         b->size() > 2 && is_separator((*b)[0], style) && (*b)[1] == (*b)[0];
-    bool has_drive = is_style_windows(style) && b->ends_with(":");
+    bool has_drive = is_style_windows(style) && b->endswith(":");
 
     if ((has_net || has_drive) &&
         // {C:,//net}, skip to the next component.
@@ -512,7 +514,7 @@ static bool starts_with(StringRef Path, StringRef Prefix,
     }
     return true;
   }
-  return Path.starts_with(Prefix);
+  return Path.startswith(Prefix);
 }
 
 bool replace_path_prefix(SmallVectorImpl<char> &Path, StringRef OldPrefix,
@@ -848,7 +850,7 @@ createTemporaryFile(const Twine &Model, int &ResultFD,
          "Model must be a simple filename.");
   // Use P.begin() so that createUniqueEntity doesn't need to recreate Storage.
   return createUniqueEntity(P.begin(), ResultFD, ResultPath, true, Type, Flags,
-                            all_read | all_write);
+                            owner_read | owner_write);
 }
 
 static std::error_code
@@ -1008,7 +1010,7 @@ static std::error_code copy_file_internal(int ReadFD, int WriteFD) {
   delete[] Buf;
 
   if (BytesRead < 0 || BytesWritten < 0)
-    return errnoAsErrorCode();
+    return std::error_code(errno, std::generic_category());
   return std::error_code();
 }
 
@@ -1058,7 +1060,7 @@ ErrorOr<MD5::MD5Result> md5_contents(int FD) {
   }
 
   if (BytesRead < 0)
-    return errnoAsErrorCode();
+    return std::error_code(errno, std::generic_category());
   MD5::MD5Result Result;
   Hash.final(Result);
   return Result;
@@ -1143,7 +1145,7 @@ void directory_entry::replace_filename(const Twine &Filename, file_type Type,
                                        basic_file_status Status) {
   SmallString<128> PathStr = path::parent_path(Path);
   path::append(PathStr, Filename);
-  this->Path = std::string(PathStr);
+  this->Path = std::string(PathStr.str());
   this->Type = Type;
   this->Status = Status;
 }
@@ -1226,7 +1228,7 @@ TempFile::~TempFile() { assert(Done); }
 Error TempFile::discard() {
   Done = true;
   if (FD != -1 && close(FD) == -1) {
-    std::error_code EC = errnoAsErrorCode();
+    std::error_code EC = std::error_code(errno, std::generic_category());
     return errorCodeToError(EC);
   }
   FD = -1;
@@ -1295,8 +1297,10 @@ Error TempFile::keep(const Twine &Name) {
   if (!RenameEC)
     TmpName = "";
 
-  if (close(FD) == -1)
-    return errorCodeToError(errnoAsErrorCode());
+  if (close(FD) == -1) {
+    std::error_code EC(errno, std::generic_category());
+    return errorCodeToError(EC);
+  }
   FD = -1;
 
   return errorCodeToError(RenameEC);
@@ -1315,8 +1319,10 @@ Error TempFile::keep() {
 
   TmpName = "";
 
-  if (close(FD) == -1)
-    return errorCodeToError(errnoAsErrorCode());
+  if (close(FD) == -1) {
+    std::error_code EC(errno, std::generic_category());
+    return errorCodeToError(EC);
+  }
   FD = -1;
 
   return Error::success();

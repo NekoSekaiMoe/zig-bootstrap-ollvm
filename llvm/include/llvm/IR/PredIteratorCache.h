@@ -25,29 +25,52 @@ namespace llvm {
 /// predecessor iterator queries.  This is useful for code that repeatedly
 /// wants the predecessor list for the same blocks.
 class PredIteratorCache {
-  /// Cached list of predecessors, allocated in Memory.
-  DenseMap<BasicBlock *, ArrayRef<BasicBlock *>> BlockToPredsMap;
+  /// BlockToPredsMap - Pointer to null-terminated list.
+  mutable DenseMap<BasicBlock *, BasicBlock **> BlockToPredsMap;
+  mutable DenseMap<BasicBlock *, unsigned> BlockToPredCountMap;
 
   /// Memory - This is the space that holds cached preds.
   BumpPtrAllocator Memory;
 
-public:
-  size_t size(BasicBlock *BB) { return get(BB).size(); }
-  ArrayRef<BasicBlock *> get(BasicBlock *BB) {
-    ArrayRef<BasicBlock *> &Entry = BlockToPredsMap[BB];
-    if (Entry.data())
+private:
+  /// GetPreds - Get a cached list for the null-terminated predecessor list of
+  /// the specified block.  This can be used in a loop like this:
+  ///   for (BasicBlock **PI = PredCache->GetPreds(BB); *PI; ++PI)
+  ///      use(*PI);
+  /// instead of:
+  /// for (pred_iterator PI = pred_begin(BB), E = pred_end(BB); PI != E; ++PI)
+  BasicBlock **GetPreds(BasicBlock *BB) {
+    BasicBlock **&Entry = BlockToPredsMap[BB];
+    if (Entry)
       return Entry;
 
     SmallVector<BasicBlock *, 32> PredCache(predecessors(BB));
-    BasicBlock **Data = Memory.Allocate<BasicBlock *>(PredCache.size());
-    std::copy(PredCache.begin(), PredCache.end(), Data);
-    Entry = ArrayRef(Data, PredCache.size());
+    PredCache.push_back(nullptr); // null terminator.
+
+    BlockToPredCountMap[BB] = PredCache.size() - 1;
+
+    Entry = Memory.Allocate<BasicBlock *>(PredCache.size());
+    std::copy(PredCache.begin(), PredCache.end(), Entry);
     return Entry;
+  }
+
+  unsigned GetNumPreds(BasicBlock *BB) const {
+    auto Result = BlockToPredCountMap.find(BB);
+    if (Result != BlockToPredCountMap.end())
+      return Result->second;
+    return BlockToPredCountMap[BB] = pred_size(BB);
+  }
+
+public:
+  size_t size(BasicBlock *BB) const { return GetNumPreds(BB); }
+  ArrayRef<BasicBlock *> get(BasicBlock *BB) {
+    return ArrayRef(GetPreds(BB), GetNumPreds(BB));
   }
 
   /// clear - Remove all information.
   void clear() {
     BlockToPredsMap.clear();
+    BlockToPredCountMap.clear();
     Memory.Reset();
   }
 };

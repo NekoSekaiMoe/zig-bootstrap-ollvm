@@ -18,7 +18,6 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerSumType.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/PredIteratorCache.h"
@@ -28,7 +27,9 @@
 
 namespace llvm {
 
+class AAResults;
 class AssumptionCache;
+class BatchAAResults;
 class DominatorTree;
 class PHITransAddr;
 
@@ -355,7 +356,6 @@ private:
   const TargetLibraryInfo &TLI;
   DominatorTree &DT;
   PredIteratorCache PredCache;
-  EarliestEscapeAnalysis EEA;
 
   unsigned DefaultBlockScanLimit;
 
@@ -367,7 +367,7 @@ public:
   MemoryDependenceResults(AAResults &AA, AssumptionCache &AC,
                           const TargetLibraryInfo &TLI, DominatorTree &DT,
                           unsigned DefaultBlockScanLimit)
-      : AA(AA), AC(AC), TLI(TLI), DT(DT), EEA(DT),
+      : AA(AA), AC(AC), TLI(TLI), DT(DT),
         DefaultBlockScanLimit(DefaultBlockScanLimit) {}
 
   /// Handle invalidation in the new PM.
@@ -492,7 +492,7 @@ private:
                                    const MemoryLocation &Loc, bool isLoad,
                                    BasicBlock *BB,
                                    SmallVectorImpl<NonLocalDepResult> &Result,
-                                   SmallDenseMap<BasicBlock *, Value *, 16> &Visited,
+                                   DenseMap<BasicBlock *, Value *> &Visited,
                                    bool SkipFirstBlock = false,
                                    bool IsIncomplete = false);
   MemDepResult getNonLocalInfoForBlock(Instruction *QueryInst,

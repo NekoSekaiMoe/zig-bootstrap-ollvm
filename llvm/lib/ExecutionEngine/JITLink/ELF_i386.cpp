@@ -56,8 +56,7 @@ private:
     auto DefineExternalGOTSymbolIfPresent =
         createDefineExternalSectionStartAndEndSymbolsPass(
             [&](LinkGraph &LG, Symbol &Sym) -> SectionRangeSymbolDesc {
-              if (Sym.getName() != nullptr &&
-                  *Sym.getName() == ELFGOTSymbolName)
+              if (Sym.getName() == ELFGOTSymbolName)
                 if (auto *GOTSection = G.findSectionByName(
                         i386::GOTTableManager::getSectionName())) {
                   GOTSymbol = &Sym;
@@ -83,7 +82,7 @@ private:
 
       // Check for an existing defined symbol.
       for (auto *Sym : GOTSection->symbols())
-        if (Sym->getName() != nullptr && *Sym->getName() == ELFGOTSymbolName) {
+        if (Sym->getName() == ELFGOTSymbolName) {
           GOTSymbol = Sym;
           return Error::success();
         }
@@ -187,28 +186,14 @@ private:
     int64_t Addend = 0;
 
     switch (*Kind) {
-    case i386::EdgeKind_i386::None:
-      break;
-    case i386::EdgeKind_i386::Pointer32:
-    case i386::EdgeKind_i386::PCRel32:
-    case i386::EdgeKind_i386::RequestGOTAndTransformToDelta32FromGOT:
-    case i386::EdgeKind_i386::Delta32:
-    case i386::EdgeKind_i386::Delta32FromGOT:
-    case i386::EdgeKind_i386::BranchPCRel32:
-    case i386::EdgeKind_i386::BranchPCRel32ToPtrJumpStub:
-    case i386::EdgeKind_i386::BranchPCRel32ToPtrJumpStubBypassable: {
+    case i386::EdgeKind_i386::Delta32: {
       const char *FixupContent = BlockToFix.getContent().data() +
                                  (FixupAddress - BlockToFix.getAddress());
-      Addend = *(const support::little32_t *)FixupContent;
+      Addend = *(const support::ulittle32_t *)FixupContent;
       break;
     }
-    case i386::EdgeKind_i386::Pointer16:
-    case i386::EdgeKind_i386::PCRel16: {
-      const char *FixupContent = BlockToFix.getContent().data() +
-                                 (FixupAddress - BlockToFix.getAddress());
-      Addend = *(const support::little16_t *)FixupContent;
+    default:
       break;
-    }
     }
 
     Edge::OffsetT Offset = FixupAddress - BlockToFix.getAddress();
@@ -225,16 +210,13 @@ private:
 
 public:
   ELFLinkGraphBuilder_i386(StringRef FileName, const object::ELFFile<ELFT> &Obj,
-                           std::shared_ptr<orc::SymbolStringPool> SSP,
                            Triple TT, SubtargetFeatures Features)
-      : ELFLinkGraphBuilder<ELFT>(Obj, std::move(SSP), std::move(TT),
-                                  std::move(Features), FileName,
-                                  i386::getEdgeKindName) {}
+      : ELFLinkGraphBuilder<ELFT>(Obj, std::move(TT), std::move(Features),
+                                  FileName, i386::getEdgeKindName) {}
 };
 
 Expected<std::unique_ptr<LinkGraph>>
-createLinkGraphFromELFObject_i386(MemoryBufferRef ObjectBuffer,
-                                  std::shared_ptr<orc::SymbolStringPool> SSP) {
+createLinkGraphFromELFObject_i386(MemoryBufferRef ObjectBuffer) {
   LLVM_DEBUG({
     dbgs() << "Building jitlink graph for new input "
            << ObjectBuffer.getBufferIdentifier() << "...\n";
@@ -252,9 +234,8 @@ createLinkGraphFromELFObject_i386(MemoryBufferRef ObjectBuffer,
          "Only i386 (little endian) is supported for now");
 
   auto &ELFObjFile = cast<object::ELFObjectFile<object::ELF32LE>>(**ELFObj);
-
   return ELFLinkGraphBuilder_i386<object::ELF32LE>(
-             (*ELFObj)->getFileName(), ELFObjFile.getELFFile(), std::move(SSP),
+             (*ELFObj)->getFileName(), ELFObjFile.getELFFile(),
              (*ELFObj)->makeTriple(), std::move(*Features))
       .buildGraph();
 }

@@ -19,5 +19,5 @@ pub fn main() void {
     bar();
 }
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

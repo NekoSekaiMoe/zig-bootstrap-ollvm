@@ -15,7 +15,6 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
 #include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/RuntimeDyldChecker.h"
@@ -117,22 +116,22 @@ public:
 /// linker.
 class RelocationEntry {
 public:
+  /// SectionID - the section this relocation points to.
+  unsigned SectionID;
+
   /// Offset - offset into the section.
   uint64_t Offset;
+
+  /// RelType - relocation type.
+  uint32_t RelType;
 
   /// Addend - the relocation addend encoded in the instruction itself.  Also
   /// used to make a relocation section relative instead of symbol relative.
   int64_t Addend;
 
-  /// SectionID - the section this relocation points to.
-  unsigned SectionID;
-
-  /// RelType - relocation type.
-  uint32_t RelType;
-
   struct SectionPair {
-    uint32_t SectionA;
-    uint32_t SectionB;
+      uint32_t SectionA;
+      uint32_t SectionB;
   };
 
   /// SymOffset - Section offset of the relocation entry's symbol (used for GOT
@@ -142,36 +141,36 @@ public:
     SectionPair Sections;
   };
 
+  /// True if this is a PCRel relocation (MachO specific).
+  bool IsPCRel;
+
   /// The size of this relocation (MachO specific).
   unsigned Size;
 
-  /// True if this is a PCRel relocation (MachO specific).
-  bool IsPCRel : 1;
-
   // ARM (MachO and COFF) specific.
-  bool IsTargetThumbFunc : 1;
+  bool IsTargetThumbFunc = false;
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend)
-      : Offset(offset), Addend(addend), SectionID(id), RelType(type),
-        SymOffset(0), Size(0), IsPCRel(false), IsTargetThumbFunc(false) {}
+      : SectionID(id), Offset(offset), RelType(type), Addend(addend),
+        SymOffset(0), IsPCRel(false), Size(0), IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   uint64_t symoffset)
-      : Offset(offset), Addend(addend), SectionID(id), RelType(type),
-        SymOffset(symoffset), Size(0), IsPCRel(false),
+      : SectionID(id), Offset(offset), RelType(type), Addend(addend),
+        SymOffset(symoffset), IsPCRel(false), Size(0),
         IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   bool IsPCRel, unsigned Size)
-      : Offset(offset), Addend(addend), SectionID(id), RelType(type),
-        SymOffset(0), Size(Size), IsPCRel(IsPCRel), IsTargetThumbFunc(false) {}
+      : SectionID(id), Offset(offset), RelType(type), Addend(addend),
+        SymOffset(0), IsPCRel(IsPCRel), Size(Size), IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   unsigned SectionA, uint64_t SectionAOffset, unsigned SectionB,
                   uint64_t SectionBOffset, bool IsPCRel, unsigned Size)
-      : Offset(offset), Addend(SectionAOffset - SectionBOffset + addend),
-        SectionID(id), RelType(type), Size(Size), IsPCRel(IsPCRel),
-        IsTargetThumbFunc(false) {
+      : SectionID(id), Offset(offset), RelType(type),
+        Addend(SectionAOffset - SectionBOffset + addend), IsPCRel(IsPCRel),
+        Size(Size), IsTargetThumbFunc(false) {
     Sections.SectionA = SectionA;
     Sections.SectionB = SectionB;
   }
@@ -180,9 +179,9 @@ public:
                   unsigned SectionA, uint64_t SectionAOffset, unsigned SectionB,
                   uint64_t SectionBOffset, bool IsPCRel, unsigned Size,
                   bool IsTargetThumbFunc)
-      : Offset(offset), Addend(SectionAOffset - SectionBOffset + addend),
-        SectionID(id), RelType(type), Size(Size), IsPCRel(IsPCRel),
-        IsTargetThumbFunc(IsTargetThumbFunc) {
+      : SectionID(id), Offset(offset), RelType(type),
+        Addend(SectionAOffset - SectionBOffset + addend), IsPCRel(IsPCRel),
+        Size(Size), IsTargetThumbFunc(IsTargetThumbFunc) {
     Sections.SectionA = SectionA;
     Sections.SectionB = SectionB;
   }
@@ -302,7 +301,7 @@ protected:
   // won't be interleaved between modules.  It is also used in mapSectionAddress
   // and resolveRelocations to protect write access to internal data structures.
   //
-  // loadObject may be called on the same thread during the handling of
+  // loadObject may be called on the same thread during the handling of of
   // processRelocations, and that's OK.  The handling of the relocation lists
   // is written in such a way as to work correctly if new elements are added to
   // the end of the list while the list is being processed.
@@ -319,24 +318,18 @@ protected:
   std::string ErrorStr;
 
   void writeInt16BE(uint8_t *Addr, uint16_t Value) {
-    llvm::support::endian::write<uint16_t>(Addr, Value,
-                                           IsTargetLittleEndian
-                                               ? llvm::endianness::little
-                                               : llvm::endianness::big);
+    llvm::support::endian::write<uint16_t, llvm::support::unaligned>(
+        Addr, Value, IsTargetLittleEndian ? support::little : support::big);
   }
 
   void writeInt32BE(uint8_t *Addr, uint32_t Value) {
-    llvm::support::endian::write<uint32_t>(Addr, Value,
-                                           IsTargetLittleEndian
-                                               ? llvm::endianness::little
-                                               : llvm::endianness::big);
+    llvm::support::endian::write<uint32_t, llvm::support::unaligned>(
+        Addr, Value, IsTargetLittleEndian ? support::little : support::big);
   }
 
   void writeInt64BE(uint8_t *Addr, uint64_t Value) {
-    llvm::support::endian::write<uint64_t>(Addr, Value,
-                                           IsTargetLittleEndian
-                                               ? llvm::endianness::little
-                                               : llvm::endianness::big);
+    llvm::support::endian::write<uint64_t, llvm::support::unaligned>(
+        Addr, Value, IsTargetLittleEndian ? support::little : support::big);
   }
 
   virtual void setMipsABI(const ObjectFile &Obj) {
@@ -454,16 +447,6 @@ protected:
   // Return true if the relocation R may require allocating a stub.
   virtual bool relocationNeedsStub(const RelocationRef &R) const {
     return true;    // Conservative answer
-  }
-
-  // Return true if the relocation R may require allocating a DLL import stub.
-  virtual bool relocationNeedsDLLImportStub(const RelocationRef &R) const {
-    return false;
-  }
-
-  // Add the size of a DLL import stub to the buffer size
-  virtual unsigned sizeAfterAddingDLLImportStub(unsigned Size) const {
-    return Size;
   }
 
 public:

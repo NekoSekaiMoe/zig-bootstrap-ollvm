@@ -1,4 +1,4 @@
-/* Copyright (C) 1997-2025 Free Software Foundation, Inc.
+/* Copyright (C) 1997-2023 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -38,7 +38,18 @@
 
 
 /* Small types.  */
-#include <bits/stdint-least.h>
+
+/* Signed.  */
+typedef __int_least8_t int_least8_t;
+typedef __int_least16_t int_least16_t;
+typedef __int_least32_t int_least32_t;
+typedef __int_least64_t int_least64_t;
+
+/* Unsigned.  */
+typedef __uint_least8_t uint_least8_t;
+typedef __uint_least16_t uint_least16_t;
+typedef __uint_least32_t uint_least32_t;
+typedef __uint_least64_t uint_least64_t;
 
 
 /* Fast types.  */
@@ -262,7 +273,7 @@ typedef __uintmax_t		uintmax_t;
 #  define UINTMAX_C(c)	c ## ULL
 # endif
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
 
 # define INT8_WIDTH 8
 # define UINT8_WIDTH 8

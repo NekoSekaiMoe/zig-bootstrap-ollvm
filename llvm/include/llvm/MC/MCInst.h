@@ -18,7 +18,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/bit.h"
-#include "llvm/MC/MCRegister.h"
 #include "llvm/Support/SMLoc.h"
 #include <cassert>
 #include <cstddef>
@@ -67,15 +66,15 @@ public:
   bool isInst() const { return Kind == kInst; }
 
   /// Returns the register number.
-  MCRegister getReg() const {
+  unsigned getReg() const {
     assert(isReg() && "This is not a register operand!");
     return RegVal;
   }
 
   /// Set the register number.
-  void setReg(MCRegister Reg) {
+  void setReg(unsigned Reg) {
     assert(isReg() && "This is not a register operand!");
-    RegVal = Reg.id();
+    RegVal = Reg;
   }
 
   int64_t getImm() const {
@@ -132,10 +131,10 @@ public:
     InstVal = Val;
   }
 
-  static MCOperand createReg(MCRegister Reg) {
+  static MCOperand createReg(unsigned Reg) {
     MCOperand Op;
     Op.Kind = kRegister;
-    Op.RegVal = Reg.id();
+    Op.RegVal = Reg;
     return Op;
   }
 
@@ -190,7 +189,7 @@ class MCInst {
   unsigned Flags = 0;
 
   SMLoc Loc;
-  SmallVector<MCOperand, 6> Operands;
+  SmallVector<MCOperand, 10> Operands;
 
 public:
   MCInst() = default;

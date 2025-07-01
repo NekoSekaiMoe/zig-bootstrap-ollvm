@@ -115,7 +115,7 @@ M68kSubtarget &M68kSubtarget::initializeSubtargetDependencies(
 //  ---------------------+------------+------------+------------+-------------
 //                branch |   pc-rel   |   pc-rel   |   pc-rel   |   pc-rel
 //  ---------------------+------------+------------+------------+-------------
-//           call global |  absolute  |    @PLT    |  absolute  |    @PLT
+//           call global |    @PLT    |    @PLT    |    @PLT    |    @PLT
 //  ---------------------+------------+------------+------------+-------------
 //         call internal |   pc-rel   |   pc-rel   |   pc-rel   |   pc-rel
 //  ---------------------+------------+------------+------------+-------------
@@ -127,24 +127,6 @@ M68kSubtarget &M68kSubtarget::initializeSubtargetDependencies(
 //  ---------------------+------------+------------+------------+-------------
 //      data global big* |   pc-rel   |  @GOTPCREL |  absolute  |  @GOTPCREL
 //  ---------------------+------------+------------+------------+-------------
-//                       |          Large          |
-//                       +-------------------------+
-//                       |   Static   |    PIC     |
-//  ---------------------+------------+------------+
-//                branch |  absolute  |   pc-rel   |
-//  ---------------------+------------+------------+
-//           call global |  absolute  |    @PLT    |
-//  ---------------------+------------+------------+
-//         call internal |  absolute  |   pc-rel   |
-//  ---------------------+------------+------------+
-//            data local |  absolute  |  @GOTOFF   |
-//  ---------------------+------------+------------+
-//       data local big* |  absolute  |  @GOTOFF   |
-//  ---------------------+------------+------------+
-//           data global |  absolute  |  @GOTOFF   |
-//  ---------------------+------------+------------+
-//      data global big* |  absolute  |  @GOTOFF   |
-//  ---------------------+------------+------------+
 //
 // * Big data potentially cannot be reached within 16 bit offset and requires
 //   special handling for old(x00 and x10) CPUs. Normally these symbols go into
@@ -160,22 +142,8 @@ M68kSubtarget &M68kSubtarget::initializeSubtargetDependencies(
 /// Classify a blockaddress reference for the current subtarget according to how
 /// we should reference it in a non-pcrel context.
 unsigned char M68kSubtarget::classifyBlockAddressReference() const {
-  switch (TM.getCodeModel()) {
-  default:
-    llvm_unreachable("Unsupported code model");
-  case CodeModel::Small:
-  case CodeModel::Kernel:
-  case CodeModel::Medium: {
-    return M68kII::MO_PC_RELATIVE_ADDRESS;
-  }
-  case CodeModel::Large: {
-    if (isPositionIndependent()) {
-      return M68kII::MO_PC_RELATIVE_ADDRESS;
-    } else {
-      return M68kII::MO_ABSOLUTE_ADDRESS;
-    }
-  }
-  }
+  // Unless we start to support Large Code Model branching is always pc-rel
+  return M68kII::MO_PC_RELATIVE_ADDRESS;
 }
 
 unsigned char
@@ -203,18 +171,11 @@ M68kSubtarget::classifyLocalReference(const GlobalValue *GV) const {
       return M68kII::MO_ABSOLUTE_ADDRESS;
     }
   }
-  case CodeModel::Large: {
-    if (isPositionIndependent()) {
-      return M68kII::MO_GOTOFF;
-    } else {
-      return M68kII::MO_ABSOLUTE_ADDRESS;
-    }
-  }
   }
 }
 
 unsigned char M68kSubtarget::classifyExternalReference(const Module &M) const {
-  if (TM.shouldAssumeDSOLocal(nullptr))
+  if (TM.shouldAssumeDSOLocal(M, nullptr))
     return classifyLocalReference(nullptr);
 
   if (isPositionIndependent())
@@ -230,7 +191,7 @@ M68kSubtarget::classifyGlobalReference(const GlobalValue *GV) const {
 
 unsigned char M68kSubtarget::classifyGlobalReference(const GlobalValue *GV,
                                                      const Module &M) const {
-  if (TM.shouldAssumeDSOLocal(GV))
+  if (TM.shouldAssumeDSOLocal(M, GV))
     return classifyLocalReference(GV);
 
   switch (TM.getCodeModel()) {
@@ -251,12 +212,6 @@ unsigned char M68kSubtarget::classifyGlobalReference(const GlobalValue *GV,
 
     return M68kII::MO_ABSOLUTE_ADDRESS;
   }
-  case CodeModel::Large: {
-    if (isPositionIndependent())
-      return M68kII::MO_GOTOFF;
-
-    return M68kII::MO_ABSOLUTE_ADDRESS;
-  }
   }
 }
 
@@ -266,8 +221,7 @@ unsigned M68kSubtarget::getJumpTableEncoding() const {
     // the potential delta between the jump target and table base can be larger
     // than displacement field, which is True for older CPUs(16 bit disp)
     // in Medium model(can have large data way beyond 16 bit).
-    if ((TM.getCodeModel() == CodeModel::Medium && !atLeastM68020()) ||
-        TM.getCodeModel() == CodeModel::Large)
+    if (TM.getCodeModel() == CodeModel::Medium && !atLeastM68020())
       return MachineJumpTableInfo::EK_Custom32;
 
     return MachineJumpTableInfo::EK_LabelDifference32;
@@ -286,7 +240,7 @@ unsigned char
 M68kSubtarget::classifyGlobalFunctionReference(const GlobalValue *GV,
                                                const Module &M) const {
   // local always use pc-rel referencing
-  if (TM.shouldAssumeDSOLocal(GV))
+  if (TM.shouldAssumeDSOLocal(M, GV))
     return M68kII::MO_NO_FLAG;
 
   // If the function is marked as non-lazy, generate an indirect call
@@ -297,6 +251,6 @@ M68kSubtarget::classifyGlobalFunctionReference(const GlobalValue *GV,
     return M68kII::MO_GOTPCREL;
   }
 
-  // Ensure that we don't emit PLT relocations when in non-pic modes.
-  return isPositionIndependent() ? M68kII::MO_PLT : M68kII::MO_ABSOLUTE_ADDRESS;
+  // otherwise linker will figure this out
+  return M68kII::MO_PLT;
 }

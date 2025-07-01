@@ -27,7 +27,7 @@ using namespace ento;
 namespace {
 class UndefCapturedBlockVarChecker
   : public Checker< check::PostStmt<BlockExpr> > {
-  const BugType BT{this, "uninitialized variable captured by block"};
+  mutable std::unique_ptr<BugType> BT;
 
 public:
   void checkPostStmt(const BlockExpr *BE, CheckerContext &C) const;
@@ -70,6 +70,10 @@ UndefCapturedBlockVarChecker::checkPostStmt(const BlockExpr *BE,
     if (std::optional<UndefinedVal> V =
             state->getSVal(Var.getOriginalRegion()).getAs<UndefinedVal>()) {
       if (ExplodedNode *N = C.generateErrorNode()) {
+        if (!BT)
+          BT.reset(
+              new BuiltinBug(this, "uninitialized variable captured by block"));
+
         // Generate a bug report.
         SmallString<128> buf;
         llvm::raw_svector_ostream os(buf);
@@ -77,7 +81,7 @@ UndefCapturedBlockVarChecker::checkPostStmt(const BlockExpr *BE,
         os << "Variable '" << VD->getName()
            << "' is uninitialized when captured by block";
 
-        auto R = std::make_unique<PathSensitiveBugReport>(BT, os.str(), N);
+        auto R = std::make_unique<PathSensitiveBugReport>(*BT, os.str(), N);
         if (const Expr *Ex = FindBlockDeclRefExpr(BE->getBody(), VD))
           R->addRange(Ex->getSourceRange());
         bugreporter::trackStoredValue(*V, VR, *R,

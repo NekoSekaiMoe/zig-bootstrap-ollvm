@@ -19,6 +19,7 @@
 #include "R600InstPrinter.h"
 #include "R600MCTargetDesc.h"
 #include "TargetInfo/AMDGPUTargetInfo.h"
+#include "llvm/MC/LaneBitmask.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCELFStreamer.h"
@@ -69,7 +70,7 @@ static MCRegisterInfo *createAMDGPUMCRegisterInfo(const Triple &TT) {
 
 MCRegisterInfo *llvm::createGCNMCRegisterInfo(AMDGPUDwarfFlavour DwarfFlavour) {
   MCRegisterInfo *X = new MCRegisterInfo();
-  InitAMDGPUMCRegisterInfo(X, AMDGPU::PC_REG, DwarfFlavour, DwarfFlavour);
+  InitAMDGPUMCRegisterInfo(X, AMDGPU::PC_REG, DwarfFlavour);
   return X;
 }
 
@@ -77,22 +78,7 @@ static MCSubtargetInfo *
 createAMDGPUMCSubtargetInfo(const Triple &TT, StringRef CPU, StringRef FS) {
   if (TT.getArch() == Triple::r600)
     return createR600MCSubtargetInfoImpl(TT, CPU, /*TuneCPU*/ CPU, FS);
-
-  MCSubtargetInfo *STI =
-      createAMDGPUMCSubtargetInfoImpl(TT, CPU, /*TuneCPU*/ CPU, FS);
-
-  // FIXME: We should error for the default target.
-  if (!STI->hasFeature(AMDGPU::FeatureWavefrontSize64) &&
-      !STI->hasFeature(AMDGPU::FeatureWavefrontSize32)) {
-    // If there is no default wave size it must be a generation before gfx10,
-    // these have FeatureWavefrontSize64 in their definition already. For gfx10+
-    // set wave32 as a default.
-    STI->ToggleFeature(AMDGPU::isGFX10Plus(*STI)
-                           ? AMDGPU::FeatureWavefrontSize32
-                           : AMDGPU::FeatureWavefrontSize64);
-  }
-
-  return STI;
+  return createAMDGPUMCSubtargetInfoImpl(TT, CPU, /*TuneCPU*/ CPU, FS);
 }
 
 static MCInstPrinter *createAMDGPUMCInstPrinter(const Triple &T,
@@ -102,12 +88,14 @@ static MCInstPrinter *createAMDGPUMCInstPrinter(const Triple &T,
                                                 const MCRegisterInfo &MRI) {
   if (T.getArch() == Triple::r600)
     return new R600InstPrinter(MAI, MII, MRI);
-  return new AMDGPUInstPrinter(MAI, MII, MRI);
+  else
+    return new AMDGPUInstPrinter(MAI, MII, MRI);
 }
 
-static MCTargetStreamer *
-createAMDGPUAsmTargetStreamer(MCStreamer &S, formatted_raw_ostream &OS,
-                              MCInstPrinter *InstPrint) {
+static MCTargetStreamer *createAMDGPUAsmTargetStreamer(MCStreamer &S,
+                                                      formatted_raw_ostream &OS,
+                                                      MCInstPrinter *InstPrint,
+                                                      bool isVerboseAsm) {
   return new AMDGPUTargetAsmStreamer(S, OS);
 }
 
@@ -124,9 +112,10 @@ static MCTargetStreamer *createAMDGPUNullTargetStreamer(MCStreamer &S) {
 static MCStreamer *createMCStreamer(const Triple &T, MCContext &Context,
                                     std::unique_ptr<MCAsmBackend> &&MAB,
                                     std::unique_ptr<MCObjectWriter> &&OW,
-                                    std::unique_ptr<MCCodeEmitter> &&Emitter) {
+                                    std::unique_ptr<MCCodeEmitter> &&Emitter,
+                                    bool RelaxAll) {
   return createAMDGPUELFStreamer(T, Context, std::move(MAB), std::move(OW),
-                                 std::move(Emitter));
+                                 std::move(Emitter), RelaxAll);
 }
 
 namespace {
@@ -144,8 +133,10 @@ public:
       return false;
 
     int64_t Imm = Inst.getOperand(0).getImm();
-    // Our branches take a simm16.
-    Target = SignExtend64<16>(Imm) * 4 + Addr + Size;
+    // Our branches take a simm16, but we need two extra bits to account for
+    // the factor of 4.
+    APInt SignedOffset(18, Imm * 4, true);
+    Target = (SignedOffset.sext(64) + Addr + Size).getZExtValue();
     return true;
   }
 };

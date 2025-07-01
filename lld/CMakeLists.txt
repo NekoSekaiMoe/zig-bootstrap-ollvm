@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.20.0)
-set(LLVM_SUBPROJECT_TITLE "LLD")
 
 if(NOT DEFINED LLVM_COMMON_CMAKE_UTILS)
   set(LLVM_COMMON_CMAKE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/../cmake)
@@ -178,7 +177,6 @@ endif()
 include_directories(BEFORE
   ${CMAKE_CURRENT_BINARY_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/../zig/lib/libunwind/include
   )
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
@@ -190,19 +188,15 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
 endif()
 
 add_subdirectory(Common)
-if(LLD_BUILD_TOOLS)
-  add_subdirectory(tools/lld)
-endif()
+add_subdirectory(tools/lld)
 
 if (LLVM_INCLUDE_TESTS)
   add_custom_target(LLDUnitTests)
-  set_target_properties(LLDUnitTests PROPERTIES FOLDER "LLD/Tests")
-  if (TARGET llvm_gtest)
-    add_subdirectory(unittests)
-  endif()
+  llvm_add_unittests(LLD_UNITTESTS_ADDED)
   add_subdirectory(test)
 endif()
 
+add_subdirectory(docs)
 add_subdirectory(COFF)
 add_subdirectory(ELF)
 add_subdirectory(MachO)

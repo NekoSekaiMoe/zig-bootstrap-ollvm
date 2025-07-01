@@ -85,6 +85,14 @@ protected:
   /// Default is false.
   bool HasSubsectionsViaSymbols = false;
 
+  /// True if this is a MachO target that supports the macho-specific .zerofill
+  /// directive for emitting BSS Symbols.  Default is false.
+  bool HasMachoZeroFillDirective = false;
+
+  /// True if this is a MachO target that supports the macho-specific .tbss
+  /// directive for emitting thread local BSS Symbols.  Default is false.
+  bool HasMachoTBSSDirective = false;
+
   /// True if this is a non-GNU COFF target. The COFF port of the GNU linker
   /// doesn't handle associative comdats in the way that we would like to use
   /// them.
@@ -94,10 +102,9 @@ protected:
   /// constants into comdat sections.
   bool HasCOFFComdatConstants = false;
 
-  bool IsAIX = false;
-
-  // True if using the HLASM dialect on z/OS.
-  bool IsHLASM = false;
+  /// True if this is an XCOFF target that supports visibility attributes as
+  /// part of .global, .weak, .extern, and .comm. Default is false.
+  bool HasVisibilityOnlyWithLinkage = false;
 
   /// This is the maximum possible length of an instruction, which is needed to
   /// compute the size of an inline asm.  Defaults to 4.
@@ -111,6 +118,14 @@ protected:
   /// the current PC.  Defaults to false.
   bool DollarIsPC = false;
 
+  /// Allow '.' token, when not referencing an identifier or constant, to refer
+  /// to the current PC. Defaults to true.
+  bool DotIsPC = true;
+
+  /// Whether the '*' token refers to the current PC. This is used for the
+  /// HLASM dialect.
+  bool StarIsPC = false;
+
   /// This string, if specified, is used to separate instructions from each
   /// other when on the same line.  Defaults to ';'
   const char *SeparatorString;
@@ -118,6 +133,10 @@ protected:
   /// This indicates the comment string used by the assembler.  Defaults to
   /// "#"
   StringRef CommentString;
+
+  /// This indicates whether the comment string is only accepted as a comment
+  /// at the beginning of statements. Defaults to false.
+  bool RestrictCommentStringToStartOfStatement = false;
 
   /// This indicates whether to allow additional "comment strings" to be lexed
   /// as a comment. Setting this attribute to true, will ensure that C-style
@@ -127,8 +146,15 @@ protected:
   /// Default is true.
   bool AllowAdditionalComments = true;
 
+  /// Should we emit the '\t' as the starting indentation marker for GNU inline
+  /// asm statements. Defaults to true.
+  bool EmitGNUAsmStartIndentationMarker = true;
+
   /// This is appended to emitted labels.  Defaults to ":"
   const char *LabelSuffix;
+
+  /// Emit labels in purely upper case. Defaults to false.
+  bool EmitLabelsInUpperCase = false;
 
   // Print the EH begin symbol with an assignment. Defaults to false.
   bool UseAssignmentForEHBegin = false;
@@ -191,6 +217,13 @@ protected:
   /// still be lexed as a comment.
   bool AllowAtAtStartOfIdentifier = false;
 
+  /// This is true if the assembler allows the "#" character at the start of
+  /// a string to be lexed as an AsmToken::Identifier.
+  /// If the AsmLexer determines that the string can be lexed as a possible
+  /// comment, setting this option will have no effect, and the string will
+  /// still be lexed as a comment.
+  bool AllowHashAtStartOfIdentifier = false;
+
   /// If this is true, symbol names with invalid characters will be printed in
   /// quotes.
   bool SupportsQuotedNames = true;
@@ -200,11 +233,12 @@ protected:
   /// instead.
   bool UseDataRegionDirectives = false;
 
+  /// True if .align is to be used for alignment. Only power-of-two
+  /// alignment is supported.
+  bool UseDotAlignForAlignment = false;
+
   /// True if the target supports LEB128 directives.
   bool HasLEB128Directives = true;
-
-  /// True if full register names are printed.
-  bool PPCUseFullRegisterNames = false;
 
   //===--- Data Emission Directives -------------------------------------===//
 
@@ -213,6 +247,11 @@ protected:
   /// section. Common cases are "\t.zero\t" and "\t.space\t". Defaults to
   /// "\t.zero\t"
   const char *ZeroDirective;
+
+  /// This should be set to true if the zero directive supports a value to emit
+  /// other than zero. If this is set to false, the Data*bitsDirective's will be
+  /// used to emit these bytes. Defaults to true.
+  bool ZeroDirectiveSupportsNonZeroValue = true;
 
   /// This directive allows emission of an ascii string with the standard C
   /// escape characters embedded into it.  If a target doesn't support this, it
@@ -223,6 +262,16 @@ protected:
   /// on this target.  This is commonly supported as ".asciz".  If a target
   /// doesn't support this, it can be set to null.  Defaults to "\t.asciz\t"
   const char *AscizDirective;
+
+  /// This directive accepts a comma-separated list of bytes for emission as a
+  /// string of bytes.  For targets that do not support this, it shall be set to
+  /// null.  Defaults to null.
+  const char *ByteListDirective = nullptr;
+
+  /// This directive allows emission of a zero-terminated ascii string without
+  /// the standard C escape characters embedded into it.  If a target doesn't
+  /// support this, it can be set to null. Defaults to null.
+  const char *PlainStringDirective = nullptr;
 
   /// Form used for character literals in the assembly syntax.  Useful for
   /// producing strings as byte lists.  If a target does not use or support
@@ -296,6 +345,21 @@ protected:
   ///   .long a
   bool SetDirectiveSuppressesReloc = false;
 
+  /// False if the assembler requires that we use
+  /// \code
+  ///   Lc = a - b
+  ///   .long Lc
+  /// \endcode
+  //
+  /// instead of
+  //
+  /// \code
+  ///   .long a - b
+  /// \endcode
+  ///
+  ///  Defaults to true.
+  bool HasAggressiveSymbolFolding = true;
+
   /// True is .comm's and .lcomms optional alignment is to be specified in bytes
   /// instead of log2(n).  Defaults to true.
   bool COMMDirectiveAlignmentIsInBytes = true;
@@ -303,6 +367,16 @@ protected:
   /// Describes if the .lcomm directive for the target supports an alignment
   /// argument and how it is interpreted.  Defaults to NoAlignment.
   LCOMM::LCOMMType LCOMMDirectiveAlignmentType = LCOMM::NoAlignment;
+
+  /// True if the target only has basename for .file directive. False if the
+  /// target also needs the directory along with the basename. Defaults to true.
+  bool HasBasenameOnlyForFileDirective = true;
+
+  /// True if the target represents string constants as mostly raw characters in
+  /// paired double quotation with paired double quotation marks as the escape
+  /// mechanism to represent a double quotation mark within the string. Defaults
+  /// to false.
+  bool HasPairedDoubleQuoteStringConstants = false;
 
   // True if the target allows .align directives on functions. This is true for
   // most targets, so defaults to true.
@@ -316,6 +390,10 @@ protected:
   /// for ELF targets.  Defaults to true.
   bool HasSingleParameterDotFile = true;
 
+  /// True if the target has a four strings .file directive, strings seperated
+  /// by comma. Defaults to false.
+  bool HasFourStringsDotFile = false;
+
   /// True if the target has a .ident directive, this is true for ELF targets.
   /// Defaults to false.
   bool HasIdentDirective = false;
@@ -324,12 +402,20 @@ protected:
   /// to false.
   bool HasNoDeadStrip = false;
 
+  /// True if this target supports the MachO .alt_entry directive.  Defaults to
+  /// false.
+  bool HasAltEntry = false;
+
   /// Used to declare a global as being a weak symbol. Defaults to ".weak".
   const char *WeakDirective;
 
   /// This directive, if non-null, is used to declare a global as being a weak
   /// undefined symbol.  Defaults to nullptr.
   const char *WeakRefDirective = nullptr;
+
+  /// True if we have a directive to declare a global as being a weak defined
+  /// symbol.  Defaults to false.
+  bool HasWeakDefDirective = false;
 
   /// True if we have a directive to declare a global as being a weak defined
   /// symbol that can be hidden (unexported).  Defaults to false.
@@ -382,9 +468,17 @@ protected:
   /// absolute difference.
   bool DwarfFDESymbolsUseAbsDiff = false;
 
+  /// True if the target supports generating the DWARF line table through using
+  /// the .loc/.file directives. Defaults to true.
+  bool UsesDwarfFileAndLocDirectives = true;
+
   /// True if DWARF `.file directory' directive syntax is used by
   /// default.
   bool EnableDwarfFileDirectoryDefault = true;
+
+  /// True if the target needs the DWARF section length in the header (if any)
+  /// of the DWARF section in the assembly file. Defaults to true.
+  bool DwarfSectionSizeRequired = true;
 
   /// True if dwarf register numbers are printed instead of symbolic register
   /// names in .cfi_* directives.  Defaults to false.
@@ -418,7 +512,7 @@ protected:
   /// The integrated assembler should be enabled by default (by the
   /// constructors) when failing to parse a valid piece of assembly (inline
   /// or otherwise) is considered a bug. It may then be overridden after
-  /// construction (see CodeGenTargetMachineImpl::initAsmInfo()).
+  /// construction (see LLVMTargetMachine::initAsmInfo()).
   bool UseIntegratedAssembler;
 
   /// Use AsmParser to parse inlineAsm when UseIntegratedAssembler is not set.
@@ -427,12 +521,16 @@ protected:
   /// Preserve Comments in assembly
   bool PreserveAsmComments;
 
-  /// The column (zero-based) at which asm comments should be printed.
-  unsigned CommentColumn = 40;
+  /// Compress DWARF debug sections. Defaults to no compression.
+  DebugCompressionType CompressDebugSections = DebugCompressionType::None;
 
   /// True if the integrated assembler should interpret 'a >> b' constant
   /// expressions as logical rather than arithmetic.
   bool UseLogicalShr = true;
+
+  // If true, emit GOTPCRELX/REX_GOTPCRELX instead of GOTPCREL, on
+  // X86_64 ELF.
+  bool RelaxELFRelocations = true;
 
   // If true, then the lexer and expression parser will support %neg(),
   // %hi(), and similar unary operators.
@@ -440,6 +538,9 @@ protected:
 
   // If true, use Motorola-style integers in Assembly (ex. $0ac).
   bool UseMotorolaIntegers = false;
+
+  // If true, emit function descriptor symbol on AIX.
+  bool NeedsFunctionDescriptors = false;
 
 public:
   explicit MCAsmInfo();
@@ -483,6 +584,12 @@ public:
     return nullptr;
   }
 
+  /// True if the section is atomized using the symbols in it.
+  /// This is false if the section is not atomized at all (most ELF sections) or
+  /// if it is atomized based on its contents (MachO' __TEXT,__cstring for
+  /// example).
+  virtual bool isSectionAtomizableBySymbols(const MCSection &Section) const;
+
   virtual const MCExpr *getExprForPersonalitySymbol(const MCSymbol *Sym,
                                                     unsigned Encoding,
                                                     MCStreamer &Streamer) const;
@@ -521,11 +628,13 @@ public:
 
   // Accessors.
 
-  bool isAIX() const { return IsAIX; }
-  bool isHLASM() const { return IsHLASM; }
-  bool isMachO() const { return HasSubsectionsViaSymbols; }
+  bool hasMachoZeroFillDirective() const { return HasMachoZeroFillDirective; }
+  bool hasMachoTBSSDirective() const { return HasMachoTBSSDirective; }
   bool hasCOFFAssociativeComdats() const { return HasCOFFAssociativeComdats; }
   bool hasCOFFComdatConstants() const { return HasCOFFComdatConstants; }
+  bool hasVisibilityOnlyWithLinkage() const {
+    return HasVisibilityOnlyWithLinkage;
+  }
 
   /// Returns the maximum possible encoded instruction size in bytes. If \p STI
   /// is null, this should be the maximum size for any subtarget.
@@ -535,14 +644,24 @@ public:
 
   unsigned getMinInstAlignment() const { return MinInstAlignment; }
   bool getDollarIsPC() const { return DollarIsPC; }
+  bool getDotIsPC() const { return DotIsPC; }
+  bool getStarIsPC() const { return StarIsPC; }
   const char *getSeparatorString() const { return SeparatorString; }
 
-  unsigned getCommentColumn() const { return CommentColumn; }
-  void setCommentColumn(unsigned Col) { CommentColumn = Col; }
+  /// This indicates the column (zero-based) at which asm comments should be
+  /// printed.
+  unsigned getCommentColumn() const { return 40; }
 
   StringRef getCommentString() const { return CommentString; }
+  bool getRestrictCommentStringToStartOfStatement() const {
+    return RestrictCommentStringToStartOfStatement;
+  }
   bool shouldAllowAdditionalComments() const { return AllowAdditionalComments; }
+  bool getEmitGNUAsmStartIndentationMarker() const {
+    return EmitGNUAsmStartIndentationMarker;
+  }
   const char *getLabelSuffix() const { return LabelSuffix; }
+  bool shouldEmitLabelsInUpperCase() const { return EmitLabelsInUpperCase; }
 
   bool useAssignmentForEHBegin() const { return UseAssignmentForEHBegin; }
   bool needsLocalForSize() const { return NeedsLocalForSize; }
@@ -576,20 +695,29 @@ public:
   bool doesAllowDollarAtStartOfIdentifier() const {
     return AllowDollarAtStartOfIdentifier;
   }
+  bool doesAllowHashAtStartOfIdentifier() const {
+    return AllowHashAtStartOfIdentifier;
+  }
   bool supportsNameQuoting() const { return SupportsQuotedNames; }
 
   bool doesSupportDataRegionDirectives() const {
     return UseDataRegionDirectives;
   }
 
+  bool useDotAlignForAlignment() const {
+    return UseDotAlignForAlignment;
+  }
+
   bool hasLEB128Directives() const { return HasLEB128Directives; }
 
-  bool useFullRegisterNames() const { return PPCUseFullRegisterNames; }
-  void setFullRegisterNames(bool V) { PPCUseFullRegisterNames = V; }
-
   const char *getZeroDirective() const { return ZeroDirective; }
+  bool doesZeroDirectiveSupportNonZeroValue() const {
+    return ZeroDirectiveSupportsNonZeroValue;
+  }
   const char *getAsciiDirective() const { return AsciiDirective; }
   const char *getAscizDirective() const { return AscizDirective; }
+  const char *getByteListDirective() const { return ByteListDirective; }
+  const char *getPlainStringDirective() const { return PlainStringDirective; }
   AsmCharLiteralSyntax characterLiteralSyntax() const {
     return CharacterLiteralSyntax;
   }
@@ -601,6 +729,8 @@ public:
     return SetDirectiveSuppressesReloc;
   }
 
+  bool hasAggressiveSymbolFolding() const { return HasAggressiveSymbolFolding; }
+
   bool getCOMMDirectiveAlignmentIsInBytes() const {
     return COMMDirectiveAlignmentIsInBytes;
   }
@@ -609,13 +739,22 @@ public:
     return LCOMMDirectiveAlignmentType;
   }
 
+  bool hasBasenameOnlyForFileDirective() const {
+    return HasBasenameOnlyForFileDirective;
+  }
+  bool hasPairedDoubleQuoteStringConstants() const {
+    return HasPairedDoubleQuoteStringConstants;
+  }
   bool hasFunctionAlignment() const { return HasFunctionAlignment; }
   bool hasDotTypeDotSizeDirective() const { return HasDotTypeDotSizeDirective; }
   bool hasSingleParameterDotFile() const { return HasSingleParameterDotFile; }
+  bool hasFourStringsDotFile() const { return HasFourStringsDotFile; }
   bool hasIdentDirective() const { return HasIdentDirective; }
   bool hasNoDeadStrip() const { return HasNoDeadStrip; }
+  bool hasAltEntry() const { return HasAltEntry; }
   const char *getWeakDirective() const { return WeakDirective; }
   const char *getWeakRefDirective() const { return WeakRefDirective; }
+  bool hasWeakDefDirective() const { return HasWeakDefDirective; }
 
   bool hasWeakDefCanBeHiddenDirective() const {
     return HasWeakDefCanBeHiddenDirective;
@@ -654,8 +793,7 @@ public:
   /// frame information to unwind.
   bool usesCFIForEH() const {
     return (ExceptionsType == ExceptionHandling::DwarfCFI ||
-            ExceptionsType == ExceptionHandling::ARM ||
-            ExceptionsType == ExceptionHandling::ZOS || usesWindowsCFI());
+            ExceptionsType == ExceptionHandling::ARM || usesWindowsCFI());
   }
 
   bool usesWindowsCFI() const {
@@ -678,7 +816,13 @@ public:
     return SupportsExtendedDwarfLocDirective;
   }
 
-  bool usesDwarfFileAndLocDirectives() const { return !IsAIX; }
+  bool usesDwarfFileAndLocDirectives() const {
+    return UsesDwarfFileAndLocDirectives;
+  }
+
+  bool needsDwarfSectionSizeInHeader() const {
+    return DwarfSectionSizeRequired;
+  }
 
   bool enableDwarfFileDirectoryDefault() const {
     return EnableDwarfFileDirectoryDefault;
@@ -724,10 +868,20 @@ public:
     PreserveAsmComments = Value;
   }
 
+  DebugCompressionType compressDebugSections() const {
+    return CompressDebugSections;
+  }
+
+  void setCompressDebugSections(DebugCompressionType CompressDebugSections) {
+    this->CompressDebugSections = CompressDebugSections;
+  }
 
   bool shouldUseLogicalShr() const { return UseLogicalShr; }
 
+  bool canRelaxRelocations() const { return RelaxELFRelocations; }
+  void setRelaxELFRelocations(bool V) { RelaxELFRelocations = V; }
   bool hasMipsExpressions() const { return HasMipsExpressions; }
+  bool needsFunctionDescriptors() const { return NeedsFunctionDescriptors; }
   bool shouldUseMotorolaIntegers() const { return UseMotorolaIntegers; }
 };
 

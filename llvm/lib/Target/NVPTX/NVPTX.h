@@ -16,7 +16,6 @@
 
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/CodeGen.h"
 
 namespace llvm {
@@ -37,24 +36,28 @@ enum CondCodes {
 }
 
 FunctionPass *createNVPTXISelDag(NVPTXTargetMachine &TM,
-                                 llvm::CodeGenOptLevel OptLevel);
+                                 llvm::CodeGenOpt::Level OptLevel);
 ModulePass *createNVPTXAssignValidGlobalNamesPass();
 ModulePass *createGenericToNVVMLegacyPass();
 ModulePass *createNVPTXCtorDtorLoweringLegacyPass();
-FunctionPass *createNVVMIntrRangePass();
+FunctionPass *createNVVMIntrRangePass(unsigned int SmVersion);
 FunctionPass *createNVVMReflectPass(unsigned int SmVersion);
 MachineFunctionPass *createNVPTXPrologEpilogPass();
 MachineFunctionPass *createNVPTXReplaceImageHandlesPass();
 FunctionPass *createNVPTXImageOptimizerPass();
 FunctionPass *createNVPTXLowerArgsPass();
 FunctionPass *createNVPTXLowerAllocaPass();
-FunctionPass *createNVPTXLowerUnreachablePass(bool TrapUnreachable,
-                                              bool NoTrapAfterNoreturn);
+FunctionPass *createNVPTXLowerUnreachablePass();
 MachineFunctionPass *createNVPTXPeephole();
 MachineFunctionPass *createNVPTXProxyRegErasurePass();
 
 struct NVVMIntrRangePass : PassInfoMixin<NVVMIntrRangePass> {
+  NVVMIntrRangePass();
+  NVVMIntrRangePass(unsigned SmVersion) : SmVersion(SmVersion) {}
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+
+private:
+  unsigned SmVersion;
 };
 
 struct NVVMReflectPass : PassInfoMixin<NVVMReflectPass> {
@@ -68,10 +71,6 @@ private:
 
 struct GenericToNVVMPass : PassInfoMixin<GenericToNVVMPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
-};
-
-struct NVPTXCopyByValArgsPass : PassInfoMixin<NVPTXCopyByValArgsPass> {
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 };
 
 namespace NVPTX {
@@ -111,47 +110,15 @@ enum LoadStore {
   isStoreShift = 6
 };
 
-// Extends LLVM AtomicOrdering with PTX Orderings:
-using OrderingUnderlyingType = unsigned int;
-enum Ordering : OrderingUnderlyingType {
-  NotAtomic = (OrderingUnderlyingType)
-      AtomicOrdering::NotAtomic, // PTX calls these: "Weak"
-  // Unordered = 1, // NVPTX maps LLVM Unorderd to Relaxed
-  Relaxed = (OrderingUnderlyingType)AtomicOrdering::Monotonic,
-  // Consume = 3,   // Unimplemented in LLVM; NVPTX would map to "Acquire"
-  Acquire = (OrderingUnderlyingType)AtomicOrdering::Acquire,
-  Release = (OrderingUnderlyingType)AtomicOrdering::Release,
-  AcquireRelease = (OrderingUnderlyingType)AtomicOrdering::AcquireRelease,
-  SequentiallyConsistent =
-      (OrderingUnderlyingType)AtomicOrdering::SequentiallyConsistent,
-  Volatile = SequentiallyConsistent + 1,
-  RelaxedMMIO = Volatile + 1,
-  LASTORDERING = RelaxedMMIO
-};
-
-using ScopeUnderlyingType = unsigned int;
-enum Scope : ScopeUnderlyingType {
-  Thread = 0,
-  Block = 1,
-  Cluster = 2,
-  Device = 3,
-  System = 4,
-  LASTSCOPE = System
-};
-
-using AddressSpaceUnderlyingType = unsigned int;
-enum AddressSpace : AddressSpaceUnderlyingType {
-  Generic = 0,
-  Global = 1,
-  Shared = 3,
-  Const = 4,
-  Local = 5,
-
-  // NVPTX Backend Private:
-  Param = 101
-};
-
 namespace PTXLdStInstCode {
+enum AddressSpace {
+  GENERIC = 0,
+  GLOBAL = 1,
+  CONSTANT = 2,
+  SHARED = 3,
+  PARAM = 4,
+  LOCAL = 5
+};
 enum FromType {
   Unsigned = 0,
   Signed,
@@ -163,7 +130,7 @@ enum VecType {
   V2 = 2,
   V4 = 4
 };
-} // namespace PTXLdStInstCode
+}
 
 /// PTXCvtMode - Conversion code enumeration
 namespace PTXCvtMode {
@@ -213,20 +180,8 @@ enum CmpMode {
   FTZ_FLAG = 0x100
 };
 }
-
-namespace PTXPrmtMode {
-enum PrmtMode {
-  NONE,
-  F4E,
-  B4E,
-  RC8,
-  ECL,
-  ECR,
-  RC16,
-};
 }
-}
-void initializeNVPTXDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeNVPTXDAGToDAGISelPass(PassRegistry &);
 } // namespace llvm
 
 // Defines symbolic names for NVPTX registers.  This defines a mapping from

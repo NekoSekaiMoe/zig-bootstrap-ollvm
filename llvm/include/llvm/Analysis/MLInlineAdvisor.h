@@ -15,6 +15,7 @@
 #include "llvm/Analysis/MLModelRunner.h"
 #include "llvm/IR/PassManager.h"
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -23,7 +24,6 @@ namespace llvm {
 class DiagnosticInfoOptimizationBase;
 class Module;
 class MLInlineAdvice;
-class ProfileSummaryInfo;
 
 class MLInlineAdvisor : public InlineAdvisor {
 public:
@@ -44,7 +44,7 @@ public:
 
   bool isForcedToStop() const { return ForceStop; }
   int64_t getLocalCalls(Function &F);
-  const MLModelRunner &getModelRunner() const { return *ModelRunner; }
+  const MLModelRunner &getModelRunner() const { return *ModelRunner.get(); }
   FunctionPropertiesInfo &getCachedFPI(Function &) const;
 
 protected:
@@ -88,9 +88,7 @@ private:
   int32_t CurrentIRSize = 0;
   llvm::SmallPtrSet<const LazyCallGraph::Node *, 1> NodesInLastSCC;
   DenseSet<const LazyCallGraph::Node *> AllNodes;
-  DenseSet<Function *> DeadFunctions;
   bool ForceStop = false;
-  ProfileSummaryInfo &PSI;
 };
 
 /// InlineAdvice that tracks changes post inlining. For that reason, it only

@@ -13,12 +13,14 @@
 
 #include "MCTargetDesc/WebAssemblyFixupKinds.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Debug.h"
@@ -80,15 +82,14 @@ void WebAssemblyMCCodeEmitter::encodeInstruction(
   // For br_table instructions, encode the size of the table. In the MCInst,
   // there's an index operand (if not a stack instruction), one operand for
   // each table entry, and the default operand.
-  unsigned Opcode = MI.getOpcode();
-  if (Opcode == WebAssembly::BR_TABLE_I32_S ||
-      Opcode == WebAssembly::BR_TABLE_I64_S)
+  if (MI.getOpcode() == WebAssembly::BR_TABLE_I32_S ||
+      MI.getOpcode() == WebAssembly::BR_TABLE_I64_S)
     encodeULEB128(MI.getNumOperands() - 1, OS);
-  if (Opcode == WebAssembly::BR_TABLE_I32 ||
-      Opcode == WebAssembly::BR_TABLE_I64)
+  if (MI.getOpcode() == WebAssembly::BR_TABLE_I32 ||
+      MI.getOpcode() == WebAssembly::BR_TABLE_I64)
     encodeULEB128(MI.getNumOperands() - 2, OS);
 
-  const MCInstrDesc &Desc = MCII.get(Opcode);
+  const MCInstrDesc &Desc = MCII.get(MI.getOpcode());
   for (unsigned I = 0, E = MI.getNumOperands(); I < E; ++I) {
     const MCOperand &MO = MI.getOperand(I);
     if (MO.isReg()) {
@@ -111,20 +112,16 @@ void WebAssemblyMCCodeEmitter::encodeInstruction(
           break;
         case WebAssembly::OPERAND_SIGNATURE:
         case WebAssembly::OPERAND_VEC_I8IMM:
-          support::endian::write<uint8_t>(OS, MO.getImm(),
-                                          llvm::endianness::little);
+          support::endian::write<uint8_t>(OS, MO.getImm(), support::little);
           break;
         case WebAssembly::OPERAND_VEC_I16IMM:
-          support::endian::write<uint16_t>(OS, MO.getImm(),
-                                           llvm::endianness::little);
+          support::endian::write<uint16_t>(OS, MO.getImm(), support::little);
           break;
         case WebAssembly::OPERAND_VEC_I32IMM:
-          support::endian::write<uint32_t>(OS, MO.getImm(),
-                                           llvm::endianness::little);
+          support::endian::write<uint32_t>(OS, MO.getImm(), support::little);
           break;
         case WebAssembly::OPERAND_VEC_I64IMM:
-          support::endian::write<uint64_t>(OS, MO.getImm(),
-                                           llvm::endianness::little);
+          support::endian::write<uint64_t>(OS, MO.getImm(), support::little);
           break;
         case WebAssembly::OPERAND_GLOBAL:
           Ctx.reportError(
@@ -135,53 +132,42 @@ void WebAssemblyMCCodeEmitter::encodeInstruction(
           encodeULEB128(uint64_t(MO.getImm()), OS);
         }
       } else {
-        // Variadic immediate operands are br_table's destination operands or
-        // try_table's operands (# of catch clauses, catch sub-opcodes, or catch
-        // clause destinations)
-        assert(WebAssembly::isBrTable(Opcode) ||
-               Opcode == WebAssembly::TRY_TABLE_S);
-        encodeULEB128(uint32_t(MO.getImm()), OS);
+        encodeULEB128(uint64_t(MO.getImm()), OS);
       }
 
     } else if (MO.isSFPImm()) {
       uint32_t F = MO.getSFPImm();
-      support::endian::write<uint32_t>(OS, F, llvm::endianness::little);
+      support::endian::write<uint32_t>(OS, F, support::little);
     } else if (MO.isDFPImm()) {
       uint64_t D = MO.getDFPImm();
-      support::endian::write<uint64_t>(OS, D, llvm::endianness::little);
+      support::endian::write<uint64_t>(OS, D, support::little);
     } else if (MO.isExpr()) {
+      const MCOperandInfo &Info = Desc.operands()[I];
       llvm::MCFixupKind FixupKind;
       size_t PaddedSize = 5;
-      if (I < Desc.getNumOperands()) {
-        const MCOperandInfo &Info = Desc.operands()[I];
-        switch (Info.OperandType) {
-        case WebAssembly::OPERAND_I32IMM:
-          FixupKind = MCFixupKind(WebAssembly::fixup_sleb128_i32);
-          break;
-        case WebAssembly::OPERAND_I64IMM:
-          FixupKind = MCFixupKind(WebAssembly::fixup_sleb128_i64);
-          PaddedSize = 10;
-          break;
-        case WebAssembly::OPERAND_FUNCTION32:
-        case WebAssembly::OPERAND_TABLE:
-        case WebAssembly::OPERAND_OFFSET32:
-        case WebAssembly::OPERAND_SIGNATURE:
-        case WebAssembly::OPERAND_TYPEINDEX:
-        case WebAssembly::OPERAND_GLOBAL:
-        case WebAssembly::OPERAND_TAG:
-          FixupKind = MCFixupKind(WebAssembly::fixup_uleb128_i32);
-          break;
-        case WebAssembly::OPERAND_OFFSET64:
-          FixupKind = MCFixupKind(WebAssembly::fixup_uleb128_i64);
-          PaddedSize = 10;
-          break;
-        default:
-          llvm_unreachable("unexpected symbolic operand kind");
-        }
-      } else {
-        // Variadic expr operands are try_table's catch/catch_ref clauses' tags.
-        assert(Opcode == WebAssembly::TRY_TABLE_S);
+      switch (Info.OperandType) {
+      case WebAssembly::OPERAND_I32IMM:
+        FixupKind = MCFixupKind(WebAssembly::fixup_sleb128_i32);
+        break;
+      case WebAssembly::OPERAND_I64IMM:
+        FixupKind = MCFixupKind(WebAssembly::fixup_sleb128_i64);
+        PaddedSize = 10;
+        break;
+      case WebAssembly::OPERAND_FUNCTION32:
+      case WebAssembly::OPERAND_TABLE:
+      case WebAssembly::OPERAND_OFFSET32:
+      case WebAssembly::OPERAND_SIGNATURE:
+      case WebAssembly::OPERAND_TYPEINDEX:
+      case WebAssembly::OPERAND_GLOBAL:
+      case WebAssembly::OPERAND_TAG:
         FixupKind = MCFixupKind(WebAssembly::fixup_uleb128_i32);
+        break;
+      case WebAssembly::OPERAND_OFFSET64:
+        FixupKind = MCFixupKind(WebAssembly::fixup_uleb128_i64);
+        PaddedSize = 10;
+        break;
+      default:
+        llvm_unreachable("unexpected symbolic operand kind");
       }
       Fixups.push_back(MCFixup::create(OS.tell() - Start, MO.getExpr(),
                                        FixupKind, MI.getLoc()));

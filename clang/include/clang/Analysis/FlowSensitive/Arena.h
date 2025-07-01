@@ -11,7 +11,6 @@
 #include "clang/Analysis/FlowSensitive/Formula.h"
 #include "clang/Analysis/FlowSensitive/StorageLocation.h"
 #include "clang/Analysis/FlowSensitive/Value.h"
-#include "llvm/ADT/StringRef.h"
 #include <vector>
 
 namespace clang::dataflow {
@@ -20,17 +19,15 @@ namespace clang::dataflow {
 /// For example, `Value`, `StorageLocation`, `Atom`, and `Formula`.
 class Arena {
 public:
-  Arena()
-      : True(Formula::create(Alloc, Formula::Literal, {}, 1)),
-        False(Formula::create(Alloc, Formula::Literal, {}, 0)) {}
+  Arena() : True(makeAtom()), False(makeAtom()) {}
   Arena(const Arena &) = delete;
   Arena &operator=(const Arena &) = delete;
 
   /// Creates a `T` (some subclass of `StorageLocation`), forwarding `args` to
   /// the constructor, and returns a reference to it.
   ///
-  /// The `Arena` takes ownership of the created object. The object will be
-  /// destroyed when the `Arena` is destroyed.
+  /// The `DataflowAnalysisContext` takes ownership of the created object. The
+  /// object will be destroyed when the `DataflowAnalysisContext` is destroyed.
   template <typename T, typename... Args>
   std::enable_if_t<std::is_base_of<StorageLocation, T>::value, T &>
   create(Args &&...args) {
@@ -45,8 +42,8 @@ public:
   /// Creates a `T` (some subclass of `Value`), forwarding `args` to the
   /// constructor, and returns a reference to it.
   ///
-  /// The `Arena` takes ownership of the created object. The object will be
-  /// destroyed when the `Arena` is destroyed.
+  /// The `DataflowAnalysisContext` takes ownership of the created object. The
+  /// object will be destroyed when the `DataflowAnalysisContext` is destroyed.
   template <typename T, typename... Args>
   std::enable_if_t<std::is_base_of<Value, T>::value, T &>
   create(Args &&...args) {
@@ -108,11 +105,9 @@ public:
   const Formula &makeAtomRef(Atom A);
 
   /// Returns a formula for a literal true/false.
-  const Formula &makeLiteral(bool Value) { return Value ? True : False; }
-
-  // Parses a formula from its textual representation.
-  // This may refer to atoms that were not produced by makeAtom() yet!
-  llvm::Expected<const Formula &> parseFormula(llvm::StringRef);
+  const Formula &makeLiteral(bool Value) {
+    return makeAtomRef(Value ? True : False);
+  }
 
   /// Returns a new atomic boolean variable, distinct from any other.
   Atom makeAtom() { return static_cast<Atom>(NextAtom++); };
@@ -144,7 +139,7 @@ private:
   llvm::DenseMap<const Formula *, BoolValue *> FormulaValues;
   unsigned NextAtom = 0;
 
-  const Formula &True, &False;
+  Atom True, False;
 };
 
 } // namespace clang::dataflow

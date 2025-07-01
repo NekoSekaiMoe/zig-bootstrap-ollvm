@@ -112,7 +112,7 @@ private:
   bool CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
                       bool isVarArg,
                       const SmallVectorImpl<ISD::OutputArg> &ArgsFlags,
-                      LLVMContext &Context, const Type *RetTy) const override;
+                      LLVMContext &Context) const override;
 
   bool mayBeEmittedAsTailCall(const CallInst *CI) const override;
 };

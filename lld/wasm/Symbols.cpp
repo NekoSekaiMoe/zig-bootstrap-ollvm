@@ -13,7 +13,6 @@
 #include "InputFiles.h"
 #include "OutputSections.h"
 #include "OutputSegment.h"
-#include "SymbolTable.h"
 #include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Memory.h"
 #include "llvm/Demangle/Demangle.h"
@@ -35,7 +34,7 @@ std::string maybeDemangleSymbol(StringRef name) {
   // `main` in the case where we need to pass it arguments.
   if (name == "__main_argc_argv")
     return "main";
-  if (wasm::ctx.arg.demangle)
+  if (wasm::config->demangle)
     return demangle(name);
   return name.str();
 }
@@ -68,10 +67,6 @@ std::string toString(wasm::Symbol::Kind kind) {
     return "SectionKind";
   case wasm::Symbol::OutputSectionKind:
     return "OutputSectionKind";
-  case wasm::Symbol::SharedFunctionKind:
-    return "SharedFunctionKind";
-  case wasm::Symbol::SharedDataKind:
-    return "SharedDataKind";
   }
   llvm_unreachable("invalid symbol kind");
 }
@@ -80,6 +75,7 @@ namespace wasm {
 DefinedFunction *WasmSym::callCtors;
 DefinedFunction *WasmSym::callDtors;
 DefinedFunction *WasmSym::initMemory;
+DefinedFunction *WasmSym::applyDataRelocs;
 DefinedFunction *WasmSym::applyGlobalRelocs;
 DefinedFunction *WasmSym::applyTLSRelocs;
 DefinedFunction *WasmSym::applyGlobalTLSRelocs;
@@ -99,6 +95,8 @@ GlobalSymbol *WasmSym::tlsSize;
 GlobalSymbol *WasmSym::tlsAlign;
 UndefinedGlobal *WasmSym::tableBase;
 DefinedData *WasmSym::definedTableBase;
+UndefinedGlobal *WasmSym::tableBase32;
+DefinedData *WasmSym::definedTableBase32;
 UndefinedGlobal *WasmSym::memoryBase;
 DefinedData *WasmSym::definedMemoryBase;
 TableSymbol *WasmSym::indirectFunctionTable;
@@ -224,21 +222,20 @@ void Symbol::setHidden(bool isHidden) {
 }
 
 bool Symbol::isImported() const {
-  return isShared() ||
-         (isUndefined() && (importName.has_value() || forceImport));
+  return isUndefined() && (importName.has_value() || forceImport);
 }
 
 bool Symbol::isExported() const {
-  if (!isDefined() || isShared() || isLocal())
+  if (!isDefined() || isLocal())
     return false;
 
   // Shared libraries must export all weakly defined symbols
   // in case they contain the version that will be chosen by
   // the dynamic linker.
-  if (ctx.arg.shared && isLive() && isWeak() && !isHidden())
+  if (config->shared && isLive() && isWeak() && !isHidden())
     return true;
 
-  if (ctx.arg.exportAll || (ctx.arg.exportDynamic && !isHidden()))
+  if (config->exportAll || (config->exportDynamic && !isHidden()))
     return true;
 
   return isExportedExplicit();
@@ -310,11 +307,12 @@ uint32_t DefinedFunction::getExportedFunctionIndex() const {
   return function->getFunctionIndex();
 }
 
-uint64_t DefinedData::getVA(bool absolute) const {
+uint64_t DefinedData::getVA() const {
   LLVM_DEBUG(dbgs() << "getVA: " << getName() << "\n");
-  // TLS symbols (by default) are relative to the start of the TLS output
-  // segment (__tls_base).
-  if (isTLS() && !absolute)
+  // In the shared memory case, TLS symbols are relative to the start of the TLS
+  // output segment (__tls_base).  When building without shared memory, TLS
+  // symbols absolute, just like non-TLS.
+  if (isTLS() && config->sharedMemory)
     return getOutputSegmentOffset();
   if (segment)
     return segment->getVA(value);
@@ -427,15 +425,20 @@ const OutputSectionSymbol *SectionSymbol::getOutputSectionSymbol() const {
   return section->outputSec->sectionSym;
 }
 
-void LazySymbol::extract() {
-  if (file->lazy) {
-    file->lazy = false;
-    symtab->addFile(file, name);
-  }
-}
+void LazySymbol::fetch() { cast<ArchiveFile>(file)->addMember(&archiveSymbol); }
 
 void LazySymbol::setWeak() {
   flags |= (flags & ~WASM_SYMBOL_BINDING_MASK) | WASM_SYMBOL_BINDING_WEAK;
+}
+
+MemoryBufferRef LazySymbol::getMemberBuffer() {
+  Archive::Child c =
+      CHECK(archiveSymbol.getMember(),
+            "could not get the member for symbol " + toString(*this));
+
+  return CHECK(c.getMemoryBufferRef(),
+               "could not get the buffer for the member defining symbol " +
+                   toString(*this));
 }
 
 void printTraceSymbolUndefined(StringRef name, const InputFile* file) {

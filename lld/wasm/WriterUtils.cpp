@@ -35,10 +35,6 @@ std::string toString(ValType type) {
     return "funcref";
   case ValType::EXTERNREF:
     return "externref";
-  case ValType::EXNREF:
-    return "exnref";
-  case ValType::OTHERREF:
-    return "otherref";
   }
   llvm_unreachable("Invalid wasm::ValType");
 }
@@ -55,7 +51,7 @@ std::string toString(const WasmSignature &sig) {
     s += "void";
   else
     s += toString(sig.Returns[0]);
-  return std::string(s);
+  return std::string(s.str());
 }
 
 std::string toString(const WasmGlobalType &type) {
@@ -115,12 +111,12 @@ void writeU8(raw_ostream &os, uint8_t byte, const Twine &msg) {
 
 void writeU32(raw_ostream &os, uint32_t number, const Twine &msg) {
   debugWrite(os.tell(), msg + "[0x" + utohexstr(number) + "]");
-  support::endian::write(os, number, llvm::endianness::little);
+  support::endian::write(os, number, support::little);
 }
 
 void writeU64(raw_ostream &os, uint64_t number, const Twine &msg) {
   debugWrite(os.tell(), msg + "[0x" + utohexstr(number) + "]");
-  support::endian::write(os, number, llvm::endianness::little);
+  support::endian::write(os, number, support::little);
 }
 
 void writeValueType(raw_ostream &os, ValType type, const Twine &msg) {

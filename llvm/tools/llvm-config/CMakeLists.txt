@@ -80,7 +80,7 @@ llvm_expand_pseudo_components(LLVM_DYLIB_COMPONENTS_expanded "${LLVM_DYLIB_COMPO
 configure_file(${BUILDVARIABLES_SRCPATH} ${BUILDVARIABLES_OBJPATH} @ONLY)
 
 # Set build-time environment(s).
-add_compile_definitions(CMAKE_CFG_INTDIR="$<CONFIG>")
+add_compile_definitions(CMAKE_CFG_INTDIR="${CMAKE_CFG_INTDIR}")
 
 if(LLVM_ENABLE_MODULES)
   target_compile_options(llvm-config PUBLIC
@@ -89,9 +89,7 @@ if(LLVM_ENABLE_MODULES)
 endif()
 
 # Add the dependency on the generation step.
-set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/llvm-config.cpp
-  APPEND PROPERTY OBJECT_DEPENDS ${BUILDVARIABLES_OBJPATH}
-)
+add_file_dependencies(${CMAKE_CURRENT_SOURCE_DIR}/llvm-config.cpp ${BUILDVARIABLES_OBJPATH})
 
 if(CMAKE_CROSSCOMPILING)
   if (LLVM_NATIVE_TOOL_DIR AND NOT LLVM_CONFIG_PATH)

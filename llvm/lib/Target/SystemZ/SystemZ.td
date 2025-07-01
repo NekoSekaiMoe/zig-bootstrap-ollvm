@@ -67,11 +67,11 @@ def SystemZAsmParser : AsmParser {
   let ShouldEmitMatchRegisterName = 0;
 }
 
-def GNUAsmParserVariant : AsmParserVariant {
+def ATTAsmParserVariant : AsmParserVariant {
   int Variant = 0;
 
   // Variant name.
-  string Name = "gnu";
+  string Name = "att";
 }
 
 def HLASMAsmParserVariant : AsmParserVariant {
@@ -82,27 +82,12 @@ def HLASMAsmParserVariant : AsmParserVariant {
 }
 
 //===----------------------------------------------------------------------===//
-// Assembly writer
-//===----------------------------------------------------------------------===//
-
-// The SystemZ target supports two different syntaxes for emitting machine code.
-def GNUAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "GNUInstPrinter";
-  int Variant = 0;
-}
-def HLASMAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "HLASMInstPrinter";
-  int Variant = 1;
-}
-
-//===----------------------------------------------------------------------===//
 // Top-level target declaration
 //===----------------------------------------------------------------------===//
 
 def SystemZ : Target {
   let InstructionSet = SystemZInstrInfo;
   let AssemblyParsers = [SystemZAsmParser];
-  let AssemblyParserVariants = [GNUAsmParserVariant, HLASMAsmParserVariant];
-  let AssemblyWriters = [GNUAsmWriter, HLASMAsmWriter];
+  let AssemblyParserVariants = [ATTAsmParserVariant, HLASMAsmParserVariant];
   let AllowRegisterRenaming = 1;
 }

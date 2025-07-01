@@ -27,6 +27,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsXCore.h"
@@ -146,7 +147,12 @@ XCoreTargetLowering::XCoreTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::EH_RETURN, MVT::Other, Custom);
   setOperationAction(ISD::FRAME_TO_ARGS_OFFSET, MVT::i32, Custom);
 
+  // Atomic operations
+  // We request a fence for ATOMIC_* instructions, to reduce them to Monotonic.
+  // As we are always Sequential Consistent, an ATOMIC_FENCE becomes a no OP.
   setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
+  setOperationAction(ISD::ATOMIC_LOAD, MVT::i32, Custom);
+  setOperationAction(ISD::ATOMIC_STORE, MVT::i32, Custom);
 
   // TRAMPOLINE is custom lowered.
   setOperationAction(ISD::INIT_TRAMPOLINE, MVT::Other, Custom);
@@ -165,9 +171,6 @@ XCoreTargetLowering::XCoreTargetLowering(const TargetMachine &TM,
 
   setMinFunctionAlignment(Align(2));
   setPrefFunctionAlignment(Align(4));
-
-  // This target doesn't implement native atomics.
-  setMaxAtomicSizeInBitsSupported(0);
 }
 
 bool XCoreTargetLowering::isZExtFree(SDValue Val, EVT VT2) const {
@@ -212,8 +215,9 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::INIT_TRAMPOLINE:    return LowerINIT_TRAMPOLINE(Op, DAG);
   case ISD::ADJUST_TRAMPOLINE:  return LowerADJUST_TRAMPOLINE(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
-  case ISD::ATOMIC_FENCE:
-    return LowerATOMIC_FENCE(Op, DAG);
+  case ISD::ATOMIC_FENCE:       return LowerATOMIC_FENCE(Op, DAG);
+  case ISD::ATOMIC_LOAD:        return LowerATOMIC_LOAD(Op, DAG);
+  case ISD::ATOMIC_STORE:       return LowerATOMIC_STORE(Op, DAG);
   default:
     llvm_unreachable("unimplemented operand");
   }
@@ -248,7 +252,7 @@ SDValue XCoreTargetLowering::getGlobalAddressWrapper(SDValue GA,
     return DAG.getNode(XCoreISD::PCRelativeWrapper, dl, MVT::i32, GA);
 
   const auto *GVar = dyn_cast<GlobalVariable>(GV);
-  if ((GV->hasSection() && GV->getSection().starts_with(".cp.")) ||
+  if ((GV->hasSection() && GV->getSection().startswith(".cp.")) ||
       (GVar && GVar->isConstant() && GV->hasLocalLinkage()))
     return DAG.getNode(XCoreISD::CPRelativeWrapper, dl, MVT::i32, GA);
 
@@ -263,7 +267,7 @@ static bool IsSmallObject(const GlobalValue *GV, const XCoreTargetLowering &XTL)
   if (!ObjType->isSized())
     return false;
 
-  auto &DL = GV->getDataLayout();
+  auto &DL = GV->getParent()->getDataLayout();
   unsigned ObjSize = DL.getTypeAllocSize(ObjType);
   return ObjSize < CodeModelLargeSize && ObjSize != 0;
 }
@@ -282,17 +286,18 @@ LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const
     GA = getGlobalAddressWrapper(GA, GV, DAG);
     // Handle the rest of the offset.
     if (Offset != FoldedOffset) {
-      SDValue Remaining =
-          DAG.getSignedConstant(Offset - FoldedOffset, DL, MVT::i32);
+      SDValue Remaining = DAG.getConstant(Offset - FoldedOffset, DL, MVT::i32);
       GA = DAG.getNode(ISD::ADD, DL, MVT::i32, GA, Remaining);
     }
     return GA;
   } else {
     // Ideally we would not fold in offset with an index <= 11.
-    Type *Ty = Type::getInt32Ty(*DAG.getContext());
+    Type *Ty = Type::getInt8PtrTy(*DAG.getContext());
+    Constant *GA = ConstantExpr::getBitCast(const_cast<GlobalValue*>(GV), Ty);
+    Ty = Type::getInt32Ty(*DAG.getContext());
     Constant *Idx = ConstantInt::get(Ty, Offset);
     Constant *GAI = ConstantExpr::getGetElementPtr(
-        Type::getInt8Ty(*DAG.getContext()), const_cast<GlobalValue *>(GV), Idx);
+        Type::getInt8Ty(*DAG.getContext()), GA, Idx);
     SDValue CP = DAG.getConstantPool(GAI, MVT::i32);
     return DAG.getLoad(getPointerTy(DAG.getDataLayout()), DL,
                        DAG.getEntryNode(), CP, MachinePointerInfo());
@@ -767,7 +772,7 @@ SDValue XCoreTargetLowering::LowerFRAMEADDR(SDValue Op,
   // An index of zero corresponds to the current function's frame address.
   // An index of one to the parent's frame address, and so on.
   // Depths > 0 not supported yet!
-  if (Op.getConstantOperandVal(0) > 0)
+  if (cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue() > 0)
     return SDValue();
 
   MachineFunction &MF = DAG.getMachineFunction();
@@ -783,7 +788,7 @@ LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
   // An index of zero corresponds to the current function's return address.
   // An index of one to the parent's return address, and so on.
   // Depths > 0 not supported yet!
-  if (Op.getConstantOperandVal(0) > 0)
+  if (cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue() > 0)
     return SDValue();
 
   MachineFunction &MF = DAG.getMachineFunction();
@@ -905,7 +910,7 @@ LowerINIT_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const {
 SDValue XCoreTargetLowering::
 LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
-  unsigned IntNo = Op.getConstantOperandVal(0);
+  unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   switch (IntNo) {
     case Intrinsic::xcore_crc8:
       EVT VT = Op.getValueType();
@@ -923,6 +928,88 @@ SDValue XCoreTargetLowering::
 LowerATOMIC_FENCE(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   return DAG.getNode(ISD::MEMBARRIER, DL, MVT::Other, Op.getOperand(0));
+}
+
+SDValue XCoreTargetLowering::
+LowerATOMIC_LOAD(SDValue Op, SelectionDAG &DAG) const {
+  AtomicSDNode *N = cast<AtomicSDNode>(Op);
+  assert(N->getOpcode() == ISD::ATOMIC_LOAD && "Bad Atomic OP");
+  assert((N->getSuccessOrdering() == AtomicOrdering::Unordered ||
+          N->getSuccessOrdering() == AtomicOrdering::Monotonic) &&
+         "setInsertFencesForAtomic(true) expects unordered / monotonic");
+  if (N->getMemoryVT() == MVT::i32) {
+    if (N->getAlign() < Align(4))
+      report_fatal_error("atomic load must be aligned");
+    return DAG.getLoad(getPointerTy(DAG.getDataLayout()), SDLoc(Op),
+                       N->getChain(), N->getBasePtr(), N->getPointerInfo(),
+                       N->getAlign(), N->getMemOperand()->getFlags(),
+                       N->getAAInfo(), N->getRanges());
+  }
+  if (N->getMemoryVT() == MVT::i16) {
+    if (N->getAlign() < Align(2))
+      report_fatal_error("atomic load must be aligned");
+    return DAG.getExtLoad(ISD::EXTLOAD, SDLoc(Op), MVT::i32, N->getChain(),
+                          N->getBasePtr(), N->getPointerInfo(), MVT::i16,
+                          N->getAlign(), N->getMemOperand()->getFlags(),
+                          N->getAAInfo());
+  }
+  if (N->getMemoryVT() == MVT::i8)
+    return DAG.getExtLoad(ISD::EXTLOAD, SDLoc(Op), MVT::i32, N->getChain(),
+                          N->getBasePtr(), N->getPointerInfo(), MVT::i8,
+                          N->getAlign(), N->getMemOperand()->getFlags(),
+                          N->getAAInfo());
+  return SDValue();
+}
+
+SDValue XCoreTargetLowering::
+LowerATOMIC_STORE(SDValue Op, SelectionDAG &DAG) const {
+  AtomicSDNode *N = cast<AtomicSDNode>(Op);
+  assert(N->getOpcode() == ISD::ATOMIC_STORE && "Bad Atomic OP");
+  assert((N->getSuccessOrdering() == AtomicOrdering::Unordered ||
+          N->getSuccessOrdering() == AtomicOrdering::Monotonic) &&
+         "setInsertFencesForAtomic(true) expects unordered / monotonic");
+  if (N->getMemoryVT() == MVT::i32) {
+    if (N->getAlign() < Align(4))
+      report_fatal_error("atomic store must be aligned");
+    return DAG.getStore(N->getChain(), SDLoc(Op), N->getVal(), N->getBasePtr(),
+                        N->getPointerInfo(), N->getAlign(),
+                        N->getMemOperand()->getFlags(), N->getAAInfo());
+  }
+  if (N->getMemoryVT() == MVT::i16) {
+    if (N->getAlign() < Align(2))
+      report_fatal_error("atomic store must be aligned");
+    return DAG.getTruncStore(N->getChain(), SDLoc(Op), N->getVal(),
+                             N->getBasePtr(), N->getPointerInfo(), MVT::i16,
+                             N->getAlign(), N->getMemOperand()->getFlags(),
+                             N->getAAInfo());
+  }
+  if (N->getMemoryVT() == MVT::i8)
+    return DAG.getTruncStore(N->getChain(), SDLoc(Op), N->getVal(),
+                             N->getBasePtr(), N->getPointerInfo(), MVT::i8,
+                             N->getAlign(), N->getMemOperand()->getFlags(),
+                             N->getAAInfo());
+  return SDValue();
+}
+
+MachineMemOperand::Flags
+XCoreTargetLowering::getTargetMMOFlags(const Instruction &I) const {
+  // Because of how we convert atomic_load and atomic_store to normal loads and
+  // stores in the DAG, we need to ensure that the MMOs are marked volatile
+  // since DAGCombine hasn't been updated to account for atomic, but non
+  // volatile loads.  (See D57601)
+  if (auto *SI = dyn_cast<StoreInst>(&I))
+    if (SI->isAtomic())
+      return MachineMemOperand::MOVolatile;
+  if (auto *LI = dyn_cast<LoadInst>(&I))
+    if (LI->isAtomic())
+      return MachineMemOperand::MOVolatile;
+  if (auto *AI = dyn_cast<AtomicRMWInst>(&I))
+    if (AI->isAtomic())
+      return MachineMemOperand::MOVolatile;
+  if (auto *AI = dyn_cast<AtomicCmpXchgInst>(&I))
+    if (AI->isAtomic())
+      return MachineMemOperand::MOVolatile;
+  return MachineMemOperand::MONone;
 }
 
 //===----------------------------------------------------------------------===//
@@ -973,7 +1060,8 @@ static SDValue LowerCallResult(SDValue Chain, SDValue InGlue,
                                SmallVectorImpl<SDValue> &InVals) {
   SmallVector<std::pair<int, unsigned>, 4> ResultMemLocs;
   // Copy results out of physical registers.
-  for (const CCValAssign &VA : RVLocs) {
+  for (unsigned i = 0, e = RVLocs.size(); i != e; ++i) {
+    const CCValAssign &VA = RVLocs[i];
     if (VA.isRegLoc()) {
       Chain = DAG.getCopyFromReg(Chain, dl, VA.getLocReg(), VA.getValVT(),
                                  InGlue).getValue(1);
@@ -1301,8 +1389,8 @@ SDValue XCoreTargetLowering::LowerCCCArguments(
       InVals.push_back(FIN);
       MemOps.push_back(DAG.getMemcpy(
           Chain, dl, FIN, ArgDI.SDV, DAG.getConstant(Size, dl, MVT::i32),
-          Alignment, false, false, /*CI=*/nullptr, std::nullopt,
-          MachinePointerInfo(), MachinePointerInfo()));
+          Alignment, false, false, false, MachinePointerInfo(),
+          MachinePointerInfo()));
     } else {
       InVals.push_back(ArgDI.SDV);
     }
@@ -1325,7 +1413,7 @@ bool XCoreTargetLowering::
 CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
                bool isVarArg,
                const SmallVectorImpl<ISD::OutputArg> &Outs,
-               LLVMContext &Context, const Type *RetTy) const {
+               LLVMContext &Context) const {
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, isVarArg, MF, RVLocs, Context);
   if (!CCInfo.CheckReturn(Outs, RetCC_XCore))
@@ -1496,7 +1584,7 @@ SDValue XCoreTargetLowering::PerformDAGCombine(SDNode *N,
   switch (N->getOpcode()) {
   default: break;
   case ISD::INTRINSIC_VOID:
-    switch (N->getConstantOperandVal(1)) {
+    switch (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue()) {
     case Intrinsic::xcore_outt:
     case Intrinsic::xcore_outct:
     case Intrinsic::xcore_chkct: {
@@ -1704,7 +1792,7 @@ SDValue XCoreTargetLowering::PerformDAGCombine(SDNode *N,
         bool isTail = isInTailCallPosition(DAG, ST, Chain);
         return DAG.getMemmove(Chain, dl, ST->getBasePtr(), LD->getBasePtr(),
                               DAG.getConstant(StoreBits / 8, dl, MVT::i32),
-                              Alignment, false, nullptr, isTail,
+                              Alignment, false, isTail,
                               ST->getPointerInfo(), LD->getPointerInfo());
       }
     }
@@ -1732,30 +1820,30 @@ void XCoreTargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
     break;
   case ISD::INTRINSIC_W_CHAIN:
     {
-    unsigned IntNo = Op.getConstantOperandVal(1);
-    switch (IntNo) {
-    case Intrinsic::xcore_getts:
-      // High bits are known to be zero.
-      Known.Zero =
-          APInt::getHighBitsSet(Known.getBitWidth(), Known.getBitWidth() - 16);
-      break;
-    case Intrinsic::xcore_int:
-    case Intrinsic::xcore_inct:
-      // High bits are known to be zero.
-      Known.Zero =
-          APInt::getHighBitsSet(Known.getBitWidth(), Known.getBitWidth() - 8);
-      break;
-    case Intrinsic::xcore_testct:
-      // Result is either 0 or 1.
-      Known.Zero =
-          APInt::getHighBitsSet(Known.getBitWidth(), Known.getBitWidth() - 1);
-      break;
-    case Intrinsic::xcore_testwct:
-      // Result is in the range 0 - 4.
-      Known.Zero =
-          APInt::getHighBitsSet(Known.getBitWidth(), Known.getBitWidth() - 3);
-      break;
-    }
+      unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
+      switch (IntNo) {
+      case Intrinsic::xcore_getts:
+        // High bits are known to be zero.
+        Known.Zero = APInt::getHighBitsSet(Known.getBitWidth(),
+                                           Known.getBitWidth() - 16);
+        break;
+      case Intrinsic::xcore_int:
+      case Intrinsic::xcore_inct:
+        // High bits are known to be zero.
+        Known.Zero = APInt::getHighBitsSet(Known.getBitWidth(),
+                                           Known.getBitWidth() - 8);
+        break;
+      case Intrinsic::xcore_testct:
+        // Result is either 0 or 1.
+        Known.Zero = APInt::getHighBitsSet(Known.getBitWidth(),
+                                           Known.getBitWidth() - 1);
+        break;
+      case Intrinsic::xcore_testwct:
+        // Result is in the range 0 - 4.
+        Known.Zero = APInt::getHighBitsSet(Known.getBitWidth(),
+                                           Known.getBitWidth() - 3);
+        break;
+      }
     }
     break;
   }

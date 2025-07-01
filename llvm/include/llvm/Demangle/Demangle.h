@@ -10,7 +10,6 @@
 #define LLVM_DEMANGLE_DEMANGLE_H
 
 #include <cstddef>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -33,7 +32,7 @@ enum : int {
 /// Returns a non-NULL pointer to a NUL-terminated C style string
 /// that should be explicitly freed, if successful. Otherwise, may return
 /// nullptr if mangled_name is not a valid mangling or is nullptr.
-char *itaniumDemangle(std::string_view mangled_name, bool ParseParams = true);
+char *itaniumDemangle(std::string_view mangled_name);
 
 enum MSDemangleFlags {
   MSDF_None = 0,
@@ -55,9 +54,6 @@ enum MSDemangleFlags {
 char *microsoftDemangle(std::string_view mangled_name, size_t *n_read,
                         int *status, MSDemangleFlags Flags = MSDF_None);
 
-std::optional<size_t>
-getArm64ECInsertionPointInMangledName(std::string_view MangledName);
-
 // Demangles a Rust v0 mangled symbol.
 char *rustDemangle(std::string_view MangledName);
 
@@ -71,9 +67,7 @@ char *dlangDemangle(std::string_view MangledName);
 /// demangling occurred.
 std::string demangle(std::string_view MangledName);
 
-bool nonMicrosoftDemangle(std::string_view MangledName, std::string &Result,
-                          bool CanHaveLeadingDot = true,
-                          bool ParseParams = true);
+bool nonMicrosoftDemangle(std::string_view MangledName, std::string &Result);
 
 /// "Partial" demangler. This supports demangling a string into an AST
 /// (typically an intermediate stage in itaniumDemangle) and querying certain
@@ -108,7 +102,7 @@ struct ItaniumPartialDemangler {
   char *getFunctionParameters(char *Buf, size_t *N) const;
   char *getFunctionReturnType(char *Buf, size_t *N) const;
 
-  /// If this function has any cv or reference qualifiers. These imply that
+  /// If this function has any any cv or reference qualifiers. These imply that
   /// the function is a non-static member function.
   bool hasFunctionQualifiers() const;
 

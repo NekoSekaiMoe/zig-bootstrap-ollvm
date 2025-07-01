@@ -804,7 +804,7 @@ void PlistDiagnostics::FlushDiagnosticsImpl(
   o << " <key>files</key>\n"
        " <array>\n";
   for (FileID FID : Fids)
-    EmitString(o << "  ", SM.getFileEntryRefForID(FID)->getName()) << '\n';
+    EmitString(o << "  ", SM.getFileEntryForID(FID)->getName()) << '\n';
   o << " </array>\n";
 
   if (llvm::AreStatisticsEnabled() && DiagOpts.ShouldSerializeStats) {
@@ -812,6 +812,7 @@ void PlistDiagnostics::FlushDiagnosticsImpl(
     std::string stats;
     llvm::raw_string_ostream os(stats);
     llvm::PrintStatisticsJSON(os);
+    os.flush();
     EmitString(o, html::EscapeText(stats)) << '\n';
   }
 

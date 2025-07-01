@@ -14,11 +14,13 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/CommandLine.h"
@@ -157,7 +159,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
              ++AfterBBI) {
           // Track the operand that kill Reg. We would unset the kill flag of
           // the operand if there is a following redundant load immediate.
-          int KillIdx = AfterBBI->findRegisterUseOperandIdx(Reg, TRI, true);
+          int KillIdx = AfterBBI->findRegisterUseOperandIdx(Reg, true, TRI);
 
           // We can't just clear implicit kills, so if we encounter one, stop
           // looking further.
@@ -203,7 +205,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
               DeadOrKillToUnset->setIsKill(false);
           }
           DeadOrKillToUnset =
-              AfterBBI->findRegisterDefOperand(Reg, TRI, true, true);
+              AfterBBI->findRegisterDefOperand(Reg, true, true, TRI);
           if (DeadOrKillToUnset)
             LLVM_DEBUG(dbgs()
                        << " Dead flag of " << *DeadOrKillToUnset << " from "
@@ -238,7 +240,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         return false;
 
       // Finally return true only if the GOT flag is present.
-      return PPCInstrInfo::hasGOTFlag(SymbolOp.getTargetFlags());
+      return (SymbolOp.getTargetFlags() & PPCII::MO_GOT_FLAG);
     }
 
     bool addLinkerOpt(MachineBasicBlock &MBB, const TargetRegisterInfo *TRI) {
@@ -414,7 +416,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
     bool runOnMachineFunction(MachineFunction &MF) override {
       // If the user wants to set the DSCR using command-line options,
       // load in the specified value at the start of main.
-      if (DSCRValue.getNumOccurrences() > 0 && MF.getName() == "main" &&
+      if (DSCRValue.getNumOccurrences() > 0 && MF.getName().equals("main") &&
           MF.getFunction().hasExternalLinkage()) {
         DSCRValue = (uint32_t)(DSCRValue & 0x01FFFFFF); // 25-bit DSCR mask
         RegScavenger RS;
@@ -493,8 +495,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             }
           }
           MachineInstr *DefMIToErase = nullptr;
-          SmallSet<Register, 4> UpdatedRegs;
-          if (TII->convertToImmediateForm(MI, UpdatedRegs, &DefMIToErase)) {
+          if (TII->convertToImmediateForm(MI, &DefMIToErase)) {
             Changed = true;
             NumRRConvertedInPreEmit++;
             LLVM_DEBUG(dbgs() << "Converted instruction to imm form: ");

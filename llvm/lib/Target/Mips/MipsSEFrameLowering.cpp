@@ -35,6 +35,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MachineLocation.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -426,7 +427,8 @@ void MipsSEFrameLowering::emitPrologue(MachineFunction &MF,
   // No need to allocate space on the stack.
   if (StackSize == 0 && !MFI.adjustsStack()) return;
 
-  const MCRegisterInfo *MRI = MF.getContext().getRegisterInfo();
+  MachineModuleInfo &MMI = MF.getMMI();
+  const MCRegisterInfo *MRI = MMI.getContext().getRegisterInfo();
 
   // Adjust stack.
   TII.adjustStackPtr(SP, -StackSize, MBB, MBBI);
@@ -892,8 +894,8 @@ void MipsSEFrameLowering::determineCalleeSaves(MachineFunction &MF,
     // it should be 32-bit.
     const TargetRegisterClass &RC = STI.isGP64bit() ?
       Mips::GPR64RegClass : Mips::GPR32RegClass;
-    int FI = MF.getFrameInfo().CreateSpillStackObject(TRI->getSpillSize(RC),
-                                                      TRI->getSpillAlign(RC));
+    int FI = MF.getFrameInfo().CreateStackObject(TRI->getSpillSize(RC),
+                                                 TRI->getSpillAlign(RC), false);
     RS->addScavengingFrameIndex(FI);
   }
 
@@ -908,8 +910,8 @@ void MipsSEFrameLowering::determineCalleeSaves(MachineFunction &MF,
 
   const TargetRegisterClass &RC =
       ABI.ArePtrs64bit() ? Mips::GPR64RegClass : Mips::GPR32RegClass;
-  int FI = MF.getFrameInfo().CreateSpillStackObject(TRI->getSpillSize(RC),
-                                                    TRI->getSpillAlign(RC));
+  int FI = MF.getFrameInfo().CreateStackObject(TRI->getSpillSize(RC),
+                                               TRI->getSpillAlign(RC), false);
   RS->addScavengingFrameIndex(FI);
 }
 

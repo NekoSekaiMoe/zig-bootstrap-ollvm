@@ -1,12 +1,22 @@
-objects: std.ArrayListUnmanaged(Object) = .empty,
+objects: std.ArrayListUnmanaged(Object) = .{},
+
+pub fn isArchive(path: []const u8, fat_arch: ?fat.Arch) !bool {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    if (fat_arch) |arch| {
+        try file.seekTo(arch.offset);
+    }
+    const magic = file.reader().readBytesNoEof(SARMAG) catch return false;
+    if (!mem.eql(u8, &magic, ARMAG)) return false;
+    return true;
+}
 
 pub fn deinit(self: *Archive, allocator: Allocator) void {
     self.objects.deinit(allocator);
 }
 
-pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File.HandleIndex, fat_arch: ?fat.Arch) !void {
+pub fn parse(self: *Archive, macho_file: *MachO, path: []const u8, handle_index: File.HandleIndex, fat_arch: ?fat.Arch) !void {
     const gpa = macho_file.base.comp.gpa;
-    const diags = &macho_file.base.comp.link_diags;
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -29,9 +39,10 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
         pos += @sizeOf(ar_hdr);
 
         if (!mem.eql(u8, &hdr.ar_fmag, ARFMAG)) {
-            return diags.failParse(path, "invalid header delimiter: expected '{s}', found '{s}'", .{
+            try macho_file.reportParseError(path, "invalid header delimiter: expected '{s}', found '{s}'", .{
                 std.fmt.fmtSliceEscapeLower(ARFMAG), std.fmt.fmtSliceEscapeLower(&hdr.ar_fmag),
             });
+            return error.MalformedArchive;
         }
 
         var hdr_size = try hdr.size();
@@ -55,23 +66,20 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
             mem.eql(u8, name, SYMDEF_SORTED) or
             mem.eql(u8, name, SYMDEF64_SORTED)) continue;
 
-        const object: Object = .{
-            .offset = pos,
-            .in_archive = .{
-                .path = .{
-                    .root_dir = path.root_dir,
-                    .sub_path = try gpa.dupe(u8, path.sub_path),
-                },
+        const object = Object{
+            .archive = .{
+                .path = try gpa.dupe(u8, path),
+                .offset = pos,
                 .size = hdr_size,
             },
-            .path = Path.initCwd(try gpa.dupe(u8, name)),
+            .path = try gpa.dupe(u8, name),
             .file_handle = handle_index,
             .index = undefined,
             .alive = false,
             .mtime = hdr.date() catch 0,
         };
 
-        log.debug("extracting object '{}' from archive '{}'", .{ object.path, path });
+        log.debug("extracting object '{s}' from archive '{s}'", .{ object.path, path });
 
         try self.objects.append(gpa, object);
     }
@@ -93,7 +101,7 @@ pub fn writeHeader(
         .ar_fmag = undefined,
     };
     @memset(mem.asBytes(&hdr), 0x20);
-    inline for (@typeInfo(ar_hdr).@"struct".fields) |field| {
+    inline for (@typeInfo(ar_hdr).Struct.fields) |field| {
         var stream = std.io.fixedBufferStream(&@field(hdr, field.name));
         stream.writer().print("0", .{}) catch unreachable;
     }
@@ -159,12 +167,12 @@ pub const ar_hdr = extern struct {
     ar_fmag: [2]u8,
 
     fn date(self: ar_hdr) !u64 {
-        const value = mem.trimEnd(u8, &self.ar_date, &[_]u8{@as(u8, 0x20)});
+        const value = mem.trimRight(u8, &self.ar_date, &[_]u8{@as(u8, 0x20)});
         return std.fmt.parseInt(u64, value, 10);
     }
 
     fn size(self: ar_hdr) !u32 {
-        const value = mem.trimEnd(u8, &self.ar_size, &[_]u8{@as(u8, 0x20)});
+        const value = mem.trimRight(u8, &self.ar_size, &[_]u8{@as(u8, 0x20)});
         return std.fmt.parseInt(u32, value, 10);
     }
 
@@ -178,13 +186,13 @@ pub const ar_hdr = extern struct {
     fn nameLength(self: ar_hdr) !?u32 {
         const value = &self.ar_name;
         if (!mem.startsWith(u8, value, "#1/")) return null;
-        const trimmed = mem.trimEnd(u8, self.ar_name["#1/".len..], &[_]u8{0x20});
+        const trimmed = mem.trimRight(u8, self.ar_name["#1/".len..], &[_]u8{0x20});
         return try std.fmt.parseInt(u32, trimmed, 10);
     }
 };
 
 pub const ArSymtab = struct {
-    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    entries: std.ArrayListUnmanaged(Entry) = .{},
     strtab: StringTable = .{},
 
     pub fn deinit(ar: *ArSymtab, allocator: Allocator) void {
@@ -304,9 +312,8 @@ const log = std.log.scoped(.link);
 const macho = std.macho;
 const mem = std.mem;
 const std = @import("std");
-const Allocator = mem.Allocator;
-const Path = std.Build.Cache.Path;
 
+const Allocator = mem.Allocator;
 const Archive = @This();
 const File = @import("file.zig").File;
 const MachO = @import("../MachO.zig");

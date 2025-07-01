@@ -119,7 +119,7 @@ pub fn StaticStringMapWithEql(
             kvs.* = .{
                 .keys = sorted_keys.ptr,
                 .values = sorted_vals.ptr,
-                .len = @intCast(kvs_list.len),
+                .len = kvs_list.len,
             };
             self.kvs = kvs;
 
@@ -270,14 +270,13 @@ const testing = std.testing;
 const test_alloc = testing.allocator;
 
 test "list literal of list literals" {
-    const slice: []const TestKV = &.{
+    const slice = [_]TestKV{
         .{ "these", .D },
         .{ "have", .A },
         .{ "nothing", .B },
         .{ "incommon", .C },
         .{ "samelen", .E },
     };
-
     const map = TestMap.initComptime(slice);
     try testMap(map);
     // Default comparison is case sensitive

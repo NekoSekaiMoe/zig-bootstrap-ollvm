@@ -22,7 +22,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Option/ArgList.h"
-#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TargetParser/Host.h"
 using namespace clang;
 using namespace llvm::opt;
@@ -33,11 +32,9 @@ clang::createInvocation(ArrayRef<const char *> ArgList,
   assert(!ArgList.empty());
   auto Diags = Opts.Diags
                    ? std::move(Opts.Diags)
-                   : CompilerInstance::createDiagnostics(
-                         Opts.VFS ? *Opts.VFS : *llvm::vfs::getRealFileSystem(),
-                         new DiagnosticOptions);
+                   : CompilerInstance::createDiagnostics(new DiagnosticOptions);
 
-  SmallVector<const char *, 16> Args(ArgList);
+  SmallVector<const char *, 16> Args(ArgList.begin(), ArgList.end());
 
   // FIXME: Find a cleaner way to force the driver into restricted modes.
   Args.insert(

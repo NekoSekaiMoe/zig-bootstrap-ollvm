@@ -13,6 +13,7 @@
 #ifndef LIB_EXECUTIONENGINE_JITLINK_JITLINKGENERIC_H
 #define LIB_EXECUTIONENGINE_JITLINK_JITLINKGENERIC_H
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
 
 #define DEBUG_TYPE "jitlink"
@@ -41,16 +42,6 @@ protected:
   using InFlightAlloc = JITLinkMemoryManager::InFlightAlloc;
   using AllocResult = Expected<std::unique_ptr<InFlightAlloc>>;
   using FinalizeResult = Expected<JITLinkMemoryManager::FinalizedAlloc>;
-
-  // Returns a reference to the graph being linked.
-  LinkGraph &getGraph() { return *G; }
-
-  // Returns true if the context says that the linker should add default
-  // passes. This can be used by JITLinkerBase implementations when deciding
-  // whether they should add default passes.
-  bool shouldAddDefaultTargetPasses(const Triple &TT) {
-    return Ctx->shouldAddDefaultTargetPasses(TT);
-  }
 
   // Returns the PassConfiguration for this instance. This can be used by
   // JITLinkerBase implementations to add late passes that reference their
@@ -133,7 +124,8 @@ private:
     LLVM_DEBUG(dbgs() << "Fixing up blocks:\n");
 
     for (auto &Sec : G.sections()) {
-      bool NoAllocSection = Sec.getMemLifetime() == orc::MemLifetime::NoAlloc;
+      bool NoAllocSection =
+          Sec.getMemLifetimePolicy() == orc::MemLifetimePolicy::NoAlloc;
 
       for (auto *B : Sec.blocks()) {
         LLVM_DEBUG(dbgs() << "  " << *B << ":\n");
@@ -161,11 +153,12 @@ private:
 
           // If B is a block in a Standard or Finalize section then make sure
           // that no edges point to symbols in NoAlloc sections.
-          assert((NoAllocSection || !E.getTarget().isDefined() ||
-                  E.getTarget().getSection().getMemLifetime() !=
-                      orc::MemLifetime::NoAlloc) &&
-                 "Block in allocated section has edge pointing to no-alloc "
-                 "section");
+          assert(
+              (NoAllocSection || !E.getTarget().isDefined() ||
+               E.getTarget().getBlock().getSection().getMemLifetimePolicy() !=
+                   orc::MemLifetimePolicy::NoAlloc) &&
+              "Block in allocated section has edge pointing to no-alloc "
+              "section");
 
           // Dispatch to LinkerImpl for fixup.
           if (auto Err = impl().applyFixup(G, *B, E))

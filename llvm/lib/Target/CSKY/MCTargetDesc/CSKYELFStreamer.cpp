@@ -17,7 +17,6 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
@@ -32,10 +31,10 @@ using namespace llvm;
 CSKYTargetELFStreamer::CSKYTargetELFStreamer(MCStreamer &S,
                                              const MCSubtargetInfo &STI)
     : CSKYTargetStreamer(S), CurrentVendor("csky") {
-  ELFObjectWriter &W = getStreamer().getWriter();
+  MCAssembler &MCA = getStreamer().getAssembler();
   const FeatureBitset &Features = STI.getFeatureBits();
 
-  unsigned EFlags = W.getELFHeaderEFlags();
+  unsigned EFlags = MCA.getELFHeaderEFlags();
 
   EFlags |= ELF::EF_CSKY_ABIV2;
 
@@ -63,7 +62,7 @@ CSKYTargetELFStreamer::CSKYTargetELFStreamer(MCStreamer &S,
 
   EFlags |= ELF::EF_CSKY_EFV1;
 
-  W.setELFHeaderEFlags(EFlags);
+  MCA.setELFHeaderEFlags(EFlags);
 }
 
 MCELFStreamer &CSKYTargetELFStreamer::getStreamer() {
@@ -169,7 +168,8 @@ void CSKYELFStreamer::EmitMappingSymbol(StringRef Name) {
 
   State = (Name == "$t" ? EMS_Text : EMS_Data);
 
-  auto *Symbol = cast<MCSymbolELF>(getContext().createLocalSymbol(Name));
+  auto *Symbol = cast<MCSymbolELF>(getContext().getOrCreateSymbol(
+      Name + "." + Twine(MappingSymbolCounter++)));
   emitLabel(Symbol);
 
   Symbol->setType(ELF::STT_NOTYPE);

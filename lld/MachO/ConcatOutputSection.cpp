@@ -127,25 +127,15 @@ bool TextOutputSection::needsThunks() const {
   uint64_t isecAddr = addr;
   for (ConcatInputSection *isec : inputs)
     isecAddr = alignToPowerOf2(isecAddr, isec->align) + isec->getSize();
-  // Other sections besides __text might be small enough to pass this
-  // test but nevertheless need thunks for calling into other sections.
-  // An imperfect heuristic to use in this case is that if a section
-  // we've already processed in this segment needs thunks, so do the
-  // rest.
-  bool needsThunks = parent && parent->needsThunks;
-  if (!needsThunks &&
-      isecAddr - addr + in.stubs->getSize() <=
-          std::min(target->backwardBranchRange, target->forwardBranchRange))
+  if (isecAddr - addr + in.stubs->getSize() <=
+      std::min(target->backwardBranchRange, target->forwardBranchRange))
     return false;
   // Yes, this program is large enough to need thunks.
-  if (parent) {
-    parent->needsThunks = true;
-  }
   for (ConcatInputSection *isec : inputs) {
     for (Reloc &r : isec->relocs) {
       if (!target->hasAttr(r.type, RelocAttrBits::BRANCH))
         continue;
-      auto *sym = cast<Symbol *>(r.referent);
+      auto *sym = r.referent.get<Symbol *>();
       // Pre-populate the thunkMap and memoize call site counts for every
       // InputSection and ThunkInfo. We do this for the benefit of
       // estimateStubsInRangeVA().
@@ -184,43 +174,15 @@ uint64_t TextOutputSection::estimateStubsInRangeVA(size_t callIdx) const {
     InputSection *isec = inputs[i];
     isecEnd = alignToPowerOf2(isecEnd, isec->align) + isec->getSize();
   }
-
-  // Tally up any thunks that have already been placed that have VA higher than
-  // inputs[callIdx]. First, find the index of the first thunk that is beyond
-  // the current inputs[callIdx].
-  auto itPostcallIdxThunks =
-      llvm::partition_point(thunks, [isecVA](const ConcatInputSection *t) {
-        return t->getVA() <= isecVA;
-      });
-  uint64_t existingForwardThunks = thunks.end() - itPostcallIdxThunks;
-
+  // Estimate the address after which call sites can safely call stubs
+  // directly rather than through intermediary thunks.
   uint64_t forwardBranchRange = target->forwardBranchRange;
   assert(isecEnd > forwardBranchRange &&
          "should not run thunk insertion if all code fits in jump range");
   assert(isecEnd - isecVA <= forwardBranchRange &&
          "should only finalize sections in jump range");
-
-  // Estimate the maximum size of the code, right before the stubs section.
-  uint64_t maxTextSize = 0;
-  // Add the size of all the inputs, including the unprocessed ones.
-  maxTextSize += isecEnd;
-
-  // Add the size of the thunks that have already been created that are ahead of
-  // inputs[callIdx]. These are already created thunks that will be interleaved
-  // with inputs[callIdx...end].
-  maxTextSize += existingForwardThunks * target->thunkSize;
-
-  // Add the size of the thunks that may be created in the future. Since
-  // 'maxPotentialThunks' overcounts, this is an estimate of the upper limit.
-  maxTextSize += maxPotentialThunks * target->thunkSize;
-
-  // Estimated maximum VA of last stub.
-  uint64_t maxVAOfLastStub = maxTextSize + in.stubs->getSize();
-
-  // Estimate the address after which call sites can safely call stubs
-  // directly rather than through intermediary thunks.
-  uint64_t stubsInRangeVA = maxVAOfLastStub - forwardBranchRange;
-
+  uint64_t stubsInRangeVA = isecEnd + maxPotentialThunks * target->thunkSize +
+                            in.stubs->getSize() - forwardBranchRange;
   log("thunks = " + std::to_string(thunkMap.size()) +
       ", potential = " + std::to_string(maxPotentialThunks) +
       ", stubs = " + std::to_string(in.stubs->getSize()) + ", isecVA = " +
@@ -325,7 +287,7 @@ void TextOutputSection::finalize() {
           backwardBranchRange < callVA ? callVA - backwardBranchRange : 0;
       uint64_t highVA = callVA + forwardBranchRange;
       // Calculate our call referent address
-      auto *funcSym = cast<Symbol *>(r.referent);
+      auto *funcSym = r.referent.get<Symbol *>();
       ThunkInfo &thunkInfo = thunkMap[funcSym];
       // The referent is not reachable, so we need to use a thunk ...
       if (funcSym->isInStubs() && callVA >= stubsInRangeVA) {
@@ -361,7 +323,11 @@ void TextOutputSection::finalize() {
       thunkInfo.isec =
           makeSyntheticInputSection(isec->getSegName(), isec->getName());
       thunkInfo.isec->parent = this;
-      assert(thunkInfo.isec->live);
+
+      // This code runs after dead code removal. Need to set the `live` bit
+      // on the thunk isec so that asserts that check that only live sections
+      // get written are happy.
+      thunkInfo.isec->live = true;
 
       StringRef thunkName = saver().save(funcSym->getName() + ".thunk." +
                                          std::to_string(thunkInfo.sequence++));

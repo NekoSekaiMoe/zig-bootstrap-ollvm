@@ -140,7 +140,7 @@ pub const F_STRICT_ALIGNMENT = 0x1;
 
 /// If BPF_F_ANY_ALIGNMENT is used in BPF_PROF_LOAD command, the verifier will
 /// allow any alignment whatsoever. On platforms with strict alignment
-/// requirements for loads and stores (such as sparc and mips) the verifier
+/// requirements for loads ands stores (such as sparc and mips) the verifier
 /// validates that all loads and stores provably follow this requirement. This
 /// flag turns that checking and enforcement off.
 ///
@@ -459,7 +459,7 @@ pub const Insn = packed struct {
     };
 
     fn imm_reg(code: u8, dst: Reg, src: anytype, off: i16) Insn {
-        const imm_or_reg = if (@TypeOf(src) == Reg or @typeInfo(@TypeOf(src)) == .enum_literal)
+        const imm_or_reg = if (@TypeOf(src) == Reg or @typeInfo(@TypeOf(src)) == .EnumLiteral)
             ImmOrReg{ .reg = @as(Reg, src) }
         else
             ImmOrReg{ .imm = src };
@@ -1001,7 +1001,7 @@ pub const MapType = enum(u32) {
     cpumap,
     xskmap,
     sockhash,
-    cgroup_storage_deprecated,
+    cgroup_storage,
     reuseport_sockarray,
     percpu_cgroup_storage,
     queue,
@@ -1044,12 +1044,6 @@ pub const MapType = enum(u32) {
     /// value size: 0
     /// max entries: size of ringbuf, must be power of 2
     ringbuf,
-    inode_storage,
-    task_storage,
-    bloom_filter,
-    user_ringbuf,
-    cgroup_storage,
-    arena,
 
     _,
 };
@@ -1150,9 +1144,6 @@ pub const ProgType = enum(u32) {
     /// context type: void *
     syscall,
 
-    /// context type: bpf_nf_ctx
-    netfilter,
-
     _,
 };
 
@@ -1195,25 +1186,6 @@ pub const AttachType = enum(u32) {
     xdp_cpumap,
     sk_lookup,
     xdp,
-    sk_skb_verdict,
-    sk_reuseport_select,
-    sk_reuseport_select_or_migrate,
-    perf_event,
-    trace_kprobe_multi,
-    lsm_cgroup,
-    struct_ops,
-    netfilter,
-    tcx_ingress,
-    tcx_egress,
-    trace_uprobe_multi,
-    cgroup_unix_connect,
-    cgroup_unix_sendmsg,
-    cgroup_unix_recvmsg,
-    cgroup_unix_getpeername,
-    cgroup_unix_getsockname,
-    netkit_primary,
-    netkit_peer,
-    trace_kprobe_session,
     _,
 };
 
@@ -1548,7 +1520,7 @@ pub fn map_create(map_type: MapType, key_size: u32, value_size: u32, max_entries
         .SUCCESS => return @as(fd_t, @intCast(rc)),
         .INVAL => return error.MapTypeOrAttrInvalid,
         .NOMEM => return error.SystemResources,
-        .PERM => return error.PermissionDenied,
+        .PERM => return error.AccessDenied,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -1574,7 +1546,7 @@ pub fn map_lookup_elem(fd: fd_t, key: []const u8, value: []u8) !void {
         .FAULT => unreachable,
         .INVAL => return error.FieldInAttrNeedsZeroing,
         .NOENT => return error.NotFound,
-        .PERM => return error.PermissionDenied,
+        .PERM => return error.AccessDenied,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -1597,7 +1569,7 @@ pub fn map_update_elem(fd: fd_t, key: []const u8, value: []const u8, flags: u64)
         .FAULT => unreachable,
         .INVAL => return error.FieldInAttrNeedsZeroing,
         .NOMEM => return error.SystemResources,
-        .PERM => return error.PermissionDenied,
+        .PERM => return error.AccessDenied,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -1617,7 +1589,7 @@ pub fn map_delete_elem(fd: fd_t, key: []const u8) !void {
         .FAULT => unreachable,
         .INVAL => return error.FieldInAttrNeedsZeroing,
         .NOENT => return error.NotFound,
-        .PERM => return error.PermissionDenied,
+        .PERM => return error.AccessDenied,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -1638,7 +1610,7 @@ pub fn map_get_next_key(fd: fd_t, key: []const u8, next_key: []u8) !bool {
         .FAULT => unreachable,
         .INVAL => return error.FieldInAttrNeedsZeroing,
         .NOENT => return false,
-        .PERM => return error.PermissionDenied,
+        .PERM => return error.AccessDenied,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -1712,7 +1684,7 @@ pub fn prog_load(
         .ACCES => error.UnsafeProgram,
         .FAULT => unreachable,
         .INVAL => error.InvalidProgram,
-        .PERM => error.PermissionDenied,
+        .PERM => error.AccessDenied,
         else => |err| unexpectedErrno(err),
     };
 }

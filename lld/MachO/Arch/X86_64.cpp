@@ -38,8 +38,9 @@ struct X86_64 : TargetInfo {
                             uint64_t entryAddr) const override;
 
   void writeObjCMsgSendStub(uint8_t *buf, Symbol *sym, uint64_t stubsAddr,
-                            uint64_t &stubOffset, uint64_t selrefVA,
-                            Symbol *objcMsgSend) const override;
+                            uint64_t stubOffset, uint64_t selrefsVA,
+                            uint64_t selectorIndex, uint64_t gotAddr,
+                            uint64_t msgSendIndex) const override;
 
   void relaxGotLoad(uint8_t *loc, uint8_t type) const override;
   uint64_t getPageSize() const override { return 4 * 1024; }
@@ -181,18 +182,16 @@ static constexpr uint8_t objcStubsFastCode[] = {
 };
 
 void X86_64::writeObjCMsgSendStub(uint8_t *buf, Symbol *sym, uint64_t stubsAddr,
-                                  uint64_t &stubOffset, uint64_t selrefVA,
-                                  Symbol *objcMsgSend) const {
-  uint64_t objcMsgSendAddr = in.got->addr;
-  uint64_t objcMsgSendIndex = objcMsgSend->gotIndex;
-
+                                  uint64_t stubOffset, uint64_t selrefsVA,
+                                  uint64_t selectorIndex, uint64_t gotAddr,
+                                  uint64_t msgSendIndex) const {
   memcpy(buf, objcStubsFastCode, sizeof(objcStubsFastCode));
   SymbolDiagnostic d = {sym, sym->getName()};
   uint64_t stubAddr = stubsAddr + stubOffset;
-  writeRipRelative(d, buf, stubAddr, 7, selrefVA);
+  writeRipRelative(d, buf, stubAddr, 7,
+                   selrefsVA + selectorIndex * LP64::wordSize);
   writeRipRelative(d, buf, stubAddr, 0xd,
-                   objcMsgSendAddr + objcMsgSendIndex * LP64::wordSize);
-  stubOffset += target->objcStubsFastSize;
+                   gotAddr + msgSendIndex * LP64::wordSize);
 }
 
 void X86_64::relaxGotLoad(uint8_t *loc, uint8_t type) const {
@@ -215,7 +214,7 @@ X86_64::X86_64() : TargetInfo(LP64()) {
   stubHelperEntrySize = sizeof(stubHelperEntry);
 
   objcStubsFastSize = sizeof(objcStubsFastCode);
-  objcStubsFastAlignment = 1;
+  objcStubsAlignment = 1;
 
   relocAttrs = {relocAttrsArray.data(), relocAttrsArray.size()};
 }

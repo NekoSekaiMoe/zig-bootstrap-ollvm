@@ -14,13 +14,13 @@
 #ifndef LLVM_CODEGEN_CALLINGCONVLOWER_H
 #define LLVM_CODEGEN_CALLINGCONVLOWER_H
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/Register.h"
 #include "llvm/CodeGen/TargetCallingConv.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/Support/Alignment.h"
 #include <variant>
+#include <vector>
 
 namespace llvm {
 
@@ -81,16 +81,16 @@ private:
   }
 
 public:
-  static CCValAssign getReg(unsigned ValNo, MVT ValVT, MCRegister Reg,
+  static CCValAssign getReg(unsigned ValNo, MVT ValVT, unsigned RegNo,
                             MVT LocVT, LocInfo HTP, bool IsCustom = false) {
     CCValAssign Ret(HTP, ValNo, ValVT, LocVT, IsCustom);
-    Ret.Data = Register(Reg);
+    Ret.Data = Register(RegNo);
     return Ret;
   }
 
-  static CCValAssign getCustomReg(unsigned ValNo, MVT ValVT, MCRegister Reg,
+  static CCValAssign getCustomReg(unsigned ValNo, MVT ValVT, unsigned RegNo,
                                   MVT LocVT, LocInfo HTP) {
-    return getReg(ValNo, ValVT, Reg, LocVT, HTP, /*IsCustom=*/true);
+    return getReg(ValNo, ValVT, RegNo, LocVT, HTP, /*IsCustom=*/true);
   }
 
   static CCValAssign getMem(unsigned ValNo, MVT ValVT, int64_t Offset,
@@ -112,7 +112,7 @@ public:
     return Ret;
   }
 
-  void convertToReg(MCRegister Reg) { Data = Register(Reg); }
+  void convertToReg(unsigned RegNo) { Data = Register(RegNo); }
 
   void convertToMem(int64_t Offset) { Data = Offset; }
 
@@ -254,7 +254,7 @@ public:
   /// isAllocated - Return true if the specified register (or an alias) is
   /// allocated.
   bool isAllocated(MCRegister Reg) const {
-    return UsedRegs[Reg.id() / 32] & (1 << (Reg.id() & 31));
+    return UsedRegs[Reg / 32] & (1 << (Reg & 31));
   }
 
   /// AnalyzeFormalArguments - Analyze an array of argument values,
@@ -346,7 +346,7 @@ public:
   /// AllocateReg - Attempt to allocate one of the specified registers.  If none
   /// are available, return zero.  Otherwise, return the first one available,
   /// marking it and any aliases as allocated.
-  MCRegister AllocateReg(ArrayRef<MCPhysReg> Regs) {
+  MCPhysReg AllocateReg(ArrayRef<MCPhysReg> Regs) {
     unsigned FirstUnalloc = getFirstUnallocated(Regs);
     if (FirstUnalloc == Regs.size())
       return MCRegister();    // Didn't find the reg.
@@ -357,13 +357,12 @@ public:
     return Reg;
   }
 
-  /// Attempt to allocate a block of RegsRequired consecutive registers.
-  /// If this is not possible, return an empty range. Otherwise, return a
-  /// range of consecutive registers, marking the entire block as allocated.
-  ArrayRef<MCPhysReg> AllocateRegBlock(ArrayRef<MCPhysReg> Regs,
-                                       unsigned RegsRequired) {
+  /// AllocateRegBlock - Attempt to allocate a block of RegsRequired consecutive
+  /// registers. If this is not possible, return zero. Otherwise, return the first
+  /// register of the block that were allocated, marking the entire block as allocated.
+  MCPhysReg AllocateRegBlock(ArrayRef<MCPhysReg> Regs, unsigned RegsRequired) {
     if (RegsRequired > Regs.size())
-      return {};
+      return 0;
 
     for (unsigned StartIdx = 0; StartIdx <= Regs.size() - RegsRequired;
          ++StartIdx) {
@@ -380,11 +379,11 @@ public:
         for (unsigned BlockIdx = 0; BlockIdx < RegsRequired; ++BlockIdx) {
           MarkAllocated(Regs[StartIdx + BlockIdx]);
         }
-        return Regs.slice(StartIdx, RegsRequired);
+        return Regs[StartIdx];
       }
     }
     // No block was available
-    return {};
+    return 0;
   }
 
   /// Version of AllocateReg with list of registers to be shadowed.

@@ -13,6 +13,7 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/LLVMDriver.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
@@ -26,37 +27,40 @@ using namespace llvm;
 namespace {
 enum ID {
   OPT_INVALID = 0, // This is not an option ID.
-#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  OPT_##ID,
 #include "Opts.inc"
 #undef OPTION
 };
 
-#define OPTTABLE_STR_TABLE_CODE
+#define PREFIX(NAME, VALUE)                                                    \
+  static constexpr llvm::StringLiteral NAME##_init[] = VALUE;                  \
+  static constexpr llvm::ArrayRef<llvm::StringLiteral> NAME(                   \
+      NAME##_init, std::size(NAME##_init) - 1);
 #include "Opts.inc"
-#undef OPTTABLE_STR_TABLE_CODE
+#undef PREFIX
 
-#define OPTTABLE_PREFIXES_TABLE_CODE
-#include "Opts.inc"
-#undef OPTTABLE_PREFIXES_TABLE_CODE
-
-using namespace llvm::opt;
 static constexpr opt::OptTable::Info InfoTable[] = {
-#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
+               HELPTEXT, METAVAR, VALUES)                                      \
+  {                                                                            \
+      PREFIX,      NAME,      HELPTEXT,                                        \
+      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
+      PARAM,       FLAGS,     OPT_##GROUP,                                     \
+      OPT_##ALIAS, ALIASARGS, VALUES},
 #include "Opts.inc"
 #undef OPTION
 };
 
 class CxxfiltOptTable : public opt::GenericOptTable {
 public:
-  CxxfiltOptTable()
-      : opt::GenericOptTable(OptionStrTable, OptionPrefixesTable, InfoTable) {
+  CxxfiltOptTable() : opt::GenericOptTable(InfoTable) {
     setGroupedShortOptions(true);
   }
 };
 } // namespace
 
-static bool ParseParams;
-static bool Quote;
 static bool StripUnderscore;
 static bool Types;
 
@@ -67,41 +71,29 @@ static void error(const Twine &Message) {
   exit(1);
 }
 
-// Quote Undecorated with "" if asked for and not already followed by a '"'.
-static std::string optionalQuote(const std::string &Undecorated,
-                                 StringRef Delimiters) {
-  if (Quote && (Delimiters.empty() || Delimiters[0] != '"'))
-    return '"' + Undecorated + '"';
-  return Undecorated;
-}
-
-static std::string demangle(const std::string &Mangled, StringRef Delimiters) {
+static std::string demangle(const std::string &Mangled) {
   using llvm::itanium_demangle::starts_with;
   std::string_view DecoratedStr = Mangled;
-  bool CanHaveLeadingDot = true;
-  if (StripUnderscore && DecoratedStr[0] == '_') {
-    DecoratedStr.remove_prefix(1);
-    CanHaveLeadingDot = false;
-  }
+  if (StripUnderscore)
+    if (DecoratedStr[0] == '_')
+      DecoratedStr.remove_prefix(1);
 
   std::string Result;
-  if (nonMicrosoftDemangle(DecoratedStr, Result, CanHaveLeadingDot,
-                           ParseParams))
-    return optionalQuote(Result, Delimiters);
+  if (nonMicrosoftDemangle(DecoratedStr, Result))
+    return Result;
 
   std::string Prefix;
   char *Undecorated = nullptr;
 
   if (Types)
-    Undecorated = itaniumDemangle(DecoratedStr, ParseParams);
+    Undecorated = itaniumDemangle(DecoratedStr);
 
   if (!Undecorated && starts_with(DecoratedStr, "__imp_")) {
     Prefix = "import thunk for ";
-    Undecorated = itaniumDemangle(DecoratedStr.substr(6), ParseParams);
+    Undecorated = itaniumDemangle(DecoratedStr.substr(6));
   }
 
-  Result =
-      Undecorated ? optionalQuote(Prefix + Undecorated, Delimiters) : Mangled;
+  Result = Undecorated ? Prefix + Undecorated : Mangled;
   free(Undecorated);
   return Result;
 }
@@ -149,15 +141,15 @@ static void demangleLine(llvm::raw_ostream &OS, StringRef Mangled, bool Split) {
     SmallVector<std::pair<StringRef, StringRef>, 16> Words;
     SplitStringDelims(Mangled, Words, IsLegalItaniumChar);
     for (const auto &Word : Words)
-      Result +=
-          ::demangle(std::string(Word.first), Word.second) + Word.second.str();
+      Result += ::demangle(std::string(Word.first)) + Word.second.str();
   } else
-    Result = ::demangle(std::string(Mangled), "");
+    Result = ::demangle(std::string(Mangled));
   OS << Result << '\n';
   OS.flush();
 }
 
 int llvm_cxxfilt_main(int argc, char **argv, const llvm::ToolContext &) {
+  InitLLVM X(argc, argv);
   BumpPtrAllocator A;
   StringSaver Saver(A);
   CxxfiltOptTable Tbl;
@@ -178,12 +170,13 @@ int llvm_cxxfilt_main(int argc, char **argv, const llvm::ToolContext &) {
     return 0;
   }
 
-  StripUnderscore =
-      Args.hasFlag(OPT_strip_underscore, OPT_no_strip_underscore, false);
-
-  ParseParams = !Args.hasArg(OPT_no_params);
-
-  Quote = Args.hasArg(OPT_quote);
+  // The default value depends on the default triple. Mach-O has symbols
+  // prefixed with "_", so strip by default.
+  if (opt::Arg *A =
+          Args.getLastArg(OPT_strip_underscore, OPT_no_strip_underscore))
+    StripUnderscore = A->getOption().matches(OPT_strip_underscore);
+  else
+    StripUnderscore = Triple(sys::getProcessTriple()).isOSBinFormatMachO();
 
   Types = Args.hasArg(OPT_types);
 

@@ -9,12 +9,12 @@
 #ifndef LLVM_ANALYSIS_INLINEORDER_H
 #define LLVM_ANALYSIS_INLINEORDER_H
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Analysis/InlineCost.h"
 #include <utility>
 
 namespace llvm {
 class CallBase;
-template <typename Fn> class function_ref;
 
 template <typename T> class InlineOrder {
 public:
@@ -59,6 +59,7 @@ public:
                            ModuleAnalysisManager &MAM, Module &M);
 
   PluginInlineOrderAnalysis(InlineOrderFactory Factory) : Factory(Factory) {
+    HasBeenRegistered = true;
     assert(Factory != nullptr &&
            "The plugin inline order factory should not be a null pointer.");
   }
@@ -70,7 +71,11 @@ public:
   Result run(Module &, ModuleAnalysisManager &) { return {Factory}; }
   Result getResult() { return {Factory}; }
 
+  static bool isRegistered() { return HasBeenRegistered; }
+  static void unregister() { HasBeenRegistered = false; }
+
 private:
+  static bool HasBeenRegistered;
   InlineOrderFactory Factory;
 };
 

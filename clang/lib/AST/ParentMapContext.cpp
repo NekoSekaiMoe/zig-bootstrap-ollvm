@@ -12,11 +12,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ParentMapContext.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
-#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TemplateBase.h"
-#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace clang;
 
@@ -51,7 +50,7 @@ DynTypedNode ParentMapContext::traverseIgnored(const DynTypedNode &N) const {
 }
 
 template <typename T, typename... U>
-static std::tuple<bool, DynTypedNodeList, const T *, const U *...>
+std::tuple<bool, DynTypedNodeList, const T *, const U *...>
 matchParents(const DynTypedNodeList &NodeList,
              ParentMapContext::ParentMap *ParentMap);
 
@@ -62,30 +61,7 @@ class ParentMapContext::ParentMap {
   template <typename, typename...> friend struct ::MatchParents;
 
   /// Contains parents of a node.
-  class ParentVector {
-  public:
-    ParentVector() = default;
-    explicit ParentVector(size_t N, const DynTypedNode &Value) {
-      Items.reserve(N);
-      for (; N > 0; --N)
-        push_back(Value);
-    }
-    bool contains(const DynTypedNode &Value) const {
-      const void *Identity = Value.getMemoizationData();
-      assert(Identity);
-      return Dedup.contains(Identity);
-    }
-    void push_back(const DynTypedNode &Value) {
-      const void *Identity = Value.getMemoizationData();
-      if (!Identity || Dedup.insert(Identity).second) {
-        Items.push_back(Value);
-      }
-    }
-    llvm::ArrayRef<DynTypedNode> view() const { return Items; }
-  private:
-    llvm::SmallVector<DynTypedNode, 1> Items;
-    llvm::SmallPtrSet<const void *, 2> Dedup;
-  };
+  using ParentVector = llvm::SmallVector<DynTypedNode, 2>;
 
   /// Maps from a node to its parents. This is used for nodes that have
   /// pointer identity only, which are more common and we can save space by
@@ -108,11 +84,11 @@ class ParentMapContext::ParentMap {
 
   static DynTypedNode
   getSingleDynTypedNodeFromParentMap(ParentMapPointers::mapped_type U) {
-    if (const auto *D = dyn_cast<const Decl *>(U))
+    if (const auto *D = U.dyn_cast<const Decl *>())
       return DynTypedNode::create(*D);
-    if (const auto *S = dyn_cast<const Stmt *>(U))
+    if (const auto *S = U.dyn_cast<const Stmt *>())
       return DynTypedNode::create(*S);
-    return *cast<DynTypedNode *>(U);
+    return *U.get<DynTypedNode *>();
   }
 
   template <typename NodeTy, typename MapTy>
@@ -123,7 +99,7 @@ class ParentMapContext::ParentMap {
       return llvm::ArrayRef<DynTypedNode>();
     }
     if (const auto *V = I->second.template dyn_cast<ParentVector *>()) {
-      return V->view();
+      return llvm::ArrayRef(*V);
     }
     return getSingleDynTypedNodeFromParentMap(I->second);
   }
@@ -132,17 +108,17 @@ public:
   ParentMap(ASTContext &Ctx);
   ~ParentMap() {
     for (const auto &Entry : PointerParents) {
-      if (auto *DTN = dyn_cast<DynTypedNode *>(Entry.second)) {
-        delete DTN;
-      } else if (auto *PV = dyn_cast<ParentVector *>(Entry.second)) {
-        delete PV;
+      if (Entry.second.is<DynTypedNode *>()) {
+        delete Entry.second.get<DynTypedNode *>();
+      } else if (Entry.second.is<ParentVector *>()) {
+        delete Entry.second.get<ParentVector *>();
       }
     }
     for (const auto &Entry : OtherParents) {
-      if (auto *DTN = dyn_cast<DynTypedNode *>(Entry.second)) {
-        delete DTN;
-      } else if (auto *PV = dyn_cast<ParentVector *>(Entry.second)) {
-        delete PV;
+      if (Entry.second.is<DynTypedNode *>()) {
+        delete Entry.second.get<DynTypedNode *>();
+      } else if (Entry.second.is<ParentVector *>()) {
+        delete Entry.second.get<ParentVector *>();
       }
     }
   }
@@ -276,7 +252,7 @@ public:
       const auto *S = It->second.dyn_cast<const Stmt *>();
       if (!S) {
         if (auto *Vec = It->second.dyn_cast<ParentVector *>())
-          return Vec->view();
+          return llvm::ArrayRef(*Vec);
         return getSingleDynTypedNodeFromParentMap(It->second);
       }
       const auto *P = dyn_cast<Expr>(S);
@@ -397,14 +373,14 @@ private:
       else
         NodeOrVector = new DynTypedNode(ParentStack.back());
     } else {
-      if (!isa<ParentVector *>(NodeOrVector)) {
+      if (!NodeOrVector.template is<ParentVector *>()) {
         auto *Vector = new ParentVector(
             1, getSingleDynTypedNodeFromParentMap(NodeOrVector));
         delete NodeOrVector.template dyn_cast<DynTypedNode *>();
         NodeOrVector = Vector;
       }
 
-      auto *Vector = cast<ParentVector *>(NodeOrVector);
+      auto *Vector = NodeOrVector.template get<ParentVector *>();
       // Skip duplicates for types that have memoization data.
       // We must check that the type has memoization data before calling
       // llvm::is_contained() because DynTypedNode::operator== can't compare all

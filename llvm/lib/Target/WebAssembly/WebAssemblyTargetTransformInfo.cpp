@@ -13,6 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "WebAssemblyTargetTransformInfo.h"
+#include "llvm/CodeGen/CostTable.h"
+#include "llvm/Support/Debug.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "wasmtti"
@@ -92,16 +94,22 @@ WebAssemblyTTIImpl::getVectorInstrCost(unsigned Opcode, Type *Val,
   return Cost;
 }
 
-TTI::ReductionShuffle WebAssemblyTTIImpl::getPreferredExpandedReductionShuffle(
-    const IntrinsicInst *II) const {
+bool WebAssemblyTTIImpl::areInlineCompatible(const Function *Caller,
+                                             const Function *Callee) const {
+  // Allow inlining only when the Callee has a subset of the Caller's
+  // features. In principle, we should be able to inline regardless of any
+  // features because WebAssembly supports features at module granularity, not
+  // function granularity, but without this restriction it would be possible for
+  // a module to "forget" about features if all the functions that used them
+  // were inlined.
+  const TargetMachine &TM = getTLI()->getTargetMachine();
 
-  switch (II->getIntrinsicID()) {
-  default:
-    break;
-  case Intrinsic::vector_reduce_fadd:
-    return TTI::ReductionShuffle::Pairwise;
-  }
-  return TTI::ReductionShuffle::SplitHalf;
+  const FeatureBitset &CallerBits =
+      TM.getSubtargetImpl(*Caller)->getFeatureBits();
+  const FeatureBitset &CalleeBits =
+      TM.getSubtargetImpl(*Callee)->getFeatureBits();
+
+  return (CallerBits & CalleeBits) == CalleeBits;
 }
 
 void WebAssemblyTTIImpl::getUnrollingPreferences(
@@ -133,28 +141,4 @@ void WebAssemblyTTIImpl::getUnrollingPreferences(
 
 bool WebAssemblyTTIImpl::supportsTailCalls() const {
   return getST()->hasTailCall();
-}
-
-bool WebAssemblyTTIImpl::isProfitableToSinkOperands(
-    Instruction *I, SmallVectorImpl<Use *> &Ops) const {
-  using namespace llvm::PatternMatch;
-
-  if (!I->getType()->isVectorTy() || !I->isShift())
-    return false;
-
-  Value *V = I->getOperand(1);
-  // We dont need to sink constant splat.
-  if (dyn_cast<Constant>(V))
-    return false;
-
-  if (match(V, m_Shuffle(m_InsertElt(m_Value(), m_Value(), m_ZeroInt()),
-                         m_Value(), m_ZeroMask()))) {
-    // Sink insert
-    Ops.push_back(&cast<Instruction>(V)->getOperandUse(0));
-    // Sink shuffle
-    Ops.push_back(&I->getOperandUse(1));
-    return true;
-  }
-
-  return false;
 }

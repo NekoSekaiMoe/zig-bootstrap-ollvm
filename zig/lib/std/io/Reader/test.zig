@@ -1,4 +1,3 @@
-const builtin = @import("builtin");
 const std = @import("../../std.zig");
 const testing = std.testing;
 
@@ -12,7 +11,7 @@ test "Reader" {
         b = 99,
         c = 2,
         d = 3,
-    }, builtin.cpu.arch.endian())) == .c);
+    }, undefined)) == .c);
     try testing.expectError(error.EndOfStream, reader.readByte());
 }
 

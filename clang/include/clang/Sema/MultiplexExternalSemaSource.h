@@ -65,7 +65,7 @@ public:
 
   /// Resolve a declaration ID into a declaration, potentially
   /// building a new declaration.
-  Decl *GetExternalDecl(GlobalDeclID ID) override;
+  Decl *GetExternalDecl(uint32_t ID) override;
 
   /// Complete the redeclaration chain if it's been extended since the
   /// previous generation of the AST source.
@@ -95,14 +95,7 @@ public:
   /// Find all declarations with the given name in the
   /// given context.
   bool FindExternalVisibleDeclsByName(const DeclContext *DC,
-                                      DeclarationName Name,
-                                      const DeclContext *OriginalDC) override;
-
-  bool LoadExternalSpecializations(const Decl *D, bool OnlyPartial) override;
-
-  bool
-  LoadExternalSpecializations(const Decl *D,
-                              ArrayRef<TemplateArgument> TemplateArgs) override;
+                                      DeclarationName Name) override;
 
   /// Ensures that the table of all visible declarations inside this
   /// context is up to date.
@@ -368,7 +361,7 @@ public:
                                         QualType T) override;
 
   // Inform all attached sources that a mangling number was assigned.
-  void AssignedLambdaNumbering(CXXRecordDecl *Lambda) override;
+  void AssignedLambdaNumbering(const CXXRecordDecl *Lambda) override;
 
   /// LLVM-style RTTI.
   /// \{

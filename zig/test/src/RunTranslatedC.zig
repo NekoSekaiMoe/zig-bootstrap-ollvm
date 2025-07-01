@@ -72,22 +72,17 @@ pub fn addCase(self: *RunTranslatedCContext, case: *const TestCase) void {
     } else if (self.test_filters.len > 0) return;
 
     const write_src = b.addWriteFiles();
-    const first_case = case.sources.items[0];
-    const root_source_file = write_src.add(first_case.filename, first_case.source);
-    for (case.sources.items[1..]) |src_file| {
+    for (case.sources.items) |src_file| {
         _ = write_src.add(src_file.filename, src_file.source);
     }
     const translate_c = b.addTranslateC(.{
-        .root_source_file = root_source_file,
-        .target = b.graph.host,
+        .root_source_file = write_src.files.items[0].getPath(),
+        .target = b.host,
         .optimize = .Debug,
     });
 
     translate_c.step.name = b.fmt("{s} translate-c", .{annotated_case_name});
-    const exe = b.addExecutable(.{
-        .name = "translated_c",
-        .root_module = translate_c.createModule(),
-    });
+    const exe = translate_c.addExecutable(.{});
     exe.step.name = b.fmt("{s} build-exe", .{annotated_case_name});
     exe.linkLibC();
     const run = b.addRunArtifact(exe);
@@ -96,7 +91,6 @@ pub fn addCase(self: *RunTranslatedCContext, case: *const TestCase) void {
         run.expectStdErrEqual("");
     }
     run.expectStdOutEqual(case.expected_stdout);
-    run.skip_foreign_checks = true;
 
     self.step.dependOn(&run.step);
 }

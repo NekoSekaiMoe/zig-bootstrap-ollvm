@@ -98,7 +98,7 @@ MCSection *XCoreTargetObjectFile::getExplicitSectionGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
   StringRef SectionName = GO->getSection();
   // Infer section flags from the section name if we can.
-  bool IsCPRel = SectionName.starts_with(".cp.");
+  bool IsCPRel = SectionName.startswith(".cp.");
   if (IsCPRel && !Kind.isReadOnly())
     report_fatal_error("Using .cp. section for writeable object.");
   return getContext().getELFSection(SectionName, getXCoreSectionType(Kind),
@@ -118,7 +118,7 @@ MCSection *XCoreTargetObjectFile::SelectSectionForGlobal(
     if (Kind.isMergeableConst16())      return MergeableConst16Section;
   }
   Type *ObjType = GO->getValueType();
-  auto &DL = GO->getDataLayout();
+  auto &DL = GO->getParent()->getDataLayout();
   if (TM.getCodeModel() == CodeModel::Small || !ObjType->isSized() ||
       DL.getTypeAllocSize(ObjType) < CodeModelLargeSize) {
     if (Kind.isReadOnly())              return UseCPRel? ReadOnlySection

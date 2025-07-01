@@ -36,7 +36,7 @@ static cl::opt<InlinePriorityMode> UseInlinePriority(
                clEnumValN(InlinePriorityMode::ML, "ml", "Use ML.")));
 
 static cl::opt<int> ModuleInlinerTopPriorityThreshold(
-    "module-inliner-top-priority-threshold", cl::Hidden, cl::init(0),
+    "moudle-inliner-top-priority-threshold", cl::Hidden, cl::init(0),
     cl::desc("The cost threshold for call sites that get inlined without the "
              "cost-benefit analysis"));
 
@@ -114,10 +114,7 @@ public:
   CostBenefitPriority(const CallBase *CB, FunctionAnalysisManager &FAM,
                       const InlineParams &Params) {
     auto IC = getInlineCostWrapper(const_cast<CallBase &>(*CB), FAM, Params);
-    if (IC.isVariable())
-      Cost = IC.getCost();
-    else
-      Cost = IC.isNever() ? INT_MAX : INT_MIN;
+    Cost = IC.getCost();
     StaticBonusApplied = IC.getStaticBonusApplied();
     CostBenefit = IC.getCostBenefit();
   }
@@ -221,15 +218,14 @@ class PriorityInlineOrder : public InlineOrder<std::pair<CallBase *, int>> {
   // A call site could become less desirable for inlining because of the size
   // growth from prior inlining into the callee. This method is used to lazily
   // update the desirability of a call site if it's decreasing. It is only
-  // called on pop(), not every time the desirability changes. When the
-  // desirability of the front call site decreases, an updated one would be
-  // pushed right back into the heap. For simplicity, those cases where the
-  // desirability of a call site increases are ignored here.
-  void pop_heap_adjust() {
-    std::pop_heap(Heap.begin(), Heap.end(), isLess);
-    while (updateAndCheckDecreased(Heap.back())) {
-      std::push_heap(Heap.begin(), Heap.end(), isLess);
+  // called on pop() or front(), not every time the desirability changes. When
+  // the desirability of the front call site decreases, an updated one would be
+  // pushed right back into the heap. For simplicity, those cases where
+  // the desirability of a call site increases are ignored here.
+  void adjust() {
+    while (updateAndCheckDecreased(Heap.front())) {
       std::pop_heap(Heap.begin(), Heap.end(), isLess);
+      std::push_heap(Heap.begin(), Heap.end(), isLess);
     }
   }
 
@@ -255,17 +251,19 @@ public:
 
   T pop() override {
     assert(size() > 0);
-    pop_heap_adjust();
+    adjust();
 
-    CallBase *CB = Heap.pop_back_val();
+    CallBase *CB = Heap.front();
     T Result = std::make_pair(CB, InlineHistoryMap[CB]);
     InlineHistoryMap.erase(CB);
+    std::pop_heap(Heap.begin(), Heap.end(), isLess);
+    Heap.pop_back();
     return Result;
   }
 
   void erase_if(function_ref<bool(T)> Pred) override {
     auto PredWrapper = [=](CallBase *CB) -> bool {
-      return Pred(std::make_pair(CB, InlineHistoryMap[CB]));
+      return Pred(std::make_pair(CB, 0));
     };
     llvm::erase_if(Heap, PredWrapper);
     std::make_heap(Heap.begin(), Heap.end(), isLess);
@@ -283,6 +281,7 @@ private:
 } // namespace
 
 AnalysisKey llvm::PluginInlineOrderAnalysis::Key;
+bool llvm::PluginInlineOrderAnalysis::HasBeenRegistered;
 
 std::unique_ptr<InlineOrder<std::pair<CallBase *, int>>>
 llvm::getDefaultInlineOrder(FunctionAnalysisManager &FAM,
@@ -312,7 +311,7 @@ llvm::getDefaultInlineOrder(FunctionAnalysisManager &FAM,
 std::unique_ptr<InlineOrder<std::pair<CallBase *, int>>>
 llvm::getInlineOrder(FunctionAnalysisManager &FAM, const InlineParams &Params,
                      ModuleAnalysisManager &MAM, Module &M) {
-  if (MAM.isPassRegistered<PluginInlineOrderAnalysis>()) {
+  if (llvm::PluginInlineOrderAnalysis::isRegistered()) {
     LLVM_DEBUG(dbgs() << "    Current used priority: plugin ---- \n");
     return MAM.getResult<PluginInlineOrderAnalysis>(M).Factory(FAM, Params, MAM,
                                                                M);

@@ -10,8 +10,6 @@
 #define LLVM_MC_MCDXCONTAINERWRITER_H
 
 #include "llvm/MC/MCObjectWriter.h"
-#include "llvm/MC/MCValue.h"
-#include "llvm/Support/EndianStream.h"
 #include "llvm/TargetParser/Triple.h"
 
 namespace llvm {
@@ -33,21 +31,15 @@ public:
   }
 };
 
-class DXContainerObjectWriter final : public MCObjectWriter {
-  support::endian::Writer W;
-  std::unique_ptr<MCDXContainerTargetWriter> TargetObjectWriter;
+/// Construct a new DXContainer writer instance.
+///
+/// \param MOTW - The target specific DXContainer writer subclass.
+/// \param OS - The stream to write to.
+/// \returns The constructed object writer.
+std::unique_ptr<MCObjectWriter>
+createDXContainerObjectWriter(std::unique_ptr<MCDXContainerTargetWriter> MOTW,
+                              raw_pwrite_stream &OS);
 
-public:
-  DXContainerObjectWriter(std::unique_ptr<MCDXContainerTargetWriter> MOTW,
-                          raw_pwrite_stream &OS)
-      : W(OS, llvm::endianness::little), TargetObjectWriter(std::move(MOTW)) {}
-
-  void recordRelocation(MCAssembler &Asm, const MCFragment *Fragment,
-                        const MCFixup &Fixup, MCValue Target,
-                        uint64_t &FixedValue) override {}
-
-  uint64_t writeObject(MCAssembler &Asm) override;
-};
 } // end namespace llvm
 
 #endif // LLVM_MC_MCDXCONTAINERWRITER_H

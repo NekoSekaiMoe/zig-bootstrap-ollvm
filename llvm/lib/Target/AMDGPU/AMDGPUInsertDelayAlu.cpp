@@ -30,7 +30,7 @@ public:
   const SIInstrInfo *SII;
   const TargetRegisterInfo *TRI;
 
-  const TargetSchedModel *SchedModel;
+  TargetSchedModel SchedModel;
 
   AMDGPUInsertDelayAlu() : MachineFunctionPass(ID) {}
 
@@ -387,7 +387,7 @@ public:
       if (Type != OTHER) {
         // TODO: Scan implicit defs too?
         for (const auto &Op : MI.defs()) {
-          unsigned Latency = SchedModel->computeOperandLatency(
+          unsigned Latency = SchedModel.computeOperandLatency(
               &MI, Op.getOperandNo(), nullptr, 0);
           for (MCRegUnit Unit : TRI->regunits(Op.getReg()))
             State[Unit] = DelayInfo(Type, Latency);
@@ -429,7 +429,8 @@ public:
 
     SII = ST.getInstrInfo();
     TRI = ST.getRegisterInfo();
-    SchedModel = &SII->getSchedModel();
+
+    SchedModel.init(&ST);
 
     // Calculate the delay state for each basic block, iterating until we reach
     // a fixed point.

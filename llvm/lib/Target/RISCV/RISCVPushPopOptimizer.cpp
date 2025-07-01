@@ -1,4 +1,4 @@
-//===------- RISCVPushPopOptimizer.cpp - RISC-V Push/Pop opt. pass --------===//
+//===------- RISCVPushPopOptimizer.cpp - RISCV Push/Pop opt. pass ---------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains a pass that replaces Zcmp POP instructions with
-// POPRET[Z] where possible.
+// This file contains a pass that modifies PUSH/POP instructions from Zca
+// standard to use their non prolog/epilog related functionalities
+// and generates POPRET instruction.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,7 +23,9 @@ namespace {
 struct RISCVPushPopOpt : public MachineFunctionPass {
   static char ID;
 
-  RISCVPushPopOpt() : MachineFunctionPass(ID) {}
+  RISCVPushPopOpt() : MachineFunctionPass(ID) {
+    initializeRISCVPushPopOptPass(*PassRegistry::getPassRegistry());
+  }
 
   const RISCVInstrInfo *TII;
   const TargetRegisterInfo *TRI;
@@ -62,19 +65,9 @@ bool RISCVPushPopOpt::usePopRet(MachineBasicBlock::iterator &MBBI,
   // this will detect all ret instruction.
   DebugLoc DL = NextI->getDebugLoc();
   unsigned Opc = IsReturnZero ? RISCV::CM_POPRETZ : RISCV::CM_POPRET;
-  MachineInstrBuilder PopRetBuilder =
-      BuildMI(*NextI->getParent(), NextI, DL, TII->get(Opc))
-          .add(MBBI->getOperand(0))
-          .add(MBBI->getOperand(1));
-
-  // Copy over the variable implicit uses and defs from the CM_POP. They depend
-  // on what register list has been picked during frame lowering.
-  const MCInstrDesc &PopDesc = MBBI->getDesc();
-  unsigned FirstNonDeclaredOp = PopDesc.getNumOperands() +
-                                PopDesc.NumImplicitUses +
-                                PopDesc.NumImplicitDefs;
-  for (unsigned i = FirstNonDeclaredOp; i < MBBI->getNumOperands(); ++i)
-    PopRetBuilder.add(MBBI->getOperand(i));
+  BuildMI(*NextI->getParent(), NextI, DL, TII->get(Opc))
+      .add(MBBI->getOperand(0))
+      .add(MBBI->getOperand(1));
 
   MBBI->eraseFromParent();
   NextI->eraseFromParent();

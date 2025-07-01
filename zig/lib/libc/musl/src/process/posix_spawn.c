@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <sys/wait.h>
 #include "syscall.h"
 #include "lock.h"
@@ -157,11 +156,7 @@ static int child(void *args_vp)
 fail:
 	/* Since sizeof errno < PIPE_BUF, the write is atomic. */
 	ret = -ret;
-	if (ret) {
-		int r;
-		do r = __syscall(SYS_write, p, &ret, sizeof ret);
-		while (r<0 && r!=-EPIPE);
-	}
+	if (ret) while (__syscall(SYS_write, p, &ret, sizeof ret) < 0);
 	_exit(127);
 }
 

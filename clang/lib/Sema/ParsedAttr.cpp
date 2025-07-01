@@ -16,7 +16,9 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/SemaInternal.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include <cassert>
 #include <cstddef>
 #include <utility>
@@ -96,12 +98,6 @@ void AttributeFactory::reclaimPool(AttributePool &cur) {
 void AttributePool::takePool(AttributePool &pool) {
   Attrs.insert(Attrs.end(), pool.Attrs.begin(), pool.Attrs.end());
   pool.Attrs.clear();
-}
-
-void AttributePool::takeFrom(ParsedAttributesView &List, AttributePool &Pool) {
-  assert(&Pool != this && "AttributePool can't take attributes from itself");
-  llvm::for_each(List.AttrList, [&Pool](ParsedAttr *A) { Pool.remove(A); });
-  Attrs.insert(Attrs.end(), List.AttrList.begin(), List.AttrList.end());
 }
 
 namespace {
@@ -197,18 +193,7 @@ bool ParsedAttr::isTypeAttr() const { return getInfo().IsType; }
 bool ParsedAttr::isStmtAttr() const { return getInfo().IsStmt; }
 
 bool ParsedAttr::existsInTarget(const TargetInfo &Target) const {
-  Kind K = getParsedKind();
-
-  // If the attribute has a target-specific spelling, check that it exists.
-  // Only call this if the attr is not ignored/unknown. For most targets, this
-  // function just returns true.
-  bool HasSpelling = K != IgnoredAttribute && K != UnknownAttribute &&
-                     K != NoSemaHandlerAttribute;
-  bool TargetSpecificSpellingExists =
-      !HasSpelling ||
-      getInfo().spellingExistsInTarget(Target, getAttributeSpellingListIndex());
-
-  return getInfo().existsInTarget(Target) && TargetSpecificSpellingExists;
+  return getInfo().existsInTarget(Target);
 }
 
 bool ParsedAttr::isKnownToGCC() const { return getInfo().IsKnownToGCC; }
@@ -223,7 +208,7 @@ bool ParsedAttr::slidesFromDeclToDeclSpecLegacyBehavior() const {
     // atributes.
     return false;
 
-  assert(isStandardAttributeSyntax() || isAlignas());
+  assert(isStandardAttributeSyntax());
 
   // We have historically allowed some type attributes with standard attribute
   // syntax to slide to the decl-specifier-seq, so we have to keep supporting

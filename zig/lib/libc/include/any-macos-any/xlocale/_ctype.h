@@ -24,11 +24,8 @@
 #ifndef _XLOCALE__CTYPE_H_
 #define _XLOCALE__CTYPE_H_
 
-#include <_bounds.h>
 #include <_ctype.h>
-#include <__xlocale.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
+#include <_xlocale.h>
 
 /*
  * Use inline functions if we are allowed to and the compiler supports them.

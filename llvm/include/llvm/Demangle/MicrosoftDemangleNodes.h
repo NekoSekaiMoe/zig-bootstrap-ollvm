@@ -104,8 +104,6 @@ enum class PrimitiveKind {
   Double,
   Ldouble,
   Nullptr,
-  Auto,
-  DecltypeAuto,
 };
 
 enum class CharKind {
@@ -334,7 +332,7 @@ struct FunctionSignatureNode : public TypeNode {
   // The function's calling convention.
   CallingConv CallConvention = CallingConv::None;
 
-  // Function flags (global, public, etc)
+  // Function flags (gloabl, public, etc)
   FuncClass FunctionClass = FC_Global;
 
   FunctionRefQualifier RefQualifier = FunctionRefQualifier::None;

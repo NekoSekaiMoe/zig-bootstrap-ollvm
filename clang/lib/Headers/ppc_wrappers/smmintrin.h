@@ -14,7 +14,7 @@
 
 #ifndef NO_WARN_X86_INTRINSICS
 /* This header is distributed to simplify porting x86_64 code that
-   makes explicit use of Intel intrinsics to powerpc64/powerpc64le.
+   makes explicit use of Intel intrinsics to powerp64/powerpc64le.
 
    It is the user's responsibility to determine if the results are
    acceptable and make additional changes as necessary.
@@ -68,10 +68,10 @@ extern __inline __m128d
     __asm__("mffsce %0" : "=f"(__fpscr_save.__fr));
     __enables_save.__fpscr = __fpscr_save.__fpscr & 0xf8;
 #else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
+    __fpscr_save.__fr = __builtin_mffs();
     __enables_save.__fpscr = __fpscr_save.__fpscr & 0xf8;
     __fpscr_save.__fpscr &= ~0xf8;
-    __builtin_ppc_mtfsf(0b00000011, __fpscr_save.__fr);
+    __builtin_mtfsf(0b00000011, __fpscr_save.__fr);
 #endif
     /* Insert an artificial "read/write" reference to the variable
        read below, to ensure the compiler does not schedule
@@ -83,15 +83,10 @@ extern __inline __m128d
 
   switch (__rounding) {
   case _MM_FROUND_TO_NEAREST_INT:
-#ifdef _ARCH_PWR9
-    __fpscr_save.__fr = __builtin_ppc_mffsl();
-#else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
-    __fpscr_save.__fpscr &= 0x70007f0ffL;
-#endif
+    __fpscr_save.__fr = __builtin_mffsl();
     __attribute__((fallthrough));
   case _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC:
-    __builtin_ppc_set_fpscr_rn(0b00);
+    __builtin_set_fpscr_rn(0b00);
     /* Insert an artificial "read/write" reference to the variable
        read below, to ensure the compiler does not schedule
        a read/use of the variable before the FPSCR is modified, above.
@@ -107,7 +102,7 @@ extern __inline __m128d
        This can be removed if and when GCC PR102783 is fixed.
      */
     __asm__("" : : "wa"(__r));
-    __builtin_ppc_set_fpscr_rn(__fpscr_save.__fpscr);
+    __builtin_set_fpscr_rn(__fpscr_save.__fpscr);
     break;
   case _MM_FROUND_TO_NEG_INF:
   case _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC:
@@ -133,14 +128,9 @@ extern __inline __m128d
      */
     __asm__("" : : "wa"(__r));
     /* Restore enabled exceptions.  */
-#ifdef _ARCH_PWR9
-    __fpscr_save.__fr = __builtin_ppc_mffsl();
-#else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
-    __fpscr_save.__fpscr &= 0x70007f0ffL;
-#endif
+    __fpscr_save.__fr = __builtin_mffsl();
     __fpscr_save.__fpscr |= __enables_save.__fpscr;
-    __builtin_ppc_mtfsf(0b00000011, __fpscr_save.__fr);
+    __builtin_mtfsf(0b00000011, __fpscr_save.__fr);
   }
   return (__m128d)__r;
 }
@@ -169,10 +159,10 @@ extern __inline __m128
     __asm__("mffsce %0" : "=f"(__fpscr_save.__fr));
     __enables_save.__fpscr = __fpscr_save.__fpscr & 0xf8;
 #else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
+    __fpscr_save.__fr = __builtin_mffs();
     __enables_save.__fpscr = __fpscr_save.__fpscr & 0xf8;
     __fpscr_save.__fpscr &= ~0xf8;
-    __builtin_ppc_mtfsf(0b00000011, __fpscr_save.__fr);
+    __builtin_mtfsf(0b00000011, __fpscr_save.__fr);
 #endif
     /* Insert an artificial "read/write" reference to the variable
        read below, to ensure the compiler does not schedule
@@ -184,15 +174,10 @@ extern __inline __m128
 
   switch (__rounding) {
   case _MM_FROUND_TO_NEAREST_INT:
-#ifdef _ARCH_PWR9
-    __fpscr_save.__fr = __builtin_ppc_mffsl();
-#else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
-    __fpscr_save.__fpscr &= 0x70007f0ffL;
-#endif
+    __fpscr_save.__fr = __builtin_mffsl();
     __attribute__((fallthrough));
   case _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC:
-    __builtin_ppc_set_fpscr_rn(0b00);
+    __builtin_set_fpscr_rn(0b00);
     /* Insert an artificial "read/write" reference to the variable
        read below, to ensure the compiler does not schedule
        a read/use of the variable before the FPSCR is modified, above.
@@ -208,7 +193,7 @@ extern __inline __m128
        This can be removed if and when GCC PR102783 is fixed.
      */
     __asm__("" : : "wa"(__r));
-    __builtin_ppc_set_fpscr_rn(__fpscr_save.__fpscr);
+    __builtin_set_fpscr_rn(__fpscr_save.__fpscr);
     break;
   case _MM_FROUND_TO_NEG_INF:
   case _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC:
@@ -234,14 +219,9 @@ extern __inline __m128
      */
     __asm__("" : : "wa"(__r));
     /* Restore enabled exceptions.  */
-#ifdef _ARCH_PWR9
-    __fpscr_save.__fr = __builtin_ppc_mffsl();
-#else
-    __fpscr_save.__fr = __builtin_ppc_mffs();
-    __fpscr_save.__fpscr &= 0x70007f0ffL;
-#endif
+    __fpscr_save.__fr = __builtin_mffsl();
     __fpscr_save.__fpscr |= __enables_save.__fpscr;
-    __builtin_ppc_mtfsf(0b00000011, __fpscr_save.__fr);
+    __builtin_mtfsf(0b00000011, __fpscr_save.__fr);
   }
   return (__m128)__r;
 }

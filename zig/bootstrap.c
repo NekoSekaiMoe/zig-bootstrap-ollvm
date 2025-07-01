@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
         if (f == NULL)
             panic("unable to open config.zig for writing");
 
-        const char *zig_version = "0.15.0-dev.769+4d7980645";
+        const char *zig_version = "0.12.0-dev.bootstrap";
 
         int written = fprintf(f,
             "pub const have_llvm = false;\n"
@@ -139,9 +139,9 @@ int main(int argc, char **argv) {
             "pub const enable_tracy = false;\n"
             "pub const value_tracing = false;\n"
             "pub const skip_non_native = false;\n"
-            "pub const debug_gpa = false;\n"
-            "pub const dev = .core;\n"
-            "pub const value_interpret_mode = .direct;\n"
+            "pub const force_gpa = false;\n"
+            "pub const only_c = false;\n"
+            "pub const only_core_functionality = true;\n"
         , zig_version);
         if (written < 100)
             panic("unable to write to config.zig file");
@@ -157,9 +157,9 @@ int main(int argc, char **argv) {
             "-target", host_triple,
             "--dep", "build_options",
             "--dep", "aro",
-            "-Mroot=src/main.zig",
-            "-Mbuild_options=config.zig",
-            "-Maro=lib/compiler/aro/aro.zig",
+            "--mod", "root", "src/main.zig",
+            "--mod", "build_options", "config.zig",
+            "--mod", "aro", "lib/compiler/aro/aro.zig",
             NULL,
         };
         print_and_run(child_argv);
@@ -171,7 +171,9 @@ int main(int argc, char **argv) {
             "-ofmt=c", "-OReleaseSmall",
             "--name", "compiler_rt", "-femit-bin=compiler_rt.c",
             "-target", host_triple,
-            "-Mroot=lib/compiler_rt.zig",
+            "--dep", "build_options",
+            "--mod", "root", "lib/compiler_rt.zig",
+            "--mod", "build_options", "config.zig",
             NULL,
         };
         print_and_run(child_argv);

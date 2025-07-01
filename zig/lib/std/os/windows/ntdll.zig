@@ -5,7 +5,7 @@ const BOOL = windows.BOOL;
 const DWORD = windows.DWORD;
 const DWORD64 = windows.DWORD64;
 const ULONG = windows.ULONG;
-const ULONG_PTR = windows.ULONG_PTR;
+const WINAPI = windows.WINAPI;
 const NTSTATUS = windows.NTSTATUS;
 const WORD = windows.WORD;
 const HANDLE = windows.HANDLE;
@@ -44,7 +44,7 @@ pub extern "ntdll" fn NtQueryInformationProcess(
     ProcessInformation: *anyopaque,
     ProcessInformationLength: ULONG,
     ReturnLength: ?*ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtQueryInformationThread(
     ThreadHandle: HANDLE,
@@ -52,37 +52,37 @@ pub extern "ntdll" fn NtQueryInformationThread(
     ThreadInformation: *anyopaque,
     ThreadInformationLength: ULONG,
     ReturnLength: ?*ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtQuerySystemInformation(
     SystemInformationClass: SYSTEM_INFORMATION_CLASS,
     SystemInformation: PVOID,
     SystemInformationLength: ULONG,
     ReturnLength: ?*ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtSetInformationThread(
     ThreadHandle: HANDLE,
     ThreadInformationClass: THREADINFOCLASS,
     ThreadInformation: *const anyopaque,
     ThreadInformationLength: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn RtlGetVersion(
     lpVersionInformation: *RTL_OSVERSIONINFOW,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn RtlCaptureStackBackTrace(
     FramesToSkip: DWORD,
     FramesToCapture: DWORD,
     BackTrace: **anyopaque,
     BackTraceHash: ?*DWORD,
-) callconv(.winapi) WORD;
-pub extern "ntdll" fn RtlCaptureContext(ContextRecord: *CONTEXT) callconv(.winapi) void;
+) callconv(WINAPI) WORD;
+pub extern "ntdll" fn RtlCaptureContext(ContextRecord: *CONTEXT) callconv(WINAPI) void;
 pub extern "ntdll" fn RtlLookupFunctionEntry(
     ControlPc: DWORD64,
     ImageBase: *DWORD64,
     HistoryTable: *UNWIND_HISTORY_TABLE,
-) callconv(.winapi) ?*RUNTIME_FUNCTION;
+) callconv(WINAPI) ?*RUNTIME_FUNCTION;
 pub extern "ntdll" fn RtlVirtualUnwind(
     HandlerType: DWORD,
     ImageBase: DWORD64,
@@ -92,34 +92,33 @@ pub extern "ntdll" fn RtlVirtualUnwind(
     HandlerData: *?PVOID,
     EstablisherFrame: *DWORD64,
     ContextPointers: ?*KNONVOLATILE_CONTEXT_POINTERS,
-) callconv(.winapi) *EXCEPTION_ROUTINE;
-pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) LARGE_INTEGER;
+) callconv(WINAPI) *EXCEPTION_ROUTINE;
 pub extern "ntdll" fn NtQueryInformationFile(
     FileHandle: HANDLE,
     IoStatusBlock: *IO_STATUS_BLOCK,
     FileInformation: *anyopaque,
     Length: ULONG,
     FileInformationClass: FILE_INFORMATION_CLASS,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtSetInformationFile(
     FileHandle: HANDLE,
     IoStatusBlock: *IO_STATUS_BLOCK,
     FileInformation: PVOID,
     Length: ULONG,
     FileInformationClass: FILE_INFORMATION_CLASS,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtQueryAttributesFile(
     ObjectAttributes: *OBJECT_ATTRIBUTES,
     FileAttributes: *FILE_BASIC_INFORMATION,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
-pub extern "ntdll" fn RtlQueryPerformanceCounter(PerformanceCounter: *LARGE_INTEGER) callconv(.winapi) BOOL;
-pub extern "ntdll" fn RtlQueryPerformanceFrequency(PerformanceFrequency: *LARGE_INTEGER) callconv(.winapi) BOOL;
+pub extern "ntdll" fn RtlQueryPerformanceCounter(PerformanceCounter: *LARGE_INTEGER) callconv(WINAPI) BOOL;
+pub extern "ntdll" fn RtlQueryPerformanceFrequency(PerformanceFrequency: *LARGE_INTEGER) callconv(WINAPI) BOOL;
 pub extern "ntdll" fn NtQueryPerformanceCounter(
     PerformanceCounter: *LARGE_INTEGER,
     PerformanceFrequency: ?*LARGE_INTEGER,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtCreateFile(
     FileHandle: *HANDLE,
@@ -133,7 +132,7 @@ pub extern "ntdll" fn NtCreateFile(
     CreateOptions: ULONG,
     EaBuffer: ?*anyopaque,
     EaLength: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtCreateSection(
     SectionHandle: *HANDLE,
     DesiredAccess: ACCESS_MASK,
@@ -142,7 +141,7 @@ pub extern "ntdll" fn NtCreateSection(
     SectionPageProtection: ULONG,
     AllocationAttributes: ULONG,
     FileHandle: ?HANDLE,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtMapViewOfSection(
     SectionHandle: HANDLE,
     ProcessHandle: HANDLE,
@@ -154,11 +153,11 @@ pub extern "ntdll" fn NtMapViewOfSection(
     InheritDispostion: SECTION_INHERIT,
     AllocationType: ULONG,
     Win32Protect: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtUnmapViewOfSection(
     ProcessHandle: HANDLE,
     BaseAddress: PVOID,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtDeviceIoControlFile(
     FileHandle: HANDLE,
     Event: ?HANDLE,
@@ -170,7 +169,7 @@ pub extern "ntdll" fn NtDeviceIoControlFile(
     InputBufferLength: ULONG,
     OutputBuffer: ?PVOID,
     OutputBufferLength: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn NtFsControlFile(
     FileHandle: HANDLE,
     Event: ?HANDLE,
@@ -182,15 +181,15 @@ pub extern "ntdll" fn NtFsControlFile(
     InputBufferLength: ULONG,
     OutputBuffer: ?PVOID,
     OutputBufferLength: ULONG,
-) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtClose(Handle: HANDLE) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
+pub extern "ntdll" fn NtClose(Handle: HANDLE) callconv(WINAPI) NTSTATUS;
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U(
     DosPathName: [*:0]const u16,
     NtPathName: *UNICODE_STRING,
     NtFileNamePart: ?*?[*:0]const u16,
     DirectoryInfo: ?*CURDIR,
-) callconv(.winapi) BOOL;
-pub extern "ntdll" fn RtlFreeUnicodeString(UnicodeString: *UNICODE_STRING) callconv(.winapi) void;
+) callconv(WINAPI) BOOL;
+pub extern "ntdll" fn RtlFreeUnicodeString(UnicodeString: *UNICODE_STRING) callconv(WINAPI) void;
 
 /// Returns the number of bytes written to `Buffer`.
 /// If the returned count is larger than `BufferByteLength`, the buffer was too small.
@@ -200,7 +199,7 @@ pub extern "ntdll" fn RtlGetFullPathName_U(
     BufferByteLength: ULONG,
     Buffer: [*]u16,
     ShortName: ?*[*:0]const u16,
-) callconv(.winapi) windows.ULONG;
+) callconv(windows.WINAPI) windows.ULONG;
 
 pub extern "ntdll" fn NtQueryDirectoryFile(
     FileHandle: HANDLE,
@@ -214,30 +213,30 @@ pub extern "ntdll" fn NtQueryDirectoryFile(
     ReturnSingleEntry: BOOLEAN,
     FileName: ?*UNICODE_STRING,
     RestartScan: BOOLEAN,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtCreateKeyedEvent(
     KeyedEventHandle: *HANDLE,
     DesiredAccess: ACCESS_MASK,
     ObjectAttributes: ?PVOID,
     Flags: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtReleaseKeyedEvent(
     EventHandle: ?HANDLE,
     Key: ?*const anyopaque,
     Alertable: BOOLEAN,
     Timeout: ?*const LARGE_INTEGER,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtWaitForKeyedEvent(
     EventHandle: ?HANDLE,
     Key: ?*const anyopaque,
     Alertable: BOOLEAN,
     Timeout: ?*const LARGE_INTEGER,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
-pub extern "ntdll" fn RtlSetCurrentDirectory_U(PathName: *UNICODE_STRING) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn RtlSetCurrentDirectory_U(PathName: *UNICODE_STRING) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtQueryObject(
     Handle: HANDLE,
@@ -245,7 +244,7 @@ pub extern "ntdll" fn NtQueryObject(
     ObjectInformation: PVOID,
     ObjectInformationLength: ULONG,
     ReturnLength: ?*ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtQueryVolumeInformationFile(
     FileHandle: HANDLE,
@@ -253,32 +252,32 @@ pub extern "ntdll" fn NtQueryVolumeInformationFile(
     FsInformation: *anyopaque,
     Length: ULONG,
     FsInformationClass: FS_INFORMATION_CLASS,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn RtlWakeAddressAll(
     Address: ?*const anyopaque,
-) callconv(.winapi) void;
+) callconv(WINAPI) void;
 
 pub extern "ntdll" fn RtlWakeAddressSingle(
     Address: ?*const anyopaque,
-) callconv(.winapi) void;
+) callconv(WINAPI) void;
 
 pub extern "ntdll" fn RtlWaitOnAddress(
     Address: ?*const anyopaque,
     CompareAddress: ?*const anyopaque,
     AddressSize: SIZE_T,
     Timeout: ?*const LARGE_INTEGER,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn RtlEqualUnicodeString(
     String1: *const UNICODE_STRING,
     String2: *const UNICODE_STRING,
     CaseInSensitive: BOOLEAN,
-) callconv(.winapi) BOOLEAN;
+) callconv(WINAPI) BOOLEAN;
 
 pub extern "ntdll" fn RtlUpcaseUnicodeChar(
     SourceCharacter: u16,
-) callconv(.winapi) u16;
+) callconv(WINAPI) u16;
 
 pub extern "ntdll" fn NtLockFile(
     FileHandle: HANDLE,
@@ -291,7 +290,7 @@ pub extern "ntdll" fn NtLockFile(
     Key: ?*ULONG,
     FailImmediately: BOOLEAN,
     ExclusiveLock: BOOLEAN,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtUnlockFile(
     FileHandle: HANDLE,
@@ -299,13 +298,13 @@ pub extern "ntdll" fn NtUnlockFile(
     ByteOffset: *const LARGE_INTEGER,
     Length: *const LARGE_INTEGER,
     Key: ?*ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtOpenKey(
     KeyHandle: *HANDLE,
     DesiredAccess: ACCESS_MASK,
     ObjectAttributes: OBJECT_ATTRIBUTES,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn RtlQueryRegistryValues(
     RelativeTo: ULONG,
@@ -313,7 +312,7 @@ pub extern "ntdll" fn RtlQueryRegistryValues(
     QueryTable: [*]RTL_QUERY_REGISTRY_TABLE,
     Context: ?*anyopaque,
     Environment: ?*anyopaque,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtReadVirtualMemory(
     ProcessHandle: HANDLE,
@@ -321,7 +320,7 @@ pub extern "ntdll" fn NtReadVirtualMemory(
     Buffer: LPVOID,
     NumberOfBytesToRead: SIZE_T,
     NumberOfBytesRead: ?*SIZE_T,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtWriteVirtualMemory(
     ProcessHandle: HANDLE,
@@ -329,7 +328,7 @@ pub extern "ntdll" fn NtWriteVirtualMemory(
     Buffer: LPCVOID,
     NumberOfBytesToWrite: SIZE_T,
     NumberOfBytesWritten: ?*SIZE_T,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn NtProtectVirtualMemory(
     ProcessHandle: HANDLE,
@@ -337,11 +336,11 @@ pub extern "ntdll" fn NtProtectVirtualMemory(
     NumberOfBytesToProtect: *SIZE_T,
     NewAccessProtection: ULONG,
     OldAccessProtection: *ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;
 
 pub extern "ntdll" fn RtlExitUserProcess(
     ExitStatus: u32,
-) callconv(.winapi) noreturn;
+) callconv(WINAPI) noreturn;
 
 pub extern "ntdll" fn NtCreateNamedPipeFile(
     FileHandle: *HANDLE,
@@ -358,20 +357,4 @@ pub extern "ntdll" fn NtCreateNamedPipeFile(
     InboundQuota: ULONG,
     OutboundQuota: ULONG,
     DefaultTimeout: *LARGE_INTEGER,
-) callconv(.winapi) NTSTATUS;
-
-pub extern "ntdll" fn NtAllocateVirtualMemory(
-    ProcessHandle: HANDLE,
-    BaseAddress: ?*PVOID,
-    ZeroBits: ULONG_PTR,
-    RegionSize: ?*SIZE_T,
-    AllocationType: ULONG,
-    PageProtection: ULONG,
-) callconv(.winapi) NTSTATUS;
-
-pub extern "ntdll" fn NtFreeVirtualMemory(
-    ProcessHandle: HANDLE,
-    BaseAddress: ?*PVOID,
-    RegionSize: *SIZE_T,
-    FreeType: ULONG,
-) callconv(.winapi) NTSTATUS;
+) callconv(WINAPI) NTSTATUS;

@@ -8,9 +8,11 @@
 
 #include "ARMHazardRecognizer.h"
 #include "ARMBaseInstrInfo.h"
+#include "ARMBaseRegisterInfo.h"
 #include "ARMSubtarget.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
@@ -189,7 +191,7 @@ ARMBankConflictHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   auto BasePseudoVal0 = MO0->getPseudoValue();
   int64_t Offset0 = 0;
 
-  if (!MO0->getSize().hasValue() || MO0->getSize().getValue() > 4)
+  if (MO0->getSize() > 4)
     return NoHazard;
 
   bool SPvalid = false;
@@ -257,8 +259,8 @@ void ARMBankConflictHazardRecognizer::EmitInstruction(SUnit *SU) {
     return;
 
   auto MO = *MI.memoperands().begin();
-  LocationSize Size1 = MO->getSize();
-  if (Size1.hasValue() && Size1.getValue() > 4)
+  uint64_t Size1 = MO->getSize();
+  if (Size1 > 4)
     return;
   Accesses.push_back(&MI);
 }

@@ -31,8 +31,6 @@ public:
   std::vector<Chunk *> addresses;
   std::vector<Chunk *> hints;
   std::vector<Chunk *> dllNames;
-  std::vector<Chunk *> auxIat;
-  std::vector<Chunk *> auxIatCopy;
 };
 
 // Windows-specific.
@@ -42,23 +40,23 @@ public:
   DelayLoadContents(COFFLinkerContext &ctx) : ctx(ctx) {}
   void add(DefinedImportData *sym) { imports.push_back(sym); }
   bool empty() { return imports.empty(); }
-  void create();
+  void create(Defined *helper);
   std::vector<Chunk *> getChunks();
   std::vector<Chunk *> getDataChunks();
   ArrayRef<Chunk *> getCodeChunks() { return thunks; }
   ArrayRef<Chunk *> getCodePData() { return pdata; }
   ArrayRef<Chunk *> getCodeUnwindInfo() { return unwindinfo; }
-  ArrayRef<Chunk *> getAuxIat() { return auxIat; }
-  ArrayRef<Chunk *> getAuxIatCopy() { return auxIatCopy; }
 
   uint64_t getDirRVA() { return dirs[0]->getRVA(); }
   uint64_t getDirSize();
 
 private:
   Chunk *newThunkChunk(DefinedImportData *s, Chunk *tailMerge);
-  Chunk *newTailMergeChunk(SymbolTable &symtab, Chunk *dir);
-  Chunk *newTailMergePDataChunk(SymbolTable &symtab, Chunk *tm);
+  Chunk *newTailMergeChunk(Chunk *dir);
+  Chunk *newTailMergePDataChunk(Chunk *tm, Chunk *unwind);
+  Chunk *newTailMergeUnwindInfoChunk();
 
+  Defined *helper;
   std::vector<DefinedImportData *> imports;
   std::vector<Chunk *> dirs;
   std::vector<Chunk *> moduleHandles;
@@ -69,14 +67,24 @@ private:
   std::vector<Chunk *> pdata;
   std::vector<Chunk *> unwindinfo;
   std::vector<Chunk *> dllNames;
-  std::vector<Chunk *> auxIat;
-  std::vector<Chunk *> auxIatCopy;
 
   COFFLinkerContext &ctx;
 };
 
-// Create all chunks for the DLL export table.
-void createEdataChunks(SymbolTable &symtab, std::vector<Chunk *> &chunks);
+// Windows-specific.
+// EdataContents creates all chunks for the DLL export table.
+class EdataContents {
+public:
+  EdataContents(COFFLinkerContext &ctx);
+  std::vector<Chunk *> chunks;
+
+  uint64_t getRVA() { return chunks[0]->getRVA(); }
+  uint64_t getSize() {
+    return chunks.back()->getRVA() + chunks.back()->getSize() - getRVA();
+  }
+
+  COFFLinkerContext &ctx;
+};
 
 } // namespace lld::coff
 

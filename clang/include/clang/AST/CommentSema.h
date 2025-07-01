@@ -80,7 +80,7 @@ public:
   ArrayRef<T> copyArray(ArrayRef<T> Source) {
     if (!Source.empty())
       return Source.copy(Allocator);
-    return {};
+    return std::nullopt;
   }
 
   ParagraphComment *actOnParagraphComment(
@@ -244,7 +244,8 @@ private:
                               StringRef Typo,
                               const TemplateParameterList *TemplateParameters);
 
-  InlineCommandRenderKind getInlineCommandRenderKind(StringRef Name) const;
+  InlineCommandComment::RenderKind
+  getInlineCommandRenderKind(StringRef Name) const;
 };
 
 } // end namespace comments

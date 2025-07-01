@@ -19,7 +19,7 @@ namespace llvm {
 
 class Mips16DAGToDAGISel : public MipsDAGToDAGISel {
 public:
-  explicit Mips16DAGToDAGISel(MipsTargetMachine &TM, CodeGenOptLevel OL)
+  explicit Mips16DAGToDAGISel(MipsTargetMachine &TM, CodeGenOpt::Level OL)
       : MipsDAGToDAGISel(TM, OL) {}
 
 private:
@@ -47,13 +47,8 @@ private:
   void initMips16SPAliasReg(MachineFunction &MF);
 };
 
-class Mips16DAGToDAGISelLegacy : public MipsDAGToDAGISelLegacy {
-public:
-  explicit Mips16DAGToDAGISelLegacy(MipsTargetMachine &TM, CodeGenOptLevel OL);
-};
-
 FunctionPass *createMips16ISelDag(MipsTargetMachine &TM,
-                                  CodeGenOptLevel OptLevel);
+                                  CodeGenOpt::Level OptLevel);
 }
 
 #endif

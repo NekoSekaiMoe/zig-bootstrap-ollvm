@@ -19,9 +19,9 @@ pub export fn entry() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :18:43: error: value of type 'type' ignored
 // :18:43: note: all non-void values must be used
-// :18:43: note: to discard the value, assign it to '_'
+// :18:43: note: this error can be suppressed by assigning the value to '_'

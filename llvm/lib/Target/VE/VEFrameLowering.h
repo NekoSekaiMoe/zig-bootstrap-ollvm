@@ -39,6 +39,7 @@ public:
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I) const override;
 
+  bool hasFP(const MachineFunction &MF) const override;
   bool hasBP(const MachineFunction &MF) const;
   bool hasGOT(const MachineFunction &MF) const;
 
@@ -67,8 +68,6 @@ public:
 
 protected:
   const VESubtarget &STI;
-
-  bool hasFPImpl(const MachineFunction &MF) const override;
 
 private:
   // Returns true if MF is a leaf procedure.

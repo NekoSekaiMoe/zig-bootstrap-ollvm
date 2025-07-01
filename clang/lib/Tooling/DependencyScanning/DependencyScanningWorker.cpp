@@ -9,7 +9,7 @@
 #include "clang/Tooling/DependencyScanning/DependencyScanningWorker.h"
 #include "clang/Basic/DiagnosticDriver.h"
 #include "clang/Basic/DiagnosticFrontend.h"
-#include "clang/Basic/DiagnosticSerialization.h"
+#include "clang/CodeGen/ObjectFilePCHContainerOperations.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/Job.h"
@@ -20,11 +20,9 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Frontend/Utils.h"
 #include "clang/Lex/PreprocessorOptions.h"
-#include "clang/Serialization/ObjectFilePCHContainerReader.h"
 #include "clang/Tooling/DependencyScanning/DependencyScanningService.h"
 #include "clang/Tooling/DependencyScanning/ModuleDepCollector.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
 #include "llvm/TargetParser/Host.h"
@@ -61,30 +59,6 @@ private:
   DependencyConsumer &C;
 };
 
-static bool checkHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
-                                   const HeaderSearchOptions &ExistingHSOpts,
-                                   DiagnosticsEngine *Diags,
-                                   const LangOptions &LangOpts) {
-  if (LangOpts.Modules) {
-    if (HSOpts.VFSOverlayFiles != ExistingHSOpts.VFSOverlayFiles) {
-      if (Diags) {
-        Diags->Report(diag::warn_pch_vfsoverlay_mismatch);
-        auto VFSNote = [&](int Type, ArrayRef<std::string> VFSOverlays) {
-          if (VFSOverlays.empty()) {
-            Diags->Report(diag::note_pch_vfsoverlay_empty) << Type;
-          } else {
-            std::string Files = llvm::join(VFSOverlays, "\n");
-            Diags->Report(diag::note_pch_vfsoverlay_files) << Type << Files;
-          }
-        };
-        VFSNote(0, HSOpts.VFSOverlayFiles);
-        VFSNote(1, ExistingHSOpts.VFSOverlayFiles);
-      }
-    }
-  }
-  return false;
-}
-
 using PrebuiltModuleFilesT = decltype(HeaderSearchOptions::PrebuiltModuleFiles);
 
 /// A listener that collects the imported modules and optionally the input
@@ -92,14 +66,9 @@ using PrebuiltModuleFilesT = decltype(HeaderSearchOptions::PrebuiltModuleFiles);
 class PrebuiltModuleListener : public ASTReaderListener {
 public:
   PrebuiltModuleListener(PrebuiltModuleFilesT &PrebuiltModuleFiles,
-                         llvm::SmallVector<std::string> &NewModuleFiles,
-                         PrebuiltModuleVFSMapT &PrebuiltModuleVFSMap,
-                         const HeaderSearchOptions &HSOpts,
-                         const LangOptions &LangOpts, DiagnosticsEngine &Diags)
+                         llvm::SmallVector<std::string> &NewModuleFiles)
       : PrebuiltModuleFiles(PrebuiltModuleFiles),
-        NewModuleFiles(NewModuleFiles),
-        PrebuiltModuleVFSMap(PrebuiltModuleVFSMap), ExistingHSOpts(HSOpts),
-        ExistingLangOpts(LangOpts), Diags(Diags) {}
+        NewModuleFiles(NewModuleFiles) {}
 
   bool needsImportVisitation() const override { return true; }
 
@@ -108,69 +77,33 @@ public:
       NewModuleFiles.push_back(Filename.str());
   }
 
-  void visitModuleFile(StringRef Filename,
-                       serialization::ModuleKind Kind) override {
-    CurrentFile = Filename;
-  }
-
-  bool ReadHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
-                             bool Complain) override {
-    std::vector<std::string> VFSOverlayFiles = HSOpts.VFSOverlayFiles;
-    PrebuiltModuleVFSMap.insert(
-        {CurrentFile, llvm::StringSet<>(VFSOverlayFiles)});
-    return checkHeaderSearchPaths(
-        HSOpts, ExistingHSOpts, Complain ? &Diags : nullptr, ExistingLangOpts);
-  }
-
 private:
   PrebuiltModuleFilesT &PrebuiltModuleFiles;
   llvm::SmallVector<std::string> &NewModuleFiles;
-  PrebuiltModuleVFSMapT &PrebuiltModuleVFSMap;
-  const HeaderSearchOptions &ExistingHSOpts;
-  const LangOptions &ExistingLangOpts;
-  DiagnosticsEngine &Diags;
-  std::string CurrentFile;
 };
 
 /// Visit the given prebuilt module and collect all of the modules it
 /// transitively imports and contributing input files.
-static bool visitPrebuiltModule(StringRef PrebuiltModuleFilename,
+static void visitPrebuiltModule(StringRef PrebuiltModuleFilename,
                                 CompilerInstance &CI,
-                                PrebuiltModuleFilesT &ModuleFiles,
-                                PrebuiltModuleVFSMapT &PrebuiltModuleVFSMap,
-                                DiagnosticsEngine &Diags) {
+                                PrebuiltModuleFilesT &ModuleFiles) {
   // List of module files to be processed.
-  llvm::SmallVector<std::string> Worklist;
-  PrebuiltModuleListener Listener(ModuleFiles, Worklist, PrebuiltModuleVFSMap,
-                                  CI.getHeaderSearchOpts(), CI.getLangOpts(),
-                                  Diags);
+  llvm::SmallVector<std::string> Worklist{PrebuiltModuleFilename.str()};
+  PrebuiltModuleListener Listener(ModuleFiles, Worklist);
 
-  Listener.visitModuleFile(PrebuiltModuleFilename,
-                           serialization::MK_ExplicitModule);
-  if (ASTReader::readASTFileControlBlock(
-          PrebuiltModuleFilename, CI.getFileManager(), CI.getModuleCache(),
-          CI.getPCHContainerReader(),
-          /*FindModuleFileExtensions=*/false, Listener,
-          /*ValidateDiagnosticOptions=*/false, ASTReader::ARR_OutOfDate))
-    return true;
-
-  while (!Worklist.empty()) {
-    Listener.visitModuleFile(Worklist.back(), serialization::MK_ExplicitModule);
-    if (ASTReader::readASTFileControlBlock(
-            Worklist.pop_back_val(), CI.getFileManager(), CI.getModuleCache(),
-            CI.getPCHContainerReader(),
-            /*FindModuleFileExtensions=*/false, Listener,
-            /*ValidateDiagnosticOptions=*/false))
-      return true;
-  }
-  return false;
+  while (!Worklist.empty())
+    ASTReader::readASTFileControlBlock(
+        Worklist.pop_back_val(), CI.getFileManager(), CI.getModuleCache(),
+        CI.getPCHContainerReader(),
+        /*FindModuleFileExtensions=*/false, Listener,
+        /*ValidateDiagnosticOptions=*/false);
 }
 
 /// Transform arbitrary file name into an object-like file name.
 static std::string makeObjFileName(StringRef FileName) {
   SmallString<128> ObjFileName(FileName);
   llvm::sys::path::replace_extension(ObjFileName, "o");
-  return std::string(ObjFileName);
+  return std::string(ObjFileName.str());
 }
 
 /// Deduce the dependency target based on the output file and input files.
@@ -192,89 +125,8 @@ static void sanitizeDiagOpts(DiagnosticOptions &DiagOpts) {
   DiagOpts.ShowCarets = false;
   // Don't write out diagnostic file.
   DiagOpts.DiagnosticSerializationFile.clear();
-  // Don't emit warnings except for scanning specific warnings.
-  // TODO: It would be useful to add a more principled way to ignore all
-  //       warnings that come from source code. The issue is that we need to
-  //       ignore warnings that could be surpressed by
-  //       `#pragma clang diagnostic`, while still allowing some scanning
-  //       warnings for things we're not ready to turn into errors yet.
-  //       See `test/ClangScanDeps/diagnostic-pragmas.c` for an example.
-  llvm::erase_if(DiagOpts.Warnings, [](StringRef Warning) {
-    return llvm::StringSwitch<bool>(Warning)
-        .Cases("pch-vfs-diff", "error=pch-vfs-diff", false)
-        .StartsWith("no-error=", false)
-        .Default(true);
-  });
-}
-
-// Clang implements -D and -U by splatting text into a predefines buffer. This
-// allows constructs such as `-DFඞ=3 "-D F\u{0D9E} 4 3 2”` to be accepted and
-// define the same macro, or adding C++ style comments before the macro name.
-//
-// This function checks that the first non-space characters in the macro
-// obviously form an identifier that can be uniqued on without lexing. Failing
-// to do this could lead to changing the final definition of a macro.
-//
-// We could set up a preprocessor and actually lex the name, but that's very
-// heavyweight for a situation that will almost never happen in practice.
-static std::optional<StringRef> getSimpleMacroName(StringRef Macro) {
-  StringRef Name = Macro.split("=").first.ltrim(" \t");
-  std::size_t I = 0;
-
-  auto FinishName = [&]() -> std::optional<StringRef> {
-    StringRef SimpleName = Name.slice(0, I);
-    if (SimpleName.empty())
-      return std::nullopt;
-    return SimpleName;
-  };
-
-  for (; I != Name.size(); ++I) {
-    switch (Name[I]) {
-    case '(': // Start of macro parameter list
-    case ' ': // End of macro name
-    case '\t':
-      return FinishName();
-    case '_':
-      continue;
-    default:
-      if (llvm::isAlnum(Name[I]))
-        continue;
-      return std::nullopt;
-    }
-  }
-  return FinishName();
-}
-
-static void canonicalizeDefines(PreprocessorOptions &PPOpts) {
-  using MacroOpt = std::pair<StringRef, std::size_t>;
-  std::vector<MacroOpt> SimpleNames;
-  SimpleNames.reserve(PPOpts.Macros.size());
-  std::size_t Index = 0;
-  for (const auto &M : PPOpts.Macros) {
-    auto SName = getSimpleMacroName(M.first);
-    // Skip optimizing if we can't guarantee we can preserve relative order.
-    if (!SName)
-      return;
-    SimpleNames.emplace_back(*SName, Index);
-    ++Index;
-  }
-
-  llvm::stable_sort(SimpleNames, llvm::less_first());
-  // Keep the last instance of each macro name by going in reverse
-  auto NewEnd = std::unique(
-      SimpleNames.rbegin(), SimpleNames.rend(),
-      [](const MacroOpt &A, const MacroOpt &B) { return A.first == B.first; });
-  SimpleNames.erase(SimpleNames.begin(), NewEnd.base());
-
-  // Apply permutation.
-  decltype(PPOpts.Macros) NewMacros;
-  NewMacros.reserve(SimpleNames.size());
-  for (std::size_t I = 0, E = SimpleNames.size(); I != E; ++I) {
-    std::size_t OriginalIndex = SimpleNames[I].second;
-    // We still emit undefines here as they may be undefining a predefined macro
-    NewMacros.push_back(std::move(PPOpts.Macros[OriginalIndex]));
-  }
-  std::swap(PPOpts.Macros, NewMacros);
+  // Don't emit warnings as errors (and all other warnings too).
+  DiagOpts.IgnoreWarnings = true;
 }
 
 /// A clang tool that runs the preprocessor in a mode that's optimized for
@@ -285,24 +137,21 @@ public:
       StringRef WorkingDirectory, DependencyConsumer &Consumer,
       DependencyActionController &Controller,
       llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS,
-      ScanningOutputFormat Format, ScanningOptimizations OptimizeArgs,
-      bool EagerLoadModules, bool DisableFree,
-      std::optional<StringRef> ModuleName = std::nullopt)
+      ScanningOutputFormat Format, bool OptimizeArgs, bool EagerLoadModules,
+      bool DisableFree, std::optional<StringRef> ModuleName = std::nullopt)
       : WorkingDirectory(WorkingDirectory), Consumer(Consumer),
         Controller(Controller), DepFS(std::move(DepFS)), Format(Format),
         OptimizeArgs(OptimizeArgs), EagerLoadModules(EagerLoadModules),
         DisableFree(DisableFree), ModuleName(ModuleName) {}
 
   bool runInvocation(std::shared_ptr<CompilerInvocation> Invocation,
-                     FileManager *DriverFileMgr,
+                     FileManager *FileMgr,
                      std::shared_ptr<PCHContainerOperations> PCHContainerOps,
                      DiagnosticConsumer *DiagConsumer) override {
     // Make a deep copy of the original Clang invocation.
     CompilerInvocation OriginalInvocation(*Invocation);
     // Restore the value of DisableFree, which may be modified by Tooling.
     OriginalInvocation.getFrontendOpts().DisableFree = DisableFree;
-    if (any(OptimizeArgs & ScanningOptimizations::Macros))
-      canonicalizeDefines(OriginalInvocation.getPreprocessorOpts());
 
     if (Scanned) {
       // Scanning runs once for the first -cc1 invocation in a chain of driver
@@ -322,67 +171,47 @@ public:
 
     // Create the compiler's actual diagnostics engine.
     sanitizeDiagOpts(ScanInstance.getDiagnosticOpts());
-    ScanInstance.createDiagnostics(DriverFileMgr->getVirtualFileSystem(),
-                                   DiagConsumer, /*ShouldOwnClient=*/false);
+    ScanInstance.createDiagnostics(DiagConsumer, /*ShouldOwnClient=*/false);
     if (!ScanInstance.hasDiagnostics())
       return false;
-
-    // Some DiagnosticConsumers require that finish() is called.
-    auto DiagConsumerFinisher =
-        llvm::make_scope_exit([DiagConsumer]() { DiagConsumer->finish(); });
 
     ScanInstance.getPreprocessorOpts().AllowPCHWithDifferentModulesCachePath =
         true;
 
     ScanInstance.getFrontendOpts().GenerateGlobalModuleIndex = false;
     ScanInstance.getFrontendOpts().UseGlobalModuleIndex = false;
-    // This will prevent us compiling individual modules asynchronously since
-    // FileManager is not thread-safe, but it does improve performance for now.
-    ScanInstance.getFrontendOpts().ModulesShareFileManager = true;
+    ScanInstance.getFrontendOpts().ModulesShareFileManager = false;
     ScanInstance.getHeaderSearchOpts().ModuleFormat = "raw";
-    ScanInstance.getHeaderSearchOpts().ModulesIncludeVFSUsage =
-        any(OptimizeArgs & ScanningOptimizations::VFS);
 
+    ScanInstance.setFileManager(FileMgr);
     // Support for virtual file system overlays.
-    auto FS = createVFSFromCompilerInvocation(
+    FileMgr->setVirtualFileSystem(createVFSFromCompilerInvocation(
         ScanInstance.getInvocation(), ScanInstance.getDiagnostics(),
-        DriverFileMgr->getVirtualFileSystemPtr());
+        FileMgr->getVirtualFileSystemPtr()));
 
-    // Use the dependency scanning optimized file system if requested to do so.
-    if (DepFS) {
-      StringRef ModulesCachePath =
-          ScanInstance.getHeaderSearchOpts().ModuleCachePath;
-
-      DepFS->resetBypassedPathPrefix();
-      if (!ModulesCachePath.empty())
-        DepFS->setBypassedPathPrefix(ModulesCachePath);
-
-      ScanInstance.getPreprocessorOpts().DependencyDirectivesForFile =
-          [LocalDepFS = DepFS](FileEntryRef File)
-          -> std::optional<ArrayRef<dependency_directives_scan::Directive>> {
-        if (llvm::ErrorOr<EntryRef> Entry =
-                LocalDepFS->getOrCreateFileSystemEntry(File.getName()))
-          if (LocalDepFS->ensureDirectiveTokensArePopulated(*Entry))
-            return Entry->getDirectiveTokens();
-        return std::nullopt;
-      };
-    }
-
-    // Create a new FileManager to match the invocation's FileSystemOptions.
-    auto *FileMgr = ScanInstance.createFileManager(FS);
     ScanInstance.createSourceManager(*FileMgr);
 
     // Store the list of prebuilt module files into header search options. This
     // will prevent the implicit build to create duplicate modules and will
     // force reuse of the existing prebuilt module files instead.
-    PrebuiltModuleVFSMapT PrebuiltModuleVFSMap;
     if (!ScanInstance.getPreprocessorOpts().ImplicitPCHInclude.empty())
-      if (visitPrebuiltModule(
-              ScanInstance.getPreprocessorOpts().ImplicitPCHInclude,
-              ScanInstance,
-              ScanInstance.getHeaderSearchOpts().PrebuiltModuleFiles,
-              PrebuiltModuleVFSMap, ScanInstance.getDiagnostics()))
-        return false;
+      visitPrebuiltModule(
+          ScanInstance.getPreprocessorOpts().ImplicitPCHInclude, ScanInstance,
+          ScanInstance.getHeaderSearchOpts().PrebuiltModuleFiles);
+
+    // Use the dependency scanning optimized file system if requested to do so.
+    if (DepFS) {
+      llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> LocalDepFS =
+          DepFS;
+      ScanInstance.getPreprocessorOpts().DependencyDirectivesForFile =
+          [LocalDepFS = std::move(LocalDepFS)](FileEntryRef File)
+          -> std::optional<ArrayRef<dependency_directives_scan::Directive>> {
+        if (llvm::ErrorOr<EntryRef> Entry =
+                LocalDepFS->getOrCreateFileSystemEntry(File.getName()))
+          return Entry->getDirectiveTokens();
+        return std::nullopt;
+      };
+    }
 
     // Create the dependency collector that will collect the produced
     // dependencies.
@@ -411,8 +240,8 @@ public:
     case ScanningOutputFormat::Full:
       MDC = std::make_shared<ModuleDepCollector>(
           std::move(Opts), ScanInstance, Consumer, Controller,
-          OriginalInvocation, std::move(PrebuiltModuleVFSMap), OptimizeArgs,
-          EagerLoadModules, Format == ScanningOutputFormat::P1689);
+          OriginalInvocation, OptimizeArgs, EagerLoadModules,
+          Format == ScanningOutputFormat::P1689);
       ScanInstance.addDependencyCollector(MDC);
       break;
     }
@@ -423,36 +252,21 @@ public:
     // TODO: Implement diagnostic bucketing to reduce the impact of strict
     // context hashing.
     ScanInstance.getHeaderSearchOpts().ModulesStrictContextHash = true;
-    ScanInstance.getHeaderSearchOpts().ModulesSerializeOnlyPreprocessor = true;
-    ScanInstance.getHeaderSearchOpts().ModulesSkipDiagnosticOptions = true;
-    ScanInstance.getHeaderSearchOpts().ModulesSkipHeaderSearchPaths = true;
-    ScanInstance.getHeaderSearchOpts().ModulesSkipPragmaDiagnosticMappings =
-        true;
 
     // Avoid some checks and module map parsing when loading PCM files.
     ScanInstance.getPreprocessorOpts().ModulesCheckRelocated = false;
 
     std::unique_ptr<FrontendAction> Action;
 
-    if (Format == ScanningOutputFormat::P1689)
-      Action = std::make_unique<PreprocessOnlyAction>();
-    else if (ModuleName)
+    if (ModuleName)
       Action = std::make_unique<GetDependenciesByModuleNameAction>(*ModuleName);
     else
       Action = std::make_unique<ReadPCHAndPreprocessAction>();
 
-    if (ScanInstance.getDiagnostics().hasErrorOccurred())
-      return false;
-
-    // Each action is responsible for calling finish.
-    DiagConsumerFinisher.release();
     const bool Result = ScanInstance.ExecuteAction(*Action);
 
     if (Result)
       setLastCC1Arguments(std::move(OriginalInvocation));
-
-    // Propagate the statistics to the parent FileManager.
-    DriverFileMgr->AddStats(ScanInstance.getFileManager());
 
     return Result;
   }
@@ -481,7 +295,7 @@ private:
   DependencyActionController &Controller;
   llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS;
   ScanningOutputFormat Format;
-  ScanningOptimizations OptimizeArgs;
+  bool OptimizeArgs;
   bool EagerLoadModules;
   bool DisableFree;
   std::optional<StringRef> ModuleName;
@@ -496,7 +310,7 @@ private:
 DependencyScanningWorker::DependencyScanningWorker(
     DependencyScanningService &Service,
     llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS)
-    : Format(Service.getFormat()), OptimizeArgs(Service.getOptimizeArgs()),
+    : Format(Service.getFormat()), OptimizeArgs(Service.canOptimizeArgs()),
       EagerLoadModules(Service.shouldEagerLoadModules()) {
   PCHContainerOps = std::make_shared<PCHContainerOperations>();
   // We need to read object files from PCH built outside the scanner.
@@ -504,9 +318,6 @@ DependencyScanningWorker::DependencyScanningWorker(
       std::make_unique<ObjectFilePCHContainerReader>());
   // The scanner itself writes only raw ast files.
   PCHContainerOps->registerWriter(std::make_unique<RawPCHContainerWriter>());
-
-  if (Service.shouldTraceVFS())
-    FS = llvm::makeIntrusiveRefCnt<llvm::vfs::TracingFileSystem>(std::move(FS));
 
   switch (Service.getMode()) {
   case ScanningMode::DependencyDirectivesScan:
@@ -574,33 +385,10 @@ static bool forEachDriverJob(
   if (!Compilation)
     return false;
 
-  if (Compilation->containsError())
-    return false;
-
   for (const driver::Command &Job : Compilation->getJobs()) {
     if (!Callback(Job))
       return false;
   }
-  return true;
-}
-
-static bool createAndRunToolInvocation(
-    std::vector<std::string> CommandLine, DependencyScanningAction &Action,
-    FileManager &FM,
-    std::shared_ptr<clang::PCHContainerOperations> &PCHContainerOps,
-    DiagnosticsEngine &Diags, DependencyConsumer &Consumer) {
-
-  // Save executable path before providing CommandLine to ToolInvocation
-  std::string Executable = CommandLine[0];
-  ToolInvocation Invocation(std::move(CommandLine), &Action, &FM,
-                            PCHContainerOps);
-  Invocation.setDiagnosticConsumer(Diags.getClient());
-  Invocation.setDiagnosticOptions(&Diags.getDiagnosticOptions());
-  if (!Invocation.run())
-    return false;
-
-  std::vector<std::string> Args = Action.takeLastCC1Arguments();
-  Consumer.handleBuildCommand({std::move(Executable), std::move(Args)});
   return true;
 }
 
@@ -641,8 +429,9 @@ bool DependencyScanningWorker::computeDependencies(
       ModifiedCommandLine ? *ModifiedCommandLine : CommandLine;
   auto &FinalFS = ModifiedFS ? ModifiedFS : BaseFS;
 
-  auto FileMgr =
-      llvm::makeIntrusiveRefCnt<FileManager>(FileSystemOptions{}, FinalFS);
+  FileSystemOptions FSOpts;
+  FSOpts.WorkingDir = WorkingDirectory.str();
+  auto FileMgr = llvm::makeIntrusiveRefCnt<FileManager>(FSOpts, FinalFS);
 
   std::vector<const char *> FinalCCommandLine(FinalCommandLine.size(), nullptr);
   llvm::transform(FinalCommandLine, FinalCCommandLine.begin(),
@@ -651,7 +440,7 @@ bool DependencyScanningWorker::computeDependencies(
   auto DiagOpts = CreateAndPopulateDiagOpts(FinalCCommandLine);
   sanitizeDiagOpts(*DiagOpts);
   IntrusiveRefCntPtr<DiagnosticsEngine> Diags =
-      CompilerInstance::createDiagnostics(*FinalFS, DiagOpts.release(), &DC,
+      CompilerInstance::createDiagnostics(DiagOpts.release(), &DC,
                                           /*ShouldOwnClient=*/false);
 
   // Although `Diagnostics` are used only for command-line parsing, the
@@ -665,37 +454,37 @@ bool DependencyScanningWorker::computeDependencies(
   DependencyScanningAction Action(WorkingDirectory, Consumer, Controller, DepFS,
                                   Format, OptimizeArgs, EagerLoadModules,
                                   DisableFree, ModuleName);
+  bool Success = forEachDriverJob(
+      FinalCommandLine, *Diags, *FileMgr, [&](const driver::Command &Cmd) {
+        if (StringRef(Cmd.getCreator().getName()) != "clang") {
+          // Non-clang command. Just pass through to the dependency
+          // consumer.
+          Consumer.handleBuildCommand(
+              {Cmd.getExecutable(),
+               {Cmd.getArguments().begin(), Cmd.getArguments().end()}});
+          return true;
+        }
 
-  bool Success = false;
-  if (FinalCommandLine[1] == "-cc1") {
-    Success = createAndRunToolInvocation(FinalCommandLine, Action, *FileMgr,
-                                         PCHContainerOps, *Diags, Consumer);
-  } else {
-    Success = forEachDriverJob(
-        FinalCommandLine, *Diags, *FileMgr, [&](const driver::Command &Cmd) {
-          if (StringRef(Cmd.getCreator().getName()) != "clang") {
-            // Non-clang command. Just pass through to the dependency
-            // consumer.
-            Consumer.handleBuildCommand(
-                {Cmd.getExecutable(),
-                 {Cmd.getArguments().begin(), Cmd.getArguments().end()}});
-            return true;
-          }
+        std::vector<std::string> Argv;
+        Argv.push_back(Cmd.getExecutable());
+        Argv.insert(Argv.end(), Cmd.getArguments().begin(),
+                    Cmd.getArguments().end());
 
-          // Insert -cc1 comand line options into Argv
-          std::vector<std::string> Argv;
-          Argv.push_back(Cmd.getExecutable());
-          Argv.insert(Argv.end(), Cmd.getArguments().begin(),
-                      Cmd.getArguments().end());
+        // Create an invocation that uses the underlying file
+        // system to ensure that any file system requests that
+        // are made by the driver do not go through the
+        // dependency scanning filesystem.
+        ToolInvocation Invocation(std::move(Argv), &Action, &*FileMgr,
+                                  PCHContainerOps);
+        Invocation.setDiagnosticConsumer(Diags->getClient());
+        Invocation.setDiagnosticOptions(&Diags->getDiagnosticOptions());
+        if (!Invocation.run())
+          return false;
 
-          // Create an invocation that uses the underlying file
-          // system to ensure that any file system requests that
-          // are made by the driver do not go through the
-          // dependency scanning filesystem.
-          return createAndRunToolInvocation(std::move(Argv), Action, *FileMgr,
-                                            PCHContainerOps, *Diags, Consumer);
-        });
-  }
+        std::vector<std::string> Args = Action.takeLastCC1Arguments();
+        Consumer.handleBuildCommand({Cmd.getExecutable(), std::move(Args)});
+        return true;
+      });
 
   if (Success && !Action.hasScanned())
     Diags->Report(diag::err_fe_expected_compiler_job)

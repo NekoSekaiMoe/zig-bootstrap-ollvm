@@ -310,44 +310,10 @@ fn expectEqualTokens(expected_token: Token, actual_token: Token) !void {
         .number => |expected_value| {
             try std.testing.expectEqualStrings(expected_value, actual_token.number);
         },
-        .allocated_number => |expected_value| {
-            try std.testing.expectEqualStrings(expected_value, actual_token.allocated_number);
-        },
-        .partial_number => |expected_value| {
-            try std.testing.expectEqualStrings(expected_value, actual_token.partial_number);
-        },
-
         .string => |expected_value| {
             try std.testing.expectEqualStrings(expected_value, actual_token.string);
         },
-        .allocated_string => |expected_value| {
-            try std.testing.expectEqualStrings(expected_value, actual_token.allocated_string);
-        },
-        .partial_string => |expected_value| {
-            try std.testing.expectEqualStrings(expected_value, actual_token.partial_string);
-        },
-        .partial_string_escaped_1 => |expected_value| {
-            try std.testing.expectEqualStrings(&expected_value, &actual_token.partial_string_escaped_1);
-        },
-        .partial_string_escaped_2 => |expected_value| {
-            try std.testing.expectEqualStrings(&expected_value, &actual_token.partial_string_escaped_2);
-        },
-        .partial_string_escaped_3 => |expected_value| {
-            try std.testing.expectEqualStrings(&expected_value, &actual_token.partial_string_escaped_3);
-        },
-        .partial_string_escaped_4 => |expected_value| {
-            try std.testing.expectEqualStrings(&expected_value, &actual_token.partial_string_escaped_4);
-        },
-
-        .object_begin,
-        .object_end,
-        .array_begin,
-        .array_end,
-        .true,
-        .false,
-        .null,
-        .end_of_document,
-        => {},
+        else => {},
     }
 }
 
@@ -435,13 +401,8 @@ fn testEnsureStackCapacity(do_ensure: bool) !void {
     var fail_alloc = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
     const failing_allocator = fail_alloc.allocator();
 
-    const nestings = 2049; // intentionally not a power of 2.
-    var input_string: std.ArrayListUnmanaged(u8) = .empty;
-    try input_string.appendNTimes(std.testing.allocator, '[', nestings);
-    try input_string.appendNTimes(std.testing.allocator, ']', nestings);
-    defer input_string.deinit(std.testing.allocator);
-
-    var scanner = JsonScanner.initCompleteInput(failing_allocator, input_string.items);
+    const nestings = 999; // intentionally not a power of 2.
+    var scanner = JsonScanner.initCompleteInput(failing_allocator, "[" ** nestings ++ "]" ** nestings);
     defer scanner.deinit();
 
     if (do_ensure) {

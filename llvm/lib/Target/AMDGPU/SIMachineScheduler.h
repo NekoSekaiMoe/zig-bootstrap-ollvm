@@ -81,8 +81,8 @@ class SIScheduleBlock {
   // Note that some registers are not 32 bits,
   // and thus the pressure is not equal
   // to the number of live registers.
-  std::set<Register> LiveInRegs;
-  std::set<Register> LiveOutRegs;
+  std::set<unsigned> LiveInRegs;
+  std::set<unsigned> LiveOutRegs;
 
   bool Scheduled = false;
   bool HighLatencyBlock = false;
@@ -120,8 +120,8 @@ public:
   ArrayRef<std::pair<SIScheduleBlock*, SIScheduleBlockLinkKind>>
     getSuccs() const { return Succs; }
 
-  unsigned Height = 0;  // Maximum topdown path length to block without outputs
-  unsigned Depth = 0;   // Maximum bottomup path length to block without inputs
+  unsigned Height;  // Maximum topdown path length to block without outputs
+  unsigned Depth;   // Maximum bottomup path length to block without inputs
 
   unsigned getNumHighLatencySuccessors() const {
     return NumHighLatencySuccessors;
@@ -157,8 +157,8 @@ public:
     return InternalAdditionalPressure;
   }
 
-  std::set<Register> &getInRegs() { return LiveInRegs; }
-  std::set<Register> &getOutRegs() { return LiveOutRegs; }
+  std::set<unsigned> &getInRegs() { return LiveInRegs; }
+  std::set<unsigned> &getOutRegs() { return LiveOutRegs; }
 
   void printDebug(bool Full);
 
@@ -320,10 +320,10 @@ class SIScheduleBlockScheduler {
   SISchedulerBlockSchedulerVariant Variant;
   std::vector<SIScheduleBlock*> Blocks;
 
-  std::vector<std::map<Register, unsigned>> LiveOutRegsNumUsages;
-  std::set<Register> LiveRegs;
+  std::vector<std::map<unsigned, unsigned>> LiveOutRegsNumUsages;
+  std::set<unsigned> LiveRegs;
   // Num of schedulable unscheduled blocks reading the register.
-  std::map<Register, unsigned> LiveRegsConsumers;
+  std::map<unsigned, unsigned> LiveRegsConsumers;
 
   std::vector<unsigned> LastPosHighLatencyParentScheduled;
   int LastPosWaitedHighLatency;
@@ -389,15 +389,15 @@ private:
                             SIBlockSchedCandidate &TryCand);
   SIScheduleBlock *pickBlock();
 
-  void addLiveRegs(std::set<Register> &Regs);
-  void decreaseLiveRegs(SIScheduleBlock *Block, std::set<Register> &Regs);
+  void addLiveRegs(std::set<unsigned> &Regs);
+  void decreaseLiveRegs(SIScheduleBlock *Block, std::set<unsigned> &Regs);
   void releaseBlockSuccs(SIScheduleBlock *Parent);
   void blockScheduled(SIScheduleBlock *Block);
 
   // Check register pressure change
   // by scheduling a block with these LiveIn and LiveOut.
-  std::vector<int> checkRegUsageImpact(std::set<Register> &InRegs,
-                                       std::set<Register> &OutRegs);
+  std::vector<int> checkRegUsageImpact(std::set<unsigned> &InRegs,
+                                       std::set<unsigned> &OutRegs);
 
   void schedule();
 };
@@ -462,8 +462,8 @@ public:
                                                      unsigned &VgprUsage,
                                                      unsigned &SgprUsage);
 
-  std::set<Register> getInRegs() {
-    std::set<Register> InRegs;
+  std::set<unsigned> getInRegs() {
+    std::set<unsigned> InRegs;
     for (const auto &RegMaskPair : RPTracker.getPressure().LiveInRegs) {
       InRegs.insert(RegMaskPair.RegUnit);
     }

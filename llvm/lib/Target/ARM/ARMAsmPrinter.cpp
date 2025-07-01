@@ -17,11 +17,13 @@
 #include "ARMMachineFunctionInfo.h"
 #include "ARMTargetMachine.h"
 #include "ARMTargetObjectFile.h"
+#include "MCTargetDesc/ARMAddressingModes.h"
 #include "MCTargetDesc/ARMInstPrinter.h"
 #include "MCTargetDesc/ARMMCExpr.h"
 #include "TargetInfo/ARMTargetInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/IR/Constants.h"
@@ -134,13 +136,13 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   else if (F.hasOptSize())
     // For small size, but speed and debugging illusion preserved
     OptimizationGoal = 3;
-  else if (TM.getOptLevel() == CodeGenOptLevel::Aggressive)
+  else if (TM.getOptLevel() == CodeGenOpt::Aggressive)
     // Aggressively for speed, small size and debug illusion sacrificed
     OptimizationGoal = 2;
-  else if (TM.getOptLevel() > CodeGenOptLevel::None)
+  else if (TM.getOptLevel() > CodeGenOpt::None)
     // For speed, but small size and good debug illusion preserved
     OptimizationGoal = 1;
-  else // TM.getOptLevel() == CodeGenOptLevel::None
+  else // TM.getOptLevel() == CodeGenOpt::None
     // For good debugging, but speed and small size preserved
     OptimizationGoal = 5;
 
@@ -151,9 +153,9 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
     OptimizationGoals = 0;
 
   if (Subtarget->isTargetCOFF()) {
-    bool Local = F.hasLocalLinkage();
-    COFF::SymbolStorageClass Scl =
-        Local ? COFF::IMAGE_SYM_CLASS_STATIC : COFF::IMAGE_SYM_CLASS_EXTERNAL;
+    bool Internal = F.hasInternalLinkage();
+    COFF::SymbolStorageClass Scl = Internal ? COFF::IMAGE_SYM_CLASS_STATIC
+                                            : COFF::IMAGE_SYM_CLASS_EXTERNAL;
     int Type = COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT;
 
     OutStreamer->beginCOFFSymbolDef(CurrentFnSym);
@@ -359,26 +361,25 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
       const MachineOperand &FlagsOP = MI->getOperand(OpNum - 1);
       if (!FlagsOP.isImm())
         return true;
-      InlineAsm::Flag F(FlagsOP.getImm());
+      unsigned Flags = FlagsOP.getImm();
 
       // This operand may not be the one that actually provides the register. If
       // it's tied to a previous one then we should refer instead to that one
       // for registers and their classes.
       unsigned TiedIdx;
-      if (F.isUseOperandTiedToDef(TiedIdx)) {
+      if (InlineAsm::isUseOperandTiedToDef(Flags, TiedIdx)) {
         for (OpNum = InlineAsm::MIOp_FirstOperand; TiedIdx; --TiedIdx) {
           unsigned OpFlags = MI->getOperand(OpNum).getImm();
-          const InlineAsm::Flag F(OpFlags);
-          OpNum += F.getNumOperandRegisters() + 1;
+          OpNum += InlineAsm::getNumOperandRegisters(OpFlags) + 1;
         }
-        F = InlineAsm::Flag(MI->getOperand(OpNum).getImm());
+        Flags = MI->getOperand(OpNum).getImm();
 
         // Later code expects OpNum to be pointing at the register rather than
         // the flags.
         OpNum += 1;
       }
 
-      const unsigned NumVals = F.getNumOperandRegisters();
+      unsigned NumVals = InlineAsm::getNumOperandRegisters(Flags);
       unsigned RC;
       bool FirstHalf;
       const ARMBaseTargetMachine &ATM =
@@ -393,7 +394,7 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
         // ExtraCode[0] == 'R'.
         FirstHalf = !ATM.isLittleEndian();
       const TargetRegisterInfo *TRI = MF->getSubtarget().getRegisterInfo();
-      if (F.hasRegClassConstraint(RC) &&
+      if (InlineAsm::hasRegClassConstraint(Flags, RC) &&
           ARM::GPRPairRegClass.hasSubClassEq(TRI->getRegClass(RC))) {
         if (NumVals != 1)
           return true;
@@ -1116,50 +1117,6 @@ void ARMAsmPrinter::emitJumpTableTBInst(const MachineInstr *MI,
   emitAlignment(Align(2));
 }
 
-std::tuple<const MCSymbol *, uint64_t, const MCSymbol *,
-           codeview::JumpTableEntrySize>
-ARMAsmPrinter::getCodeViewJumpTableInfo(int JTI,
-                                        const MachineInstr *BranchInstr,
-                                        const MCSymbol *BranchLabel) const {
-  codeview::JumpTableEntrySize EntrySize;
-  const MCSymbol *BaseLabel;
-  uint64_t BaseOffset = 0;
-  switch (BranchInstr->getOpcode()) {
-  case ARM::BR_JTadd:
-  case ARM::BR_JTr:
-  case ARM::tBR_JTr:
-    // Word relative to the jump table address.
-    EntrySize = codeview::JumpTableEntrySize::UInt32;
-    BaseLabel = GetARMJTIPICJumpTableLabel(JTI);
-    break;
-  case ARM::tTBH_JT:
-  case ARM::t2TBH_JT:
-    // half-word shifted left, relative to *after* the branch instruction.
-    EntrySize = codeview::JumpTableEntrySize::UInt16ShiftLeft;
-    BranchLabel = GetCPISymbol(BranchInstr->getOperand(3).getImm());
-    BaseLabel = BranchLabel;
-    BaseOffset = 4;
-    break;
-  case ARM::tTBB_JT:
-  case ARM::t2TBB_JT:
-    // byte shifted left, relative to *after* the branch instruction.
-    EntrySize = codeview::JumpTableEntrySize::UInt8ShiftLeft;
-    BranchLabel = GetCPISymbol(BranchInstr->getOperand(3).getImm());
-    BaseLabel = BranchLabel;
-    BaseOffset = 4;
-    break;
-  case ARM::t2BR_JT:
-    // Direct jump.
-    BaseLabel = nullptr;
-    EntrySize = codeview::JumpTableEntrySize::Pointer;
-    break;
-  default:
-    llvm_unreachable("Unknown jump table instruction");
-  }
-
-  return std::make_tuple(BaseLabel, BaseOffset, BranchLabel, EntrySize);
-}
-
 void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
   assert(MI->getFlag(MachineInstr::FrameSetup) &&
       "Only instruction which are involved into frame setup code are allowed");
@@ -1217,7 +1174,7 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
     assert(DstReg == ARM::SP &&
            "Only stack pointer as a destination reg is supported");
 
-    SmallVector<MCRegister, 4> RegList;
+    SmallVector<unsigned, 4> RegList;
     // Skip src & dst reg, and pred ops.
     unsigned StartOp = 2 + 2;
     // Use all the operands.
@@ -1309,10 +1266,6 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
       default:
         MI->print(errs());
         llvm_unreachable("Unsupported opcode for unwinding information");
-      case ARM::tLDRspi:
-        // Used to restore LR in a prologue which uses it as a temporary, has
-        // no effect on unwind tables.
-        return;
       case ARM::MOVr:
       case ARM::tMOVr:
         Offset = 0;
@@ -1449,10 +1402,8 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
     EmitUnwindingInstruction(MI);
 
   // Do any auto-generated pseudo lowerings.
-  if (MCInst OutInst; lowerPseudoInstExpansion(MI, OutInst)) {
-    EmitToStreamer(*OutStreamer, OutInst);
+  if (emitPseudoExpansionLowering(*OutStreamer, MI))
     return;
-  }
 
   assert(!convertAddSubFlagsOpcode(MI->getOpcode()) &&
          "Pseudo flag setting opcode should be expanded early");

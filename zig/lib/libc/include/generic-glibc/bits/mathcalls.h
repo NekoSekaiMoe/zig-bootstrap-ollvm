@@ -1,5 +1,5 @@
 /* Prototype declarations for math functions; helper file for <math.h>.
-   Copyright (C) 1996-2025 Free Software Foundation, Inc.
+   Copyright (C) 1996-2023 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -65,24 +65,6 @@ __MATHCALL_VEC (sin,, (_Mdouble_ __x));
 /* Tangent of X.  */
 __MATHCALL_VEC (tan,, (_Mdouble_ __x));
 
-#if __GLIBC_USE (IEC_60559_FUNCS_EXT_C23)
-/* Arc cosine of X, divided by pi.  */
-__MATHCALL (acospi,, (_Mdouble_ __x));
-/* Arc sine of X, divided by pi.  */
-__MATHCALL (asinpi,, (_Mdouble_ __x));
-/* Arc tangent of X, divided by pi.  */
-__MATHCALL (atanpi,, (_Mdouble_ __x));
-/* Arc tangent of Y/X, divided by pi.  */
-__MATHCALL (atan2pi,, (_Mdouble_ __y, _Mdouble_ __x));
-
-/* Cosine of pi * X.  */
-__MATHCALL_VEC (cospi,, (_Mdouble_ __x));
-/* Sine of pi * X.  */
-__MATHCALL_VEC (sinpi,, (_Mdouble_ __x));
-/* Tangent of pi * X.  */
-__MATHCALL_VEC (tanpi,, (_Mdouble_ __x));
-#endif
-
 /* Hyperbolic functions.  */
 
 /* Hyperbolic cosine of X.  */
@@ -127,24 +109,9 @@ __MATHCALL_VEC (log10,, (_Mdouble_ __x));
 /* Break VALUE into integral and fractional parts.  */
 __MATHCALL (modf,, (_Mdouble_ __x, _Mdouble_ *__iptr)) __nonnull ((2));
 
-#if __GLIBC_USE (IEC_60559_FUNCS_EXT_C23)
+#if __GLIBC_USE (IEC_60559_FUNCS_EXT_C2X)
 /* Compute exponent to base ten.  */
 __MATHCALL_VEC (exp10,, (_Mdouble_ __x));
-
-/* Return exp2(X) - 1.  */
-__MATHCALL (exp2m1,, (_Mdouble_ __x));
-
-/* Return exp10(X) - 1.  */
-__MATHCALL (exp10m1,, (_Mdouble_ __x));
-
-/* Return log2(1 + X).  */
-__MATHCALL (log2p1,, (_Mdouble_ __x));
-
-/* Return log10(1 + X).  */
-__MATHCALL (log10p1,, (_Mdouble_ __x));
-
-/* Return log(1 + X).  */
-__MATHCALL_VEC (logp1,, (_Mdouble_ __x));
 #endif
 
 #if defined __USE_XOPEN_EXTENDED || defined __USE_ISOC99
@@ -297,7 +264,7 @@ __MATHCALL (nextafter,, (_Mdouble_ __x, _Mdouble_ __y));
 __MATHCALL (nexttoward,, (_Mdouble_ __x, long double __y));
 # endif
 
-# if __GLIBC_USE (IEC_60559_BFP_EXT_C23) || __MATH_DECLARING_FLOATN
+# if __GLIBC_USE (IEC_60559_BFP_EXT_C2X) || __MATH_DECLARING_FLOATN
 /* Return X - epsilon.  */
 __MATHCALL (nextdown,, (_Mdouble_ __x));
 /* Return X + epsilon.  */
@@ -316,7 +283,7 @@ __MATHCALL (scalbn,, (_Mdouble_ __x, int __n));
 __MATHDECL (int,ilogb,, (_Mdouble_ __x));
 #endif
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C23) || __MATH_DECLARING_FLOATN
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X) || __MATH_DECLARING_FLOATN
 /* Like ilogb, but returning long int.  */
 __MATHDECL (long int, llogb,, (_Mdouble_ __x));
 #endif
@@ -361,7 +328,7 @@ __MATHDECL (long long int,llround,, (_Mdouble_ __x));
 /* Return positive difference between X and Y.  */
 __MATHCALL (fdim,, (_Mdouble_ __x, _Mdouble_ __y));
 
-# if !__MATH_DECLARING_FLOATN || defined __USE_GNU || !__GLIBC_USE (ISOC23)
+# if !__MATH_DECLARING_FLOATN || defined __USE_GNU || !__GLIBC_USE (ISOC2X)
 /* Return maximum numeric value from X and Y.  */
 __MATHCALLX (fmax,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 
@@ -373,7 +340,7 @@ __MATHCALLX (fmin,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 __MATHCALL (fma,, (_Mdouble_ __x, _Mdouble_ __y, _Mdouble_ __z));
 #endif /* Use ISO C99.  */
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C23) || __MATH_DECLARING_FLOATN
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X) || __MATH_DECLARING_FLOATN
 /* Round X to nearest integer value, rounding halfway cases to even.  */
 __MATHCALLX (roundeven,, (_Mdouble_ __x), (__const__));
 
@@ -405,7 +372,7 @@ __MATHDECL_1 (int, canonicalize,, (_Mdouble_ *__cx, const _Mdouble_ *__x));
 
 #if (__GLIBC_USE (IEC_60559_BFP_EXT)				\
      || (__MATH_DECLARING_FLOATN				\
-	 && (defined __USE_GNU || !__GLIBC_USE (ISOC23))))
+	 && (defined __USE_GNU || !__GLIBC_USE (ISOC2X))))
 /* Return value with maximum magnitude.  */
 __MATHCALLX (fmaxmag,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 
@@ -413,7 +380,7 @@ __MATHCALLX (fmaxmag,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 __MATHCALLX (fminmag,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 #endif
 
-#if __GLIBC_USE (ISOC23)
+#if __GLIBC_USE (ISOC2X)
 /* Return maximum value from X and Y.  */
 __MATHCALLX (fmaximum,, (_Mdouble_ __x, _Mdouble_ __y), (__const__));
 

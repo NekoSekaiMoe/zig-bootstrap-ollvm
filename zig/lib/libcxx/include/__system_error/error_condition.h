@@ -16,6 +16,7 @@
 #include <__functional/unary_function.h>
 #include <__system_error/errc.h>
 #include <__system_error/error_category.h>
+#include <cstddef>
 #include <string>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -57,8 +58,9 @@ public:
       : __val_(__val),
         __cat_(&__cat) {}
 
-  template <class _Ep, __enable_if_t<is_error_condition_enum<_Ep>::value, int> = 0>
-  _LIBCPP_HIDE_FROM_ABI error_condition(_Ep __e) _NOEXCEPT {
+  template <class _Ep>
+  _LIBCPP_HIDE_FROM_ABI
+  error_condition(_Ep __e, typename enable_if<is_error_condition_enum<_Ep>::value>::type* = nullptr) _NOEXCEPT {
     using __adl_only::make_error_condition;
     *this = make_error_condition(__e);
   }
@@ -68,8 +70,9 @@ public:
     __cat_ = &__cat;
   }
 
-  template <class _Ep, __enable_if_t<is_error_condition_enum<_Ep>::value, int> = 0>
-  _LIBCPP_HIDE_FROM_ABI error_condition& operator=(_Ep __e) _NOEXCEPT {
+  template <class _Ep>
+  _LIBCPP_HIDE_FROM_ABI typename enable_if< is_error_condition_enum<_Ep>::value, error_condition& >::type
+  operator=(_Ep __e) _NOEXCEPT {
     using __adl_only::make_error_condition;
     *this = make_error_condition(__e);
     return *this;

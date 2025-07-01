@@ -16,5 +16,5 @@ pub fn main() !void {
     x += buffer[2];
 }
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

@@ -17,7 +17,6 @@
 #define REL_DTPMOD      R_RISCV_TLS_DTPMOD64
 #define REL_DTPOFF      R_RISCV_TLS_DTPREL64
 #define REL_TPOFF       R_RISCV_TLS_TPREL64
-#define REL_TLSDESC     R_RISCV_TLSDESC
 
 #define CRTJMP(pc,sp) __asm__ __volatile__( \
 	"mv sp, %1 ; jr %0" : : "r"(pc), "r"(sp) : "memory" )

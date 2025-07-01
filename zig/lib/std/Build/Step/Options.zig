@@ -151,7 +151,7 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
     }
 
     switch (@typeInfo(T)) {
-        .array => {
+        .Array => {
             if (name) |some| {
                 try out.print("pub const {}: {s} = ", .{ std.zig.fmtId(some), @typeName(T) });
             }
@@ -171,8 +171,8 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
             }
             return;
         },
-        .pointer => |p| {
-            if (p.size != .slice) {
+        .Pointer => |p| {
+            if (p.size != .Slice) {
                 @compileError("Non-slice pointers are not yet supported in build options");
             }
 
@@ -195,7 +195,7 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
             }
             return;
         },
-        .optional => {
+        .Optional => {
             if (name) |some| {
                 try out.print("pub const {}: {s} = ", .{ std.zig.fmtId(some), @typeName(T) });
             }
@@ -216,12 +216,12 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
             }
             return;
         },
-        .void,
-        .bool,
-        .int,
-        .comptime_int,
-        .float,
-        .null,
+        .Void,
+        .Bool,
+        .Int,
+        .ComptimeInt,
+        .Float,
+        .Null,
         => {
             if (name) |some| {
                 try out.print("pub const {}: {s} = {any};\n", .{ std.zig.fmtId(some), @typeName(T), value });
@@ -230,7 +230,7 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
             }
             return;
         },
-        .@"enum" => |info| {
+        .Enum => |info| {
             try printEnum(options, out, T, info, indent);
 
             if (name) |some| {
@@ -242,7 +242,7 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
             }
             return;
         },
-        .@"struct" => |info| {
+        .Struct => |info| {
             try printStruct(options, out, T, info, indent);
 
             if (name) |some| {
@@ -260,10 +260,10 @@ fn printType(options: *Options, out: anytype, comptime T: type, value: T, indent
 
 fn printUserDefinedType(options: *Options, out: anytype, comptime T: type, indent: u8) !void {
     switch (@typeInfo(T)) {
-        .@"enum" => |info| {
+        .Enum => |info| {
             return try printEnum(options, out, T, info, indent);
         },
-        .@"struct" => |info| {
+        .Struct => |info| {
             return try printStruct(options, out, T, info, indent);
         },
         else => {},
@@ -318,11 +318,13 @@ fn printStruct(options: *Options, out: anytype, comptime T: type, comptime val: 
             try out.print("    {p_}: {s}", .{ std.zig.fmtId(field.name), type_name });
         }
 
-        if (field.defaultValue()) |default_value| {
+        if (field.default_value != null) {
+            const default_value = @as(*field.type, @ptrCast(@alignCast(@constCast(field.default_value.?)))).*;
+
             try out.writeAll(" = ");
             switch (@typeInfo(@TypeOf(default_value))) {
-                .@"enum" => try out.print(".{s},\n", .{@tagName(default_value)}),
-                .@"struct" => |info| {
+                .Enum => try out.print(".{s},\n", .{@tagName(default_value)}),
+                .Struct => |info| {
                     try printStructValue(options, out, info, default_value, indent + 4);
                 },
                 else => try printType(options, out, @TypeOf(default_value), default_value, indent, null),
@@ -357,8 +359,8 @@ fn printStructValue(options: *Options, out: anytype, comptime struct_val: std.bu
 
             const field_name = @field(val, field.name);
             switch (@typeInfo(@TypeOf(field_name))) {
-                .@"enum" => try out.print(".{s},\n", .{@tagName(field_name)}),
-                .@"struct" => |struct_info| {
+                .Enum => try out.print(".{s},\n", .{@tagName(field_name)}),
+                .Struct => |struct_info| {
                     try printStructValue(options, out, struct_info, field_name, indent + 4);
                 },
                 else => try printType(options, out, @TypeOf(field_name), field_name, indent, null),
@@ -388,11 +390,19 @@ pub fn addOptionPath(
     path.addStepDependencies(&options.step);
 }
 
+/// Deprecated: use `addOptionPath(options, name, artifact.getEmittedBin())` instead.
+pub fn addOptionArtifact(options: *Options, name: []const u8, artifact: *Step.Compile) void {
+    return addOptionPath(options, name, artifact.getEmittedBin());
+}
+
 pub fn createModule(options: *Options) *std.Build.Module {
     return options.step.owner.createModule(.{
         .root_source_file = options.getOutput(),
     });
 }
+
+/// deprecated: use `getOutput`
+pub const getSource = getOutput;
 
 /// Returns the main artifact of this Build Step which is a Zig source file
 /// generated from the key-value pairs of the Options.
@@ -400,9 +410,9 @@ pub fn getOutput(options: *Options) LazyPath {
     return .{ .generated = .{ .file = &options.generated_file } };
 }
 
-fn make(step: *Step, make_options: Step.MakeOptions) !void {
-    // This step completes so quickly that no progress reporting is necessary.
-    _ = make_options;
+fn make(step: *Step, prog_node: *std.Progress.Node) !void {
+    // This step completes so quickly that no progress is necessary.
+    _ = prog_node;
 
     const b = step.owner;
     const options: *Options = @fieldParentPtr("step", step);
@@ -414,9 +424,6 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
             item.path.getPath2(b, step),
         );
     }
-    if (!step.inputs.populated()) for (options.args.items) |item| {
-        try step.addWatchInput(item.path);
-    };
 
     const basename = "options.zig";
 
@@ -447,7 +454,7 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
 
             const rand_int = std.crypto.random.int(u64);
             const tmp_sub_path = "tmp" ++ fs.path.sep_str ++
-                std.fmt.hex(rand_int) ++ fs.path.sep_str ++
+                std.Build.hex64(rand_int) ++ fs.path.sep_str ++
                 basename;
             const tmp_sub_path_dirname = fs.path.dirname(tmp_sub_path).?;
 
@@ -513,7 +520,6 @@ test Options {
             .query = .{},
             .result = try std.zig.system.resolveTargetQuery(.{}),
         },
-        .zig_lib_directory = std.Build.Cache.Directory.cwd(),
     };
 
     var builder = try std.Build.create(

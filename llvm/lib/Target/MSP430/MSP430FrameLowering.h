@@ -24,7 +24,6 @@ class MSP430RegisterInfo;
 
 class MSP430FrameLowering : public TargetFrameLowering {
 protected:
-  bool hasFPImpl(const MachineFunction &MF) const override;
 
 public:
   MSP430FrameLowering(const MSP430Subtarget &STI);
@@ -52,6 +51,7 @@ public:
                               MutableArrayRef<CalleeSavedInfo> CSI,
                               const TargetRegisterInfo *TRI) const override;
 
+  bool hasFP(const MachineFunction &MF) const override;
   bool hasReservedCallFrame(const MachineFunction &MF) const override;
   void processFunctionBeforeFrameFinalized(MachineFunction &MF,
                                      RegScavenger *RS = nullptr) const override;

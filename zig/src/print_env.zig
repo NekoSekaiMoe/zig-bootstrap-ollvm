@@ -2,14 +2,13 @@ const std = @import("std");
 const build_options = @import("build_options");
 const introspect = @import("introspect.zig");
 const Allocator = std.mem.Allocator;
-const fatal = std.process.fatal;
+const fatal = @import("main.zig").fatal;
 
 pub fn cmdEnv(arena: Allocator, args: []const []const u8, stdout: std.fs.File.Writer) !void {
     _ = args;
-    const cwd_path = try introspect.getResolvedCwd(arena);
-    const self_exe_path = try std.fs.selfExePathAlloc(arena);
+    const self_exe_path = try introspect.findZigExePath(arena);
 
-    var zig_lib_directory = introspect.findZigLibDirFromSelfExe(arena, cwd_path, self_exe_path) catch |err| {
+    var zig_lib_directory = introspect.findZigLibDirFromSelfExe(arena, self_exe_path) catch |err| {
         fatal("unable to find zig installation directory: {s}\n", .{@errorName(err)});
     };
     defer zig_lib_directory.handle.close();
@@ -48,7 +47,7 @@ pub fn cmdEnv(arena: Allocator, args: []const []const u8, stdout: std.fs.File.Wr
 
     try jws.objectField("env");
     try jws.beginObject();
-    inline for (@typeInfo(std.zig.EnvVar).@"enum".fields) |field| {
+    inline for (@typeInfo(std.zig.EnvVar).Enum.fields) |field| {
         try jws.objectField(field.name);
         try jws.write(try @field(std.zig.EnvVar, field.name).get(arena));
     }

@@ -70,7 +70,7 @@ protected:
   void printRelocation(const SectionRef &Section, const RelocationRef &Reloc);
 
 private:
-  void printSymbols(bool ExtraSymInfo) override;
+  void printSymbols() override;
   void printDynamicSymbols() override { llvm_unreachable("unimplemented"); }
 
   const WasmObjectFile *Obj;
@@ -144,7 +144,7 @@ void WasmDumper::printRelocations() {
   }
 }
 
-void WasmDumper::printSymbols(bool /*ExtraSymInfo*/) {
+void WasmDumper::printSymbols() {
   ListScope Group(W, "Symbols");
 
   for (const SymbolRef &Symbol : Obj->symbols())

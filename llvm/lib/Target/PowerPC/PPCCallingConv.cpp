@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PPCRegisterInfo.h"
 #include "PPCCallingConv.h"
 #include "PPCSubtarget.h"
 #include "PPCCCState.h"
@@ -150,7 +151,7 @@ static bool CC_PPC32_SPE_CustomSplitFP64(unsigned &ValNo, MVT &ValVT,
   static const MCPhysReg LoRegList[] = { PPC::R4, PPC::R6, PPC::R8, PPC::R10 };
 
   // Try to get the first register.
-  MCRegister Reg = State.AllocateReg(HiRegList);
+  unsigned Reg = State.AllocateReg(HiRegList);
   if (!Reg)
     return false;
 
@@ -159,7 +160,7 @@ static bool CC_PPC32_SPE_CustomSplitFP64(unsigned &ValNo, MVT &ValVT,
     if (HiRegList[i] == Reg)
       break;
 
-  MCRegister T = State.AllocateReg(LoRegList[i]);
+  unsigned T = State.AllocateReg(LoRegList[i]);
   (void)T;
   assert(T == LoRegList[i] && "Could not allocate register");
 
@@ -179,7 +180,7 @@ static bool CC_PPC32_SPE_RetF64(unsigned &ValNo, MVT &ValVT,
   static const MCPhysReg LoRegList[] = { PPC::R4 };
 
   // Try to get the first register.
-  MCRegister Reg = State.AllocateReg(HiRegList, LoRegList);
+  unsigned Reg = State.AllocateReg(HiRegList, LoRegList);
   if (!Reg)
     return false;
 

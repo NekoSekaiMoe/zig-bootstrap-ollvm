@@ -13,8 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
-#include "AMDGPUMemoryUtils.h"
 #include "Utils/AMDGPUBaseInfo.h"
+#include "Utils/AMDGPUMemoryUtils.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/UniformityAnalysis.h"
@@ -27,13 +27,13 @@ using namespace llvm;
 
 namespace {
 
-class AMDGPUAnnotateUniformValues
-    : public InstVisitor<AMDGPUAnnotateUniformValues> {
+class AMDGPUAnnotateUniformValues : public FunctionPass,
+                       public InstVisitor<AMDGPUAnnotateUniformValues> {
   UniformityInfo *UA;
   MemorySSA *MSSA;
   AliasAnalysis *AA;
   bool isEntryFunc;
-  bool Changed = false;
+  bool Changed;
 
   void setUniformMetadata(Instruction *I) {
     I->setMetadata("amdgpu.uniform", MDNode::get(I->getContext(), {}));
@@ -46,18 +46,36 @@ class AMDGPUAnnotateUniformValues
   }
 
 public:
-  AMDGPUAnnotateUniformValues(UniformityInfo &UA, MemorySSA &MSSA,
-                              AliasAnalysis &AA, const Function &F)
-      : UA(&UA), MSSA(&MSSA), AA(&AA),
-        isEntryFunc(AMDGPU::isEntryFunctionCC(F.getCallingConv())) {}
+  static char ID;
+  AMDGPUAnnotateUniformValues() :
+    FunctionPass(ID) { }
+  bool doInitialization(Module &M) override;
+  bool runOnFunction(Function &F) override;
+  StringRef getPassName() const override {
+    return "AMDGPU Annotate Uniform Values";
+  }
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<UniformityInfoWrapperPass>();
+    AU.addRequired<MemorySSAWrapperPass>();
+    AU.addRequired<AAResultsWrapperPass>();
+    AU.setPreservesAll();
+ }
 
   void visitBranchInst(BranchInst &I);
   void visitLoadInst(LoadInst &I);
-
-  bool changed() const { return Changed; }
 };
 
 } // End anonymous namespace
+
+INITIALIZE_PASS_BEGIN(AMDGPUAnnotateUniformValues, DEBUG_TYPE,
+                      "Add AMDGPU uniform metadata", false, false)
+INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_END(AMDGPUAnnotateUniformValues, DEBUG_TYPE,
+                    "Add AMDGPU uniform metadata", false, false)
+
+char AMDGPUAnnotateUniformValues::ID = 0;
 
 void AMDGPUAnnotateUniformValues::visitBranchInst(BranchInst &I) {
   if (UA->isUniform(&I))
@@ -82,70 +100,25 @@ void AMDGPUAnnotateUniformValues::visitLoadInst(LoadInst &I) {
     setNoClobberMetadata(&I);
 }
 
-PreservedAnalyses
-AMDGPUAnnotateUniformValuesPass::run(Function &F,
-                                     FunctionAnalysisManager &FAM) {
-  UniformityInfo &UI = FAM.getResult<UniformityInfoAnalysis>(F);
-  MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-  AAResults &AA = FAM.getResult<AAManager>(F);
-
-  AMDGPUAnnotateUniformValues Impl(UI, MSSA, AA, F);
-  Impl.visit(F);
-
-  if (!Impl.changed())
-    return PreservedAnalyses::all();
-
-  PreservedAnalyses PA = PreservedAnalyses::none();
-  // TODO: Should preserve nearly everything
-  PA.preserveSet<CFGAnalyses>();
-  return PA;
+bool AMDGPUAnnotateUniformValues::doInitialization(Module &M) {
+  return false;
 }
 
-class AMDGPUAnnotateUniformValuesLegacy : public FunctionPass {
-public:
-  static char ID;
-
-  AMDGPUAnnotateUniformValuesLegacy() : FunctionPass(ID) {}
-
-  bool doInitialization(Module &M) override { return false; }
-
-  bool runOnFunction(Function &F) override;
-  StringRef getPassName() const override {
-    return "AMDGPU Annotate Uniform Values";
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<UniformityInfoWrapperPass>();
-    AU.addRequired<MemorySSAWrapperPass>();
-    AU.addRequired<AAResultsWrapperPass>();
-    AU.setPreservesAll();
-  }
-};
-
-bool AMDGPUAnnotateUniformValuesLegacy::runOnFunction(Function &F) {
+bool AMDGPUAnnotateUniformValues::runOnFunction(Function &F) {
   if (skipFunction(F))
     return false;
 
-  UniformityInfo &UI =
-      getAnalysis<UniformityInfoWrapperPass>().getUniformityInfo();
-  MemorySSA &MSSA = getAnalysis<MemorySSAWrapperPass>().getMSSA();
-  AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+  UA = &getAnalysis<UniformityInfoWrapperPass>().getUniformityInfo();
+  MSSA = &getAnalysis<MemorySSAWrapperPass>().getMSSA();
+  AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
+  isEntryFunc = AMDGPU::isEntryFunctionCC(F.getCallingConv());
 
-  AMDGPUAnnotateUniformValues Impl(UI, MSSA, AA, F);
-  Impl.visit(F);
-  return Impl.changed();
+  Changed = false;
+  visit(F);
+  return Changed;
 }
 
-INITIALIZE_PASS_BEGIN(AMDGPUAnnotateUniformValuesLegacy, DEBUG_TYPE,
-                      "Add AMDGPU uniform metadata", false, false)
-INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
-INITIALIZE_PASS_END(AMDGPUAnnotateUniformValuesLegacy, DEBUG_TYPE,
-                    "Add AMDGPU uniform metadata", false, false)
-
-char AMDGPUAnnotateUniformValuesLegacy::ID = 0;
-
-FunctionPass *llvm::createAMDGPUAnnotateUniformValuesLegacy() {
-  return new AMDGPUAnnotateUniformValuesLegacy();
+FunctionPass *
+llvm::createAMDGPUAnnotateUniformValues() {
+  return new AMDGPUAnnotateUniformValues();
 }

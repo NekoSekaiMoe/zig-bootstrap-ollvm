@@ -4,7 +4,7 @@ export fn foo(a: *i32) Foo {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :3:12: error: expected pointer type, found 'i32'

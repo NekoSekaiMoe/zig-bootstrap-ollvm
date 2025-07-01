@@ -1,7 +1,6 @@
 __asm__(
 ".text \n"
 ".global " START " \n"
-".type " START ",%function \n"
 START ": \n"
 "	xor %rbp,%rbp \n"
 "	mov %rsp,%rdi \n"

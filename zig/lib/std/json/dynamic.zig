@@ -22,7 +22,6 @@ pub const Array = ArrayList(Value);
 /// Represents any JSON value, potentially containing other JSON values.
 /// A .float value may be an approximation of the original value.
 /// Arbitrary precision numbers can be represented by .number_string values.
-/// See also `std.json.ParseOptions.parse_numbers`.
 pub const Value = union(enum) {
     null,
     bool: bool,
@@ -53,8 +52,8 @@ pub const Value = union(enum) {
     }
 
     pub fn dump(self: Value) void {
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
+        std.debug.getStderrMutex().lock();
+        defer std.debug.getStderrMutex().unlock();
 
         const stderr = std.io.getStdErr().writer();
         stringify(self, .{}, stderr) catch return;
@@ -98,11 +97,7 @@ pub const Value = union(enum) {
                     return try handleCompleteValue(&stack, allocator, source, Value{ .string = s }, options) orelse continue;
                 },
                 .allocated_number => |slice| {
-                    if (options.parse_numbers) {
-                        return try handleCompleteValue(&stack, allocator, source, Value.parseFromNumberSlice(slice), options) orelse continue;
-                    } else {
-                        return try handleCompleteValue(&stack, allocator, source, Value{ .number_string = slice }, options) orelse continue;
-                    }
+                    return try handleCompleteValue(&stack, allocator, source, Value.parseFromNumberSlice(slice), options) orelse continue;
                 },
 
                 .null => return try handleCompleteValue(&stack, allocator, source, .null, options) orelse continue,
@@ -124,7 +119,7 @@ pub const Value = union(enum) {
                 .array_begin => {
                     try stack.append(Value{ .array = Array.init(allocator) });
                 },
-                .array_end => return try handleCompleteValue(&stack, allocator, source, stack.pop().?, options) orelse continue,
+                .array_end => return try handleCompleteValue(&stack, allocator, source, stack.pop(), options) orelse continue,
 
                 else => unreachable,
             }
@@ -152,26 +147,14 @@ fn handleCompleteValue(stack: *Array, allocator: Allocator, source: anytype, val
 
                 // stack: [..., .object]
                 var object = &stack.items[stack.items.len - 1].object;
-
-                const gop = try object.getOrPut(key);
-                if (gop.found_existing) {
-                    switch (options.duplicate_field_behavior) {
-                        .use_first => {},
-                        .@"error" => return error.DuplicateField,
-                        .use_last => {
-                            gop.value_ptr.* = value;
-                        },
-                    }
-                } else {
-                    gop.value_ptr.* = value;
-                }
+                try object.put(key, value);
 
                 // This is an invalid state to leave the stack in,
                 // so we have to process the next token before we return.
                 switch (try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?)) {
                     .object_end => {
                         // This object is complete.
-                        value = stack.pop().?;
+                        value = stack.pop();
                         // Effectively recurse now that we have a complete value.
                         if (stack.items.len == 0) return value;
                         continue;

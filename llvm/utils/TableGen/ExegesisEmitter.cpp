@@ -30,7 +30,7 @@ namespace {
 
 class ExegesisEmitter {
 public:
-  ExegesisEmitter(const RecordKeeper &RK);
+  ExegesisEmitter(RecordKeeper &RK);
 
   void run(raw_ostream &OS) const;
 
@@ -51,7 +51,7 @@ private:
 
   void emitPfmCountersLookupTable(raw_ostream &OS) const;
 
-  const RecordKeeper &Records;
+  RecordKeeper &Records;
   std::string Target;
 
   // Table of counter name -> counter index.
@@ -67,8 +67,7 @@ collectPfmCounters(const RecordKeeper &Records) {
     if (!Counter.empty())
       PfmCounterNameTable.emplace(Counter, 0);
   };
-  for (const Record *Def :
-       Records.getAllDerivedDefinitions("ProcPfmCounters")) {
+  for (Record *Def : Records.getAllDerivedDefinitions("ProcPfmCounters")) {
     // Check that ResourceNames are unique.
     llvm::SmallSet<llvm::StringRef, 16> Seen;
     for (const Record *IssueCounter :
@@ -82,11 +81,6 @@ collectPfmCounters(const RecordKeeper &Records) {
                         "duplicate ResourceName " + ResourceName);
       AddPfmCounterName(IssueCounter);
     }
-
-    for (const Record *ValidationCounter :
-         Def->getValueAsListOfDefs("ValidationCounters"))
-      AddPfmCounterName(ValidationCounter);
-
     AddPfmCounterName(Def->getValueAsDef("CycleCounter"));
     AddPfmCounterName(Def->getValueAsDef("UopsCounter"));
   }
@@ -96,25 +90,14 @@ collectPfmCounters(const RecordKeeper &Records) {
   return PfmCounterNameTable;
 }
 
-ExegesisEmitter::ExegesisEmitter(const RecordKeeper &RK)
+ExegesisEmitter::ExegesisEmitter(RecordKeeper &RK)
     : Records(RK), PfmCounterNameTable(collectPfmCounters(RK)) {
-  ArrayRef<const Record *> Targets = Records.getAllDerivedDefinitions("Target");
+  std::vector<Record *> Targets = Records.getAllDerivedDefinitions("Target");
   if (Targets.size() == 0)
     PrintFatalError("No 'Target' subclasses defined!");
   if (Targets.size() != 1)
     PrintFatalError("Multiple subclasses of Target defined!");
   Target = std::string(Targets[0]->getName());
-}
-
-struct ValidationCounterInfo {
-  int64_t EventNumber;
-  StringRef EventName;
-  unsigned PfmCounterID;
-};
-
-bool EventNumberLess(const ValidationCounterInfo &LHS,
-                     const ValidationCounterInfo &RHS) {
-  return LHS.EventNumber < RHS.EventNumber;
 }
 
 void ExegesisEmitter::emitPfmCountersInfo(const Record &Def,
@@ -126,31 +109,6 @@ void ExegesisEmitter::emitPfmCountersInfo(const Record &Def,
       Def.getValueAsDef("UopsCounter")->getValueAsString("Counter");
   const size_t NumIssueCounters =
       Def.getValueAsListOfDefs("IssueCounters").size();
-  const size_t NumValidationCounters =
-      Def.getValueAsListOfDefs("ValidationCounters").size();
-
-  // Emit Validation Counters Array
-  if (NumValidationCounters != 0) {
-    std::vector<ValidationCounterInfo> ValidationCounters;
-    ValidationCounters.reserve(NumValidationCounters);
-    for (const Record *ValidationCounter :
-         Def.getValueAsListOfDefs("ValidationCounters")) {
-      ValidationCounters.push_back(
-          {ValidationCounter->getValueAsDef("EventType")
-               ->getValueAsInt("EventNumber"),
-           ValidationCounter->getValueAsDef("EventType")->getName(),
-           getPfmCounterId(ValidationCounter->getValueAsString("Counter"))});
-    }
-    std::sort(ValidationCounters.begin(), ValidationCounters.end(),
-              EventNumberLess);
-    OS << "\nstatic const std::pair<ValidationEvent, const char*> " << Target
-       << Def.getName() << "ValidationCounters[] = {\n";
-    for (const ValidationCounterInfo &VCI : ValidationCounters) {
-      OS << "  { " << VCI.EventName << ", " << Target << "PfmCounterNames["
-         << VCI.PfmCounterID << "]},\n";
-    }
-    OS << "};\n";
-  }
 
   OS << "\nstatic const PfmCountersInfo " << Target << Def.getName()
      << " = {\n";
@@ -171,17 +129,10 @@ void ExegesisEmitter::emitPfmCountersInfo(const Record &Def,
 
   // Issue Counters
   if (NumIssueCounters == 0)
-    OS << "  nullptr, 0, // No issue counters\n";
+    OS << "  nullptr,  // No issue counters.\n  0\n";
   else
     OS << "  " << Target << "PfmIssueCounters + " << IssueCountersTableOffset
-       << ", " << NumIssueCounters << ", // Issue counters.\n";
-
-  // Validation Counters
-  if (NumValidationCounters == 0)
-    OS << "  nullptr, 0 // No validation counters.\n";
-  else
-    OS << "  " << Target << Def.getName() << "ValidationCounters, "
-       << NumValidationCounters << " // Validation counters.\n";
+       << ", " << NumIssueCounters << " // Issue counters.\n";
 
   OS << "};\n";
   IssueCountersTableOffset += NumIssueCounters;
@@ -224,7 +175,7 @@ void ExegesisEmitter::emitPfmCounters(raw_ostream &OS) const {
 } // namespace
 
 void ExegesisEmitter::emitPfmCountersLookupTable(raw_ostream &OS) const {
-  std::vector<const Record *> Bindings =
+  std::vector<Record *> Bindings =
       Records.getAllDerivedDefinitions("PfmCountersBinding");
   assert(!Bindings.empty() && "there must be at least one binding");
   llvm::sort(Bindings, [](const Record *L, const Record *R) {
@@ -233,7 +184,7 @@ void ExegesisEmitter::emitPfmCountersLookupTable(raw_ostream &OS) const {
 
   OS << "// Sorted (by CpuName) array of pfm counters.\n"
      << "static const CpuAndPfmCounters " << Target << "CpuPfmCounters[] = {\n";
-  for (const Record *Binding : Bindings) {
+  for (Record *Binding : Bindings) {
     // Emit as { "cpu", procinit },
     OS << "  { \""                                                        //
        << Binding->getValueAsString("CpuName") << "\","                   //

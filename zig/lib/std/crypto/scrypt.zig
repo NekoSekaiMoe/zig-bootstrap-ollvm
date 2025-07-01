@@ -141,10 +141,6 @@ pub const Params = struct {
     /// Baseline parameters for offline usage
     pub const sensitive = Self.fromLimits(33554432, 1073741824);
 
-    /// Recommended parameters according to the
-    /// [OWASP cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
-    pub const owasp = Self{ .ln = 17, .r = 8, .p = 1 };
-
     /// Create parameters from ops and mem limits, where mem_limit given in bytes
     pub fn fromLimits(ops_limit: u64, mem_limit: usize) Self {
         const ops = @max(32768, ops_limit);
@@ -195,11 +191,11 @@ pub fn kdf(
         params.r > max_int / 256 or
         n > max_int / 128 / @as(u64, params.r)) return KdfError.WeakParameters;
 
-    const xy = try allocator.alignedAlloc(u32, .@"16", 64 * params.r);
+    const xy = try allocator.alignedAlloc(u32, 16, 64 * params.r);
     defer allocator.free(xy);
-    const v = try allocator.alignedAlloc(u32, .@"16", 32 * n * params.r);
+    const v = try allocator.alignedAlloc(u32, 16, 32 * n * params.r);
     defer allocator.free(v);
-    var dk = try allocator.alignedAlloc(u8, .@"16", params.p * 128 * params.r);
+    var dk = try allocator.alignedAlloc(u8, 16, params.p * 128 * params.r);
     defer allocator.free(dk);
 
     try pwhash.pbkdf2(dk, password, salt, 1, HmacSha256);

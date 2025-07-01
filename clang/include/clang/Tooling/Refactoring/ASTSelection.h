@@ -138,7 +138,7 @@ private:
   CodeRangeASTSelection(SelectedASTNode::ReferenceType SelectedNode,
                         ArrayRef<SelectedASTNode::ReferenceType> Parents,
                         bool AreChildrenSelected)
-      : SelectedNode(SelectedNode), Parents(Parents),
+      : SelectedNode(SelectedNode), Parents(Parents.begin(), Parents.end()),
         AreChildrenSelected(AreChildrenSelected) {}
 
   /// The reference to the selected node (or reference to the selected

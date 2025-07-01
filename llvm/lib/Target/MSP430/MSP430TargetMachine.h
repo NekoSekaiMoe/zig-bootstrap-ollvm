@@ -15,7 +15,7 @@
 #define LLVM_LIB_TARGET_MSP430_MSP430TARGETMACHINE_H
 
 #include "MSP430Subtarget.h"
-#include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
+#include "llvm/Target/TargetMachine.h"
 #include <optional>
 
 namespace llvm {
@@ -23,7 +23,7 @@ class StringRef;
 
 /// MSP430TargetMachine
 ///
-class MSP430TargetMachine : public CodeGenTargetMachineImpl {
+class MSP430TargetMachine : public LLVMTargetMachine {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
   MSP430Subtarget Subtarget;
 
@@ -31,7 +31,7 @@ public:
   MSP430TargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                       StringRef FS, const TargetOptions &Options,
                       std::optional<Reloc::Model> RM,
-                      std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                      std::optional<CodeModel::Model> CM, CodeGenOpt::Level OL,
                       bool JIT);
   ~MSP430TargetMachine() override;
 

@@ -11,14 +11,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Lex/HeaderMap.h"
+#include "clang/Lex/HeaderMapTypes.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/FileManager.h"
-#include "clang/Lex/HeaderMapTypes.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/SystemZ/zOSSupport.h"
+#include "llvm/Support/SwapByteOrder.h"
+#include "llvm/Support/Debug.h"
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -46,15 +48,13 @@ static inline unsigned HashHMapKey(StringRef Str) {
 /// map.  If it doesn't look like a HeaderMap, it gives up and returns null.
 /// If it looks like a HeaderMap but is obviously corrupted, it puts a reason
 /// into the string error argument and returns null.
-std::unique_ptr<HeaderMap> HeaderMap::Create(FileEntryRef FE, FileManager &FM) {
+std::unique_ptr<HeaderMap> HeaderMap::Create(const FileEntry *FE,
+                                             FileManager &FM) {
   // If the file is too small to be a header map, ignore it.
-  unsigned FileSize = FE.getSize();
+  unsigned FileSize = FE->getSize();
   if (FileSize <= sizeof(HMapHeader)) return nullptr;
 
-  auto FileBuffer =
-      FM.getBufferForFile(FE, /*IsVolatile=*/false,
-                          /*RequiresNullTerminator=*/true,
-                          /*MaybeList=*/std::nullopt, /*IsText=*/false);
+  auto FileBuffer = FM.getBufferForFile(FE);
   if (!FileBuffer || !*FileBuffer)
     return nullptr;
   bool NeedsByteSwap;
@@ -88,8 +88,9 @@ bool HeaderMapImpl::checkHeader(const llvm::MemoryBuffer &File,
 
   // Check the number of buckets.  It should be a power of two, and there
   // should be enough space in the file for all of them.
-  uint32_t NumBuckets =
-      NeedsByteSwap ? llvm::byteswap(Header->NumBuckets) : Header->NumBuckets;
+  uint32_t NumBuckets = NeedsByteSwap
+                            ? llvm::sys::getSwappedBytes(Header->NumBuckets)
+                            : Header->NumBuckets;
   if (!llvm::isPowerOf2_32(NumBuckets))
     return false;
   if (File.getBufferSize() <

@@ -1,4 +1,3 @@
-const builtin = @import("builtin");
 const std = @import("../../std.zig");
 const maxInt = std.math.maxInt;
 const linux = std.os.linux;
@@ -86,27 +85,24 @@ pub fn syscall6(
     arg5: usize,
     arg6: usize,
 ) usize {
-    // arg5/arg6 are passed via memory as we're out of registers if ebp is used as frame pointer, or
-    // if we're compiling with PIC. We push arg5/arg6 on the stack before changing ebp/esp as the
-    // compiler may reference arg5/arg6 as an offset relative to ebp/esp.
+    // The 6th argument is passed via memory as we're out of registers if ebp is
+    // used as frame pointer. We push arg6 value on the stack before changing
+    // ebp or esp as the compiler may reference it as an offset relative to one
+    // of those two registers.
     return asm volatile (
-        \\ push %[arg5]
         \\ push %[arg6]
-        \\ push %%edi
         \\ push %%ebp
-        \\ mov  12(%%esp), %%edi
-        \\ mov  8(%%esp), %%ebp
+        \\ mov  4(%%esp), %%ebp
         \\ int  $0x80
         \\ pop  %%ebp
-        \\ pop  %%edi
-        \\ add  $8, %%esp
+        \\ add  $4, %%esp
         : [ret] "={eax}" (-> usize),
         : [number] "{eax}" (@intFromEnum(number)),
           [arg1] "{ebx}" (arg1),
           [arg2] "{ecx}" (arg2),
           [arg3] "{edx}" (arg3),
           [arg4] "{esi}" (arg4),
-          [arg5] "rm" (arg5),
+          [arg5] "{edi}" (arg5),
           [arg6] "rm" (arg6),
         : "memory"
     );
@@ -122,57 +118,12 @@ pub fn socketcall(call: usize, args: [*]const usize) usize {
     );
 }
 
-pub fn clone() callconv(.naked) usize {
-    // __clone(func, stack, flags, arg, ptid, tls, ctid)
-    //         +8,   +12,   +16,   +20, +24,  +28, +32
-    //
-    // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
-    //         eax,       ebx,   ecx,   edx,  esi, edi
-    asm volatile (
-        \\  pushl %%ebp
-        \\  movl %%esp,%%ebp
-        \\  pushl %%ebx
-        \\  pushl %%esi
-        \\  pushl %%edi
-        \\  // Setup the arguments
-        \\  movl 16(%%ebp),%%ebx
-        \\  movl 12(%%ebp),%%ecx
-        \\  andl $-16,%%ecx
-        \\  subl $20,%%ecx
-        \\  movl 20(%%ebp),%%eax
-        \\  movl %%eax,4(%%ecx)
-        \\  movl 8(%%ebp),%%eax
-        \\  movl %%eax,0(%%ecx)
-        \\  movl 24(%%ebp),%%edx
-        \\  movl 28(%%ebp),%%esi
-        \\  movl 32(%%ebp),%%edi
-        \\  movl $120,%%eax // SYS_clone
-        \\  int $128
-        \\  testl %%eax,%%eax
-        \\  jz 1f
-        \\  popl %%edi
-        \\  popl %%esi
-        \\  popl %%ebx
-        \\  popl %%ebp
-        \\  retl
-        \\
-        \\1:
-    );
-    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\  .cfi_undefined %%eip
-    );
-    asm volatile (
-        \\  xorl %%ebp,%%ebp
-        \\
-        \\  popl %%eax
-        \\  calll *%%eax
-        \\  movl %%eax,%%ebx
-        \\  movl $1,%%eax // SYS_exit
-        \\  int $128
-    );
-}
+const CloneFn = *const fn (arg: usize) callconv(.C) u8;
 
-pub fn restore() callconv(.naked) noreturn {
+/// This matches the libc clone function.
+pub extern fn clone(func: CloneFn, stack: usize, flags: u32, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
+
+pub fn restore() callconv(.Naked) noreturn {
     switch (@import("builtin").zig_backend) {
         .stage2_c => asm volatile (
             \\ movl %[number], %%eax
@@ -190,7 +141,7 @@ pub fn restore() callconv(.naked) noreturn {
     }
 }
 
-pub fn restore_rt() callconv(.naked) noreturn {
+pub fn restore_rt() callconv(.Naked) noreturn {
     switch (@import("builtin").zig_backend) {
         .stage2_c => asm volatile (
             \\ movl %[number], %%eax
@@ -229,6 +180,15 @@ pub const F = struct {
     pub const WRLCK = 1;
     pub const UNLCK = 2;
 };
+
+pub const LOCK = struct {
+    pub const SH = 1;
+    pub const EX = 2;
+    pub const NB = 4;
+    pub const UN = 8;
+};
+
+pub const MMAP2_UNIT = 4096;
 
 pub const VDSO = struct {
     pub const CGT_SYM = "__vdso_clock_gettime";
@@ -307,13 +267,13 @@ pub const Stat = extern struct {
 };
 
 pub const timeval = extern struct {
-    sec: i32,
-    usec: i32,
+    tv_sec: i32,
+    tv_usec: i32,
 };
 
 pub const timezone = extern struct {
-    minuteswest: i32,
-    dsttime: i32,
+    tz_minuteswest: i32,
+    tz_dsttime: i32,
 };
 
 pub const mcontext_t = extern struct {
@@ -350,7 +310,7 @@ pub const ucontext_t = extern struct {
     link: ?*ucontext_t,
     stack: stack_t,
     mcontext: mcontext_t,
-    sigmask: [1024 / @bitSizeOf(c_ulong)]c_ulong, // Currently a libc-compatible (1024-bit) sigmask
+    sigmask: sigset_t,
     regspace: [64]u64,
 };
 
@@ -403,7 +363,7 @@ noinline fn getContextReturnAddress() usize {
     return @returnAddress();
 }
 
-pub fn getContextInternal() callconv(.naked) usize {
+pub fn getContextInternal() callconv(.Naked) usize {
     asm volatile (
         \\ movl $0, %[flags_offset:c](%%edx)
         \\ movl $0, %[link_offset:c](%%edx)

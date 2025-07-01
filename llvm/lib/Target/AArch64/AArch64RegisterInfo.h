@@ -27,7 +27,7 @@ class AArch64RegisterInfo final : public AArch64GenRegisterInfo {
   const Triple &TT;
 
 public:
-  AArch64RegisterInfo(const Triple &TT, unsigned HwMode);
+  AArch64RegisterInfo(const Triple &TT);
 
   // FIXME: This should be tablegen'd like getDwarfRegNum is
   int getSEHRegNum(unsigned i) const {
@@ -134,11 +134,6 @@ public:
   unsigned getRegPressureLimit(const TargetRegisterClass *RC,
                                MachineFunction &MF) const override;
 
-  bool getRegAllocationHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
-                             SmallVectorImpl<MCPhysReg> &Hints,
-                             const MachineFunction &MF, const VirtRegMap *VRM,
-                             const LiveRegMatrix *Matrix) const override;
-
   unsigned getLocalAddressRegister(const MachineFunction &MF) const;
   bool regNeedsCFI(unsigned Reg, unsigned &RegToUseForCFI) const;
 
@@ -150,8 +145,6 @@ public:
 
   void getOffsetOpcodes(const StackOffset &Offset,
                         SmallVectorImpl<uint64_t> &Ops) const override;
-
-  bool shouldAnalyzePhysregInMachineLoopInfo(MCRegister R) const override;
 };
 
 } // end namespace llvm

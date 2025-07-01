@@ -14,7 +14,6 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Frontend/Utils.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/VirtualFileSystem.h"
 
 DEF_DIAGTOOL("show-enabled",
              "Show which warnings are enabled for a given command line",
@@ -75,8 +74,7 @@ createDiagnostics(unsigned int argc, char **argv) {
 
   // Build the diagnostics parser
   IntrusiveRefCntPtr<DiagnosticsEngine> FinalDiags =
-      CompilerInstance::createDiagnostics(*llvm::vfs::getRealFileSystem(),
-                                          &Invocation->getDiagnosticOpts());
+    CompilerInstance::createDiagnostics(&Invocation->getDiagnosticOpts());
   if (!FinalDiags)
     return nullptr;
 
@@ -92,11 +90,11 @@ int ShowEnabledWarnings::run(unsigned int argc, char **argv, raw_ostream &Out) {
   bool ShouldShowLevels = true;
   if (argc > 0) {
     StringRef FirstArg(*argv);
-    if (FirstArg == "--no-levels") {
+    if (FirstArg.equals("--no-levels")) {
       ShouldShowLevels = false;
       --argc;
       ++argv;
-    } else if (FirstArg == "--levels") {
+    } else if (FirstArg.equals("--levels")) {
       ShouldShowLevels = true;
       --argc;
       ++argv;
@@ -119,10 +117,10 @@ int ShowEnabledWarnings::run(unsigned int argc, char **argv, raw_ostream &Out) {
   for (const DiagnosticRecord &DR : getBuiltinDiagnosticsByName()) {
     unsigned DiagID = DR.DiagID;
 
-    if (DiagnosticIDs{}.isNote(DiagID))
+    if (DiagnosticIDs::isBuiltinNote(DiagID))
       continue;
 
-    if (!DiagnosticIDs{}.isWarningOrExtension(DiagID))
+    if (!DiagnosticIDs::isBuiltinWarningOrExtension(DiagID))
       continue;
 
     DiagnosticsEngine::Level DiagLevel =
@@ -130,7 +128,7 @@ int ShowEnabledWarnings::run(unsigned int argc, char **argv, raw_ostream &Out) {
     if (DiagLevel == DiagnosticsEngine::Ignored)
       continue;
 
-    StringRef WarningOpt = DiagnosticIDs{}.getWarningOptionForDiag(DiagID);
+    StringRef WarningOpt = DiagnosticIDs::getWarningOptionForDiag(DiagID);
     Active.push_back(PrettyDiag(DR.getName(), WarningOpt, DiagLevel));
   }
 

@@ -44,7 +44,7 @@ namespace {
 class APIMisuse : public BugType {
 public:
   APIMisuse(const CheckerBase *checker, const char *name)
-      : BugType(checker, name, categories::AppleAPIMisuse) {}
+      : BugType(checker, name, "API Misuse (Apple)") {}
 };
 } // end anonymous namespace
 
@@ -352,9 +352,9 @@ void NilArgChecker::checkPostStmt(const ObjCDictionaryLiteral *DL,
 namespace {
 class CFNumberChecker : public Checker< check::PreStmt<CallExpr> > {
   mutable std::unique_ptr<APIMisuse> BT;
-  mutable IdentifierInfo *ICreate = nullptr, *IGetValue = nullptr;
+  mutable IdentifierInfo *ICreate, *IGetValue;
 public:
-  CFNumberChecker() = default;
+  CFNumberChecker() : ICreate(nullptr), IGetValue(nullptr) {}
 
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
 };
@@ -457,7 +457,7 @@ void CFNumberChecker::checkPreStmt(const CallExpr *CE,
   if (!V)
     return;
 
-  uint64_t NumberKind = V->getValue()->getLimitedValue();
+  uint64_t NumberKind = V->getValue().getLimitedValue();
   std::optional<uint64_t> OptCFNumberSize = GetCFNumberSize(Ctx, NumberKind);
 
   // FIXME: In some cases we can emit an error.
@@ -542,10 +542,10 @@ namespace {
 class CFRetainReleaseChecker : public Checker<check::PreCall> {
   mutable APIMisuse BT{this, "null passed to CF memory management function"};
   const CallDescriptionSet ModelledCalls = {
-      {CDM::CLibrary, {"CFRetain"}, 1},
-      {CDM::CLibrary, {"CFRelease"}, 1},
-      {CDM::CLibrary, {"CFMakeCollectable"}, 1},
-      {CDM::CLibrary, {"CFAutorelease"}, 1},
+      {{"CFRetain"}, 1},
+      {{"CFRelease"}, 1},
+      {{"CFMakeCollectable"}, 1},
+      {{"CFAutorelease"}, 1},
   };
 
 public:
@@ -555,6 +555,10 @@ public:
 
 void CFRetainReleaseChecker::checkPreCall(const CallEvent &Call,
                                           CheckerContext &C) const {
+  // TODO: Make this check part of CallDescription.
+  if (!Call.isGlobalCFunction())
+    return;
+
   // Check if we called CFRetain/CFRelease/CFMakeCollectable/CFAutorelease.
   if (!ModelledCalls.contains(Call))
     return;
@@ -815,13 +819,13 @@ class ObjCLoopChecker
                    check::PostObjCMessage,
                    check::DeadSymbols,
                    check::PointerEscape > {
-  mutable IdentifierInfo *CountSelectorII = nullptr;
+  mutable IdentifierInfo *CountSelectorII;
 
   bool isCollectionCountMethod(const ObjCMethodCall &M,
                                CheckerContext &C) const;
 
 public:
-  ObjCLoopChecker() = default;
+  ObjCLoopChecker() : CountSelectorII(nullptr) {}
   void checkPostStmt(const ObjCForCollectionStmt *FCS, CheckerContext &C) const;
   void checkPostObjCMessage(const ObjCMethodCall &M, CheckerContext &C) const;
   void checkDeadSymbols(SymbolReaper &SymReaper, CheckerContext &C) const;
@@ -1141,13 +1145,13 @@ class ObjCNonNilReturnValueChecker
                    check::PostStmt<ObjCArrayLiteral>,
                    check::PostStmt<ObjCDictionaryLiteral>,
                    check::PostStmt<ObjCBoxedExpr> > {
-    mutable bool Initialized = false;
+    mutable bool Initialized;
     mutable Selector ObjectAtIndex;
     mutable Selector ObjectAtIndexedSubscript;
     mutable Selector NullSelector;
 
 public:
-  ObjCNonNilReturnValueChecker() = default;
+  ObjCNonNilReturnValueChecker() : Initialized(false) {}
 
   ProgramStateRef assumeExprIsNonNull(const Expr *NonNullExpr,
                                       ProgramStateRef State,

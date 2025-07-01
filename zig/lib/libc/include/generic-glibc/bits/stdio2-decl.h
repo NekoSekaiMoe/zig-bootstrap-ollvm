@@ -1,5 +1,5 @@
 /* Checking macros for stdio functions. Declarations only.
-   Copyright (C) 2004-2025 Free Software Foundation, Inc.
+   Copyright (C) 2004-2023 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -47,12 +47,10 @@ extern int __vsnprintf_chk (char *__restrict __s, size_t __n, int __flag,
 #if __USE_FORTIFY_LEVEL > 1
 
 extern int __fprintf_chk (FILE *__restrict __stream, int __flag,
-			  const char *__restrict __format, ...)
-    __nonnull ((1));
+			  const char *__restrict __format, ...);
 extern int __printf_chk (int __flag, const char *__restrict __format, ...);
 extern int __vfprintf_chk (FILE *__restrict __stream, int __flag,
-			   const char *__restrict __format,
-			   __gnuc_va_list __ap) __nonnull ((1));
+			   const char *__restrict __format, __gnuc_va_list __ap);
 extern int __vprintf_chk (int __flag, const char *__restrict __format,
 			  __gnuc_va_list __ap);
 
@@ -105,7 +103,7 @@ extern char *__REDIRECT (__fgets_chk_warn,
 
 extern char *__fgets_chk (char *__restrict __s, size_t __size, int __n,
 			  FILE *__restrict __stream)
-    __wur __attr_access ((__write_only__, 1, 3)) __nonnull ((4));
+    __wur __attr_access ((__write_only__, 1, 3));
 
 extern size_t __REDIRECT (__fread_alias,
 			  (void *__restrict __ptr, size_t __size,
@@ -121,7 +119,7 @@ extern size_t __REDIRECT (__fread_chk_warn,
 
 extern size_t __fread_chk (void *__restrict __ptr, size_t __ptrlen,
 			   size_t __size, size_t __n,
-			   FILE *__restrict __stream) __wur __nonnull ((5));
+			   FILE *__restrict __stream) __wur;
 
 #ifdef __USE_GNU
 extern char *__REDIRECT_FORTIFY (__fgets_unlocked_alias,
@@ -137,7 +135,7 @@ extern char *__REDIRECT (__fgets_unlocked_chk_warn,
 
 extern char *__fgets_unlocked_chk (char *__restrict __s, size_t __size,
 				   int __n, FILE *__restrict __stream)
-    __wur __attr_access ((__write_only__, 1, 3)) __nonnull ((4));
+    __wur __attr_access ((__write_only__, 1, 3));
 #endif
 
 #ifdef __USE_MISC
@@ -156,8 +154,7 @@ extern size_t __REDIRECT (__fread_unlocked_chk_warn,
 
 extern size_t __fread_unlocked_chk (void *__restrict __ptr, size_t __ptrlen,
 				    size_t __size, size_t __n,
-				    FILE *__restrict __stream)
-    __wur __nonnull ((5));
+				    FILE *__restrict __stream) __wur;
 #endif
 
 #endif /* bits/stdio2-decl.h.  */

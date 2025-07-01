@@ -11,7 +11,6 @@
 #include "Config.h"
 #include "InputFiles.h"
 #include "OutputSegment.h"
-#include "Sections.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
@@ -38,52 +37,6 @@ static_assert(sizeof(void *) != 8 ||
               "instances of it");
 
 std::vector<ConcatInputSection *> macho::inputSections;
-int macho::inputSectionsOrder = 0;
-
-// Call this function to add a new InputSection and have it routed to the
-// appropriate container. Depending on its type and current config, it will
-// either be added to 'inputSections' vector or to a synthetic section.
-void lld::macho::addInputSection(InputSection *inputSection) {
-  if (auto *isec = dyn_cast<ConcatInputSection>(inputSection)) {
-    if (isec->isCoalescedWeak())
-      return;
-    if (config->emitRelativeMethodLists &&
-        ObjCMethListSection::isMethodList(isec)) {
-      if (in.objcMethList->inputOrder == UnspecifiedInputOrder)
-        in.objcMethList->inputOrder = inputSectionsOrder++;
-      in.objcMethList->addInput(isec);
-      isec->parent = in.objcMethList;
-      return;
-    }
-    if (config->emitInitOffsets &&
-        sectionType(isec->getFlags()) == S_MOD_INIT_FUNC_POINTERS) {
-      in.initOffsets->addInput(isec);
-      return;
-    }
-    isec->outSecOff = inputSectionsOrder++;
-    auto *osec = ConcatOutputSection::getOrCreateForInput(isec);
-    isec->parent = osec;
-    inputSections.push_back(isec);
-  } else if (auto *isec = dyn_cast<CStringInputSection>(inputSection)) {
-    if (isec->getName() == section_names::objcMethname) {
-      if (in.objcMethnameSection->inputOrder == UnspecifiedInputOrder)
-        in.objcMethnameSection->inputOrder = inputSectionsOrder++;
-      in.objcMethnameSection->addInput(isec);
-    } else {
-      if (in.cStringSection->inputOrder == UnspecifiedInputOrder)
-        in.cStringSection->inputOrder = inputSectionsOrder++;
-      in.cStringSection->addInput(isec);
-    }
-  } else if (auto *isec = dyn_cast<WordLiteralInputSection>(inputSection)) {
-    if (in.wordLiteralSection->inputOrder == UnspecifiedInputOrder)
-      in.wordLiteralSection->inputOrder = inputSectionsOrder++;
-    in.wordLiteralSection->addInput(isec);
-  } else {
-    llvm_unreachable("unexpected input section kind");
-  }
-
-  assert(inputSectionsOrder <= UnspecifiedInputOrder);
-}
 
 uint64_t InputSection::getFileSize() const {
   return isZeroFill(getFlags()) ? 0 : getSize();
@@ -167,7 +120,8 @@ std::string InputSection::getSourceLocation(uint64_t off) const {
     // Symbols are generally prefixed with an underscore, which is not included
     // in the debug information.
     StringRef symName = sym->getName();
-    symName.consume_front("_");
+    if (!symName.empty() && symName[0] == '_')
+      symName = symName.substr(1);
 
     if (std::optional<std::pair<std::string, unsigned>> fileLine =
             dwarf->getVariableLoc(symName))
@@ -189,14 +143,15 @@ const Reloc *InputSection::getRelocAt(uint32_t off) const {
   return &*it;
 }
 
-void ConcatInputSection::foldIdentical(ConcatInputSection *copy,
-                                       Symbol::ICFFoldKind foldKind) {
+void ConcatInputSection::foldIdentical(ConcatInputSection *copy) {
   align = std::max(align, copy->align);
   copy->live = false;
   copy->wasCoalesced = true;
   copy->replacement = this;
-  for (auto &copySym : copy->symbols)
-    copySym->identicalCodeFoldingKind = foldKind;
+  for (auto &copySym : copy->symbols) {
+    copySym->wasIdenticalCodeFolded = true;
+    copySym->size = 0;
+  }
 
   symbols.insert(symbols.end(), copy->symbols.begin(), copy->symbols.end());
   copy->symbols.clear();
@@ -206,7 +161,7 @@ void ConcatInputSection::foldIdentical(ConcatInputSection *copy,
     return;
   for (auto it = symbols.begin() + 1; it != symbols.end(); ++it) {
     assert((*it)->value == 0);
-    (*it)->originalUnwindEntry = nullptr;
+    (*it)->unwindEntry = nullptr;
   }
 }
 
@@ -226,13 +181,13 @@ void ConcatInputSection::writeTo(uint8_t *buf) {
     const bool needsFixup = config->emitChainedFixups &&
                             target->hasAttr(r.type, RelocAttrBits::UNSIGNED);
     if (target->hasAttr(r.type, RelocAttrBits::SUBTRAHEND)) {
-      const Symbol *fromSym = cast<Symbol *>(r.referent);
+      const Symbol *fromSym = r.referent.get<Symbol *>();
       const Reloc &minuend = relocs[++i];
       uint64_t minuendVA;
       if (const Symbol *toSym = minuend.referent.dyn_cast<Symbol *>())
         minuendVA = toSym->getVA() + minuend.addend;
       else {
-        auto *referentIsec = cast<InputSection *>(minuend.referent);
+        auto *referentIsec = minuend.referent.get<InputSection *>();
         assert(!::shouldOmitFromOutput(referentIsec));
         minuendVA = referentIsec->getVA(minuend.addend);
       }
@@ -280,9 +235,6 @@ ConcatInputSection *macho::makeSyntheticInputSection(StringRef segName,
   Section &section =
       *make<Section>(/*file=*/nullptr, segName, sectName, flags, /*addr=*/0);
   auto isec = make<ConcatInputSection>(section, data, align);
-  // Since this is an explicitly created 'fake' input section,
-  // it should not be dead stripped.
-  isec->live = true;
   section.subsections.push_back({0, isec});
   return isec;
 }
@@ -367,8 +319,20 @@ uint64_t WordLiteralInputSection::getOffset(uint64_t off) const {
 }
 
 bool macho::isCodeSection(const InputSection *isec) {
-  return sections::isCodeSection(isec->getName(), isec->getSegName(),
-                                 isec->getFlags());
+  uint32_t type = sectionType(isec->getFlags());
+  if (type != S_REGULAR && type != S_COALESCED)
+    return false;
+
+  uint32_t attr = isec->getFlags() & SECTION_ATTRIBUTES_USR;
+  if (attr == S_ATTR_PURE_INSTRUCTIONS)
+    return true;
+
+  if (isec->getSegName() == segment_names::text)
+    return StringSwitch<bool>(isec->getName())
+        .Cases(section_names::textCoalNt, section_names::staticInit, true)
+        .Default(false);
+
+  return false;
 }
 
 bool macho::isCfStringSection(const InputSection *isec) {

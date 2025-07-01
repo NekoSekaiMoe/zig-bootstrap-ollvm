@@ -40,7 +40,7 @@ public:
 // This part is for ELF object output
 class SparcTargetELFStreamer : public SparcTargetStreamer {
 public:
-  SparcTargetELFStreamer(MCStreamer &S, const MCSubtargetInfo &STI);
+  SparcTargetELFStreamer(MCStreamer &S);
   MCELFStreamer &getStreamer();
   void emitSparcRegisterIgnore(unsigned reg) override {}
   void emitSparcRegisterScratch(unsigned reg) override {}

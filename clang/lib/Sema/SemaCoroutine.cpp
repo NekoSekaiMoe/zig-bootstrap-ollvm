@@ -16,15 +16,15 @@
 #include "CoroutineStmtBuilder.h"
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/Decl.h"
-#include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Lex/Preprocessor.h"
-#include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/SemaInternal.h"
+#include "llvm/ADT/SmallSet.h"
 
 using namespace clang;
 using namespace sema;
@@ -70,7 +70,7 @@ static QualType lookupPromiseType(Sema &S, const FunctionDecl *FD,
   // If the function is a non-static member function, add the type
   // of the implicit object parameter before the formal parameters.
   if (auto *MD = dyn_cast<CXXMethodDecl>(FD)) {
-    if (MD->isImplicitObjectMemberFunction()) {
+    if (MD->isInstance()) {
       // [over.match.funcs]4
       // For non-static member functions, the type of the implicit object
       // parameter is
@@ -78,7 +78,7 @@ static QualType lookupPromiseType(Sema &S, const FunctionDecl *FD,
       //      ref-qualifier or with the & ref-qualifier
       //  -- "rvalue reference to cv X" for functions declared with the &&
       //      ref-qualifier
-      QualType T = MD->getFunctionObjectParameterType();
+      QualType T = MD->getThisType()->castAs<PointerType>()->getPointeeType();
       T = FnType->getRefQualifier() == RQ_RValue
               ? S.Context.getRValueReferenceType(T)
               : S.Context.getLValueReferenceType(T, /*SpelledAsLValue*/ true);
@@ -118,8 +118,7 @@ static QualType lookupPromiseType(Sema &S, const FunctionDecl *FD,
     auto *NNS = NestedNameSpecifier::Create(S.Context, nullptr, S.getStdNamespace());
     NNS = NestedNameSpecifier::Create(S.Context, NNS, false,
                                       CoroTrait.getTypePtr());
-    return S.Context.getElaboratedType(ElaboratedTypeKeyword::None, NNS,
-                                       PromiseType);
+    return S.Context.getElaboratedType(ETK_None, NNS, PromiseType);
   };
 
   if (!PromiseType->getAsCXXRecordDecl()) {
@@ -319,8 +318,7 @@ static ExprResult buildMemberCall(Sema &S, Expr *Base, SourceLocation Loc,
     return ExprError();
   }
 
-  auto EndLoc = Args.empty() ? Loc : Args.back()->getEndLoc();
-  return S.BuildCallExpr(nullptr, Result.get(), Loc, Args, EndLoc, nullptr);
+  return S.BuildCallExpr(nullptr, Result.get(), Loc, Args, Loc, nullptr);
 }
 
 // See if return type is coroutine-handle and if so, invoke builtin coro-resume
@@ -339,7 +337,7 @@ static Expr *maybeTailCall(Sema &S, QualType RetType, Expr *E,
   // EvaluateBinaryTypeTrait(BTT_IsConvertible, ...) which is at the moment
   // a private function in SemaExprCXX.cpp
 
-  ExprResult AddressExpr = buildMemberCall(S, E, Loc, "address", {});
+  ExprResult AddressExpr = buildMemberCall(S, E, Loc, "address", std::nullopt);
   if (AddressExpr.isInvalid())
     return nullptr;
 
@@ -351,9 +349,14 @@ static Expr *maybeTailCall(Sema &S, QualType RetType, Expr *E,
            diag::warn_coroutine_handle_address_invalid_return_type)
         << JustAddress->getType();
 
-  // Clean up temporary objects, because the resulting expression
-  // will become the body of await_suspend wrapper.
-  return S.MaybeCreateExprWithCleanups(JustAddress);
+  // Clean up temporary objects so that they don't live across suspension points
+  // unnecessarily. We choose to clean up before the call to
+  // __builtin_coro_resume so that the cleanup code are not inserted in-between
+  // the resume call and return instruction, which would interfere with the
+  // musttail call contract.
+  JustAddress = S.MaybeCreateExprWithCleanups(JustAddress);
+  return S.BuildBuiltinCallExpr(Loc, Builtin::BI__builtin_coro_resume,
+                                JustAddress);
 }
 
 /// Build calls to await_ready, await_suspend, and await_resume for a co_await
@@ -390,8 +393,8 @@ static ReadySuspendResumeResult buildCoawaitCalls(Sema &S, VarDecl *CoroPromise,
     return Result.get();
   };
 
-  CallExpr *AwaitReady =
-      cast_or_null<CallExpr>(BuildSubExpr(ACT::ACT_Ready, "await_ready", {}));
+  CallExpr *AwaitReady = cast_or_null<CallExpr>(
+      BuildSubExpr(ACT::ACT_Ready, "await_ready", std::nullopt));
   if (!AwaitReady)
     return Calls;
   if (!AwaitReady->getType()->isDependentType()) {
@@ -452,7 +455,7 @@ static ReadySuspendResumeResult buildCoawaitCalls(Sema &S, VarDecl *CoroPromise,
     }
   }
 
-  BuildSubExpr(ACT::ACT_Resume, "await_resume", {});
+  BuildSubExpr(ACT::ACT_Resume, "await_resume", std::nullopt);
 
   // Make sure the awaiter object gets a chance to be cleaned up.
   S.Cleanup.setExprNeedsCleanups(true);
@@ -477,10 +480,10 @@ VarDecl *Sema::buildCoroutinePromise(SourceLocation Loc) {
   assert(isa<FunctionDecl>(CurContext) && "not in a function scope");
   auto *FD = cast<FunctionDecl>(CurContext);
   bool IsThisDependentType = [&] {
-    if (const auto *MD = dyn_cast_if_present<CXXMethodDecl>(FD))
-      return MD->isImplicitObjectMemberFunction() &&
-             MD->getThisType()->isDependentType();
-    return false;
+    if (auto *MD = dyn_cast_or_null<CXXMethodDecl>(FD))
+      return MD->isInstance() && MD->getThisType()->isDependentType();
+    else
+      return false;
   }();
 
   QualType T = FD->getType()->isDependentType() || IsThisDependentType
@@ -505,7 +508,7 @@ VarDecl *Sema::buildCoroutinePromise(SourceLocation Loc) {
 
   // Add implicit object parameter.
   if (auto *MD = dyn_cast<CXXMethodDecl>(FD)) {
-    if (MD->isImplicitObjectMemberFunction() && !isLambdaCallOperator(MD)) {
+    if (MD->isInstance() && !isLambdaCallOperator(MD)) {
       ExprResult ThisExpr = ActOnCXXThis(Loc);
       if (ThisExpr.isInvalid())
         return nullptr;
@@ -682,32 +685,12 @@ bool Sema::checkFinalSuspendNoThrow(const Stmt *FinalSuspend) {
   return ThrowingDecls.empty();
 }
 
-// [stmt.return.coroutine]p1:
-//   A coroutine shall not enclose a return statement ([stmt.return]).
-static void checkReturnStmtInCoroutine(Sema &S, FunctionScopeInfo *FSI) {
-  assert(FSI && "FunctionScopeInfo is null");
-  assert(FSI->FirstCoroutineStmtLoc.isValid() &&
-         "first coroutine location not set");
-  if (FSI->FirstReturnLoc.isInvalid())
-    return;
-  S.Diag(FSI->FirstReturnLoc, diag::err_return_in_coroutine);
-  S.Diag(FSI->FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
-      << FSI->getFirstCoroutineStmtKeyword();
-}
-
 bool Sema::ActOnCoroutineBodyStart(Scope *SC, SourceLocation KWLoc,
                                    StringRef Keyword) {
-  // Ignore previous expr evaluation contexts.
-  EnterExpressionEvaluationContext PotentiallyEvaluated(
-      *this, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
   if (!checkCoroutineContext(*this, KWLoc, Keyword))
     return false;
   auto *ScopeInfo = getCurFunction();
   assert(ScopeInfo->CoroutinePromise);
-
-  // Avoid duplicate errors, report only on first keyword.
-  if (ScopeInfo->FirstCoroutineStmtLoc == KWLoc)
-    checkReturnStmtInCoroutine(*this, ScopeInfo);
 
   // If we have existing coroutine statements then we have already built
   // the initial and final suspend points.
@@ -720,8 +703,8 @@ bool Sema::ActOnCoroutineBodyStart(Scope *SC, SourceLocation KWLoc,
   SourceLocation Loc = Fn->getLocation();
   // Build the initial suspend point
   auto buildSuspends = [&](StringRef Name) mutable -> StmtResult {
-    ExprResult Operand =
-        buildPromiseCall(*this, ScopeInfo->CoroutinePromise, Loc, Name, {});
+    ExprResult Operand = buildPromiseCall(*this, ScopeInfo->CoroutinePromise,
+                                          Loc, Name, std::nullopt);
     if (Operand.isInvalid())
       return StmtError();
     ExprResult Suspend =
@@ -816,7 +799,6 @@ ExprResult Sema::ActOnCoawaitExpr(Scope *S, SourceLocation Loc, Expr *E) {
     if (R.isInvalid()) return ExprError();
     E = R.get();
   }
-
   ExprResult Lookup = BuildOperatorCoawaitLookupExpr(S, Loc);
   if (Lookup.isInvalid())
     return ExprError();
@@ -833,42 +815,15 @@ ExprResult Sema::BuildOperatorCoawaitLookupExpr(Scope *S, SourceLocation Loc) {
 
   assert(!Operators.isAmbiguous() && "Operator lookup cannot be ambiguous");
   const auto &Functions = Operators.asUnresolvedSet();
+  bool IsOverloaded =
+      Functions.size() > 1 ||
+      (Functions.size() == 1 && isa<FunctionTemplateDecl>(*Functions.begin()));
   Expr *CoawaitOp = UnresolvedLookupExpr::Create(
       Context, /*NamingClass*/ nullptr, NestedNameSpecifierLoc(),
-      DeclarationNameInfo(OpName, Loc), /*RequiresADL*/ true, Functions.begin(),
-      Functions.end(), /*KnownDependent=*/false,
-      /*KnownInstantiationDependent=*/false);
+      DeclarationNameInfo(OpName, Loc), /*RequiresADL*/ true, IsOverloaded,
+      Functions.begin(), Functions.end());
   assert(CoawaitOp);
   return CoawaitOp;
-}
-
-static bool isAttributedCoroAwaitElidable(const QualType &QT) {
-  auto *Record = QT->getAsCXXRecordDecl();
-  return Record && Record->hasAttr<CoroAwaitElidableAttr>();
-}
-
-static void applySafeElideContext(Expr *Operand) {
-  auto *Call = dyn_cast<CallExpr>(Operand->IgnoreImplicit());
-  if (!Call || !Call->isPRValue())
-    return;
-
-  if (!isAttributedCoroAwaitElidable(Call->getType()))
-    return;
-
-  Call->setCoroElideSafe();
-
-  // Check parameter
-  auto *Fn = llvm::dyn_cast_if_present<FunctionDecl>(Call->getCalleeDecl());
-  if (!Fn)
-    return;
-
-  size_t ParmIdx = 0;
-  for (ParmVarDecl *PD : Fn->parameters()) {
-    if (PD->hasAttr<CoroAwaitElidableArgumentAttr>())
-      applySafeElideContext(Call->getArg(ParmIdx));
-
-    ParmIdx++;
-  }
 }
 
 // Attempts to resolve and build a CoawaitExpr from "raw" inputs, bailing out to
@@ -894,14 +849,7 @@ ExprResult Sema::BuildUnresolvedCoawaitExpr(SourceLocation Loc, Expr *Operand,
   }
 
   auto *RD = Promise->getType()->getAsCXXRecordDecl();
-
-  bool CurFnAwaitElidable = isAttributedCoroAwaitElidable(
-      getCurFunctionDecl(/*AllowLambda=*/true)->getReturnType());
-
-  if (CurFnAwaitElidable)
-    applySafeElideContext(Operand);
-
-  Expr *Transformed = Operand;
+  auto *Transformed = Operand;
   if (lookupMember(*this, "await_transform", RD, Loc)) {
     ExprResult R =
         buildPromiseCall(*this, Promise, Loc, "await_transform", Operand);
@@ -1047,7 +995,7 @@ StmtResult Sema::BuildCoreturnStmt(SourceLocation Loc, Expr *E,
     PC = buildPromiseCall(*this, Promise, Loc, "return_value", E);
   } else {
     E = MakeFullDiscardedValueExpr(E).get();
-    PC = buildPromiseCall(*this, Promise, Loc, "return_void", {});
+    PC = buildPromiseCall(*this, Promise, Loc, "return_void", std::nullopt);
   }
   if (PC.isInvalid())
     return StmtError();
@@ -1166,10 +1114,15 @@ void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
   if (FD->hasAttr<AlwaysInlineAttr>())
     Diag(FD->getLocation(), diag::warn_always_inline_coroutine);
 
-  // The design of coroutines means we cannot allow use of VLAs within one, so
-  // diagnose if we've seen a VLA in the body of this function.
-  if (Fn->FirstVLALoc.isValid())
-    Diag(Fn->FirstVLALoc, diag::err_vla_in_coroutine_unsupported);
+  // [stmt.return.coroutine]p1:
+  //   A coroutine shall not enclose a return statement ([stmt.return]).
+  if (Fn->FirstReturnLoc.isValid()) {
+    assert(Fn->FirstCoroutineStmtLoc.isValid() &&
+                   "first coroutine location not set");
+    Diag(Fn->FirstReturnLoc, diag::err_return_in_coroutine);
+    Diag(Fn->FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
+            << Fn->getFirstCoroutineStmtKeyword();
+  }
 
   // Coroutines will get splitted into pieces. The GNU address of label
   // extension wouldn't be meaningful in coroutines.
@@ -1330,7 +1283,7 @@ bool CoroutineStmtBuilder::makeReturnOnAllocFailure() {
 static bool collectPlacementArgs(Sema &S, FunctionDecl &FD, SourceLocation Loc,
                                  SmallVectorImpl<Expr *> &PlacementArgs) {
   if (auto *MD = dyn_cast<CXXMethodDecl>(&FD)) {
-    if (MD->isImplicitObjectMemberFunction() && !isLambdaCallOperator(MD)) {
+    if (MD->isInstance() && !isLambdaCallOperator(MD)) {
       ExprResult ThisExpr = S.ActOnCXXThis(Loc);
       if (ThisExpr.isInvalid())
         return false;
@@ -1700,7 +1653,7 @@ bool CoroutineStmtBuilder::makeOnFallthrough() {
       return false;
   } else if (HasRVoid) {
     Fallthrough = S.BuildCoreturnStmt(FD.getLocation(), nullptr,
-                                      /*IsImplicit=*/true);
+                                      /*IsImplicit*/false);
     Fallthrough = S.ActOnFinishFullStmt(Fallthrough.get());
     if (Fallthrough.isInvalid())
       return false;
@@ -1733,8 +1686,8 @@ bool CoroutineStmtBuilder::makeOnException() {
   if (!S.getLangOpts().CXXExceptions)
     return true;
 
-  ExprResult UnhandledException =
-      buildPromiseCall(S, Fn.CoroutinePromise, Loc, "unhandled_exception", {});
+  ExprResult UnhandledException = buildPromiseCall(
+      S, Fn.CoroutinePromise, Loc, "unhandled_exception", std::nullopt);
   UnhandledException = S.ActOnFinishFullExpr(UnhandledException.get(), Loc,
                                              /*DiscardedValue*/ false);
   if (UnhandledException.isInvalid())
@@ -1757,8 +1710,8 @@ bool CoroutineStmtBuilder::makeReturnObject() {
   // [dcl.fct.def.coroutine]p7
   // The expression promise.get_return_object() is used to initialize the
   // returned reference or prvalue result object of a call to a coroutine.
-  ExprResult ReturnObject =
-      buildPromiseCall(S, Fn.CoroutinePromise, Loc, "get_return_object", {});
+  ExprResult ReturnObject = buildPromiseCall(S, Fn.CoroutinePromise, Loc,
+                                             "get_return_object", std::nullopt);
   if (ReturnObject.isInvalid())
     return false;
 
@@ -1922,15 +1875,9 @@ bool Sema::buildCoroutineParameterMoves(SourceLocation Loc) {
     if (PD->getType()->isDependentType())
       continue;
 
-    // Preserve the referenced state for unused parameter diagnostics.
-    bool DeclReferenced = PD->isReferenced();
-
     ExprResult PDRefExpr =
         BuildDeclRefExpr(PD, PD->getType().getNonReferenceType(),
                          ExprValueKind::VK_LValue, Loc); // FIXME: scope?
-
-    PD->setReferenced(DeclReferenced);
-
     if (PDRefExpr.isInvalid())
       return false;
 

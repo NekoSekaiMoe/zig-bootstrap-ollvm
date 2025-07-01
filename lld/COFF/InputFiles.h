@@ -40,10 +40,7 @@ class DWARFCache;
 namespace coff {
 class COFFLinkerContext;
 
-const COFFSyncStream &operator<<(const COFFSyncStream &, const InputFile *);
-
-std::vector<MemoryBufferRef> getArchiveMembers(COFFLinkerContext &,
-                                               llvm::object::Archive *file);
+std::vector<MemoryBufferRef> getArchiveMembers(llvm::object::Archive *file);
 
 using llvm::COFF::IMAGE_FILE_MACHINE_UNKNOWN;
 using llvm::COFF::MachineTypes;
@@ -58,11 +55,8 @@ class Defined;
 class DefinedImportData;
 class DefinedImportThunk;
 class DefinedRegular;
-class ImportThunkChunk;
-class ImportThunkChunkARM64EC;
 class SectionChunk;
 class Symbol;
-class SymbolTable;
 class Undefined;
 class TpiSource;
 
@@ -72,6 +66,7 @@ public:
   enum Kind {
     ArchiveKind,
     ObjectKind,
+    LazyObjectKind,
     PDBKind,
     ImportKind,
     BitcodeKind,
@@ -87,9 +82,7 @@ public:
   virtual void parse() = 0;
 
   // Returns the CPU type this file was compiled to.
-  virtual MachineTypes getMachineType() const {
-    return IMAGE_FILE_MACHINE_UNKNOWN;
-  }
+  virtual MachineTypes getMachineType() { return IMAGE_FILE_MACHINE_UNKNOWN; }
 
   MemoryBufferRef mb;
 
@@ -99,11 +92,11 @@ public:
   // Returns .drectve section contents if exist.
   StringRef getDirectives() { return directives; }
 
-  SymbolTable &symtab;
+  COFFLinkerContext &ctx;
 
 protected:
-  InputFile(SymbolTable &s, Kind k, MemoryBufferRef m, bool lazy = false)
-      : mb(m), symtab(s), fileKind(k), lazy(lazy) {}
+  InputFile(COFFLinkerContext &c, Kind k, MemoryBufferRef m, bool lazy = false)
+      : mb(m), ctx(c), fileKind(k), lazy(lazy) {}
 
   StringRef directives;
 
@@ -135,14 +128,12 @@ private:
 // .obj or .o file. This may be a member of an archive file.
 class ObjFile : public InputFile {
 public:
-  static ObjFile *create(COFFLinkerContext &ctx, MemoryBufferRef mb,
-                         bool lazy = false);
-  explicit ObjFile(SymbolTable &symtab, COFFObjectFile *coffObj, bool lazy);
-
+  explicit ObjFile(COFFLinkerContext &ctx, MemoryBufferRef m, bool lazy = false)
+      : InputFile(ctx, ObjectKind, m, lazy) {}
   static bool classof(const InputFile *f) { return f->kind() == ObjectKind; }
   void parse() override;
   void parseLazy();
-  MachineTypes getMachineType() const override;
+  MachineTypes getMachineType() override;
   ArrayRef<Chunk *> getChunks() { return chunks; }
   ArrayRef<SectionChunk *> getDebugChunks() { return debugChunks; }
   ArrayRef<SectionChunk *> getSXDataChunks() { return sxDataChunks; }
@@ -236,7 +227,6 @@ private:
   void initializeSymbols();
   void initializeFlags();
   void initializeDependencies();
-  void initializeECThunks();
 
   SectionChunk *
   readSection(uint32_t sectionNumber,
@@ -277,7 +267,7 @@ private:
                     &comdatDefs,
                 bool &prevailingComdat);
   Symbol *createRegular(COFFSymbolRef sym);
-  Symbol *createUndefined(COFFSymbolRef sym, bool overrideLazy);
+  Symbol *createUndefined(COFFSymbolRef sym);
 
   std::unique_ptr<COFFObjectFile> coffObj;
 
@@ -301,8 +291,6 @@ private:
   std::vector<SectionChunk *> guardIATChunks;
   std::vector<SectionChunk *> guardLJmpChunks;
   std::vector<SectionChunk *> guardEHContChunks;
-
-  std::vector<SectionChunk *> hybmpChunks;
 
   // This vector contains a list of all symbols defined or referenced by this
   // file. They are indexed such that you can get a Symbol by symbol
@@ -351,58 +339,41 @@ public:
   explicit ImportFile(COFFLinkerContext &ctx, MemoryBufferRef m);
 
   static bool classof(const InputFile *f) { return f->kind() == ImportKind; }
-  MachineTypes getMachineType() const override { return getMachineType(mb); }
-  static MachineTypes getMachineType(MemoryBufferRef m);
-  bool isSameImport(const ImportFile *other) const;
-  bool isEC() const { return impECSym != nullptr; }
 
-  DefinedImportData *impSym = nullptr;
-  Defined *thunkSym = nullptr;
-  ImportThunkChunkARM64EC *impchkThunk = nullptr;
-  ImportFile *hybridFile = nullptr;
+  Symbol *impSym = nullptr;
+  Symbol *thunkSym = nullptr;
   std::string dllName;
 
 private:
   void parse() override;
-  ImportThunkChunk *makeImportThunk();
 
 public:
   StringRef externalName;
   const coff_import_header *hdr;
   Chunk *location = nullptr;
 
-  // Auxiliary IAT symbols and chunks on ARM64EC.
-  DefinedImportData *impECSym = nullptr;
-  Chunk *auxLocation = nullptr;
-  Defined *auxThunkSym = nullptr;
-  DefinedImportData *auxImpCopySym = nullptr;
-  Chunk *auxCopyLocation = nullptr;
-
   // We want to eliminate dllimported symbols if no one actually refers to them.
   // These "Live" bits are used to keep track of which import library members
   // are actually in use.
   //
   // If the Live bit is turned off by MarkLive, Writer will ignore dllimported
-  // symbols provided by this import library member.
+  // symbols provided by this import library member. We also track whether the
+  // imported symbol is used separately from whether the thunk is used in order
+  // to avoid creating unnecessary thunks.
   bool live;
+  bool thunkLive;
 };
 
 // Used for LTO.
 class BitcodeFile : public InputFile {
 public:
-  explicit BitcodeFile(SymbolTable &symtab, MemoryBufferRef mb,
-                       std::unique_ptr<llvm::lto::InputFile> &obj, bool lazy);
+  explicit BitcodeFile(COFFLinkerContext &ctx, MemoryBufferRef mb,
+                       StringRef archiveName, uint64_t offsetInArchive,
+                       bool lazy);
   ~BitcodeFile();
-
-  static BitcodeFile *create(COFFLinkerContext &ctx, MemoryBufferRef mb,
-                             StringRef archiveName, uint64_t offsetInArchive,
-                             bool lazy);
   static bool classof(const InputFile *f) { return f->kind() == BitcodeKind; }
   ArrayRef<Symbol *> getSymbols() { return symbols; }
-  MachineTypes getMachineType() const override {
-    return getMachineType(obj.get());
-  }
-  static MachineTypes getMachineType(const llvm::lto::InputFile *obj);
+  MachineTypes getMachineType() override;
   void parseLazy();
   std::unique_ptr<llvm::lto::InputFile> obj;
 
@@ -415,11 +386,11 @@ private:
 // .dll file. MinGW only.
 class DLLFile : public InputFile {
 public:
-  explicit DLLFile(SymbolTable &symtab, MemoryBufferRef m)
-      : InputFile(symtab, DLLKind, m) {}
+  explicit DLLFile(COFFLinkerContext &ctx, MemoryBufferRef m)
+      : InputFile(ctx, DLLKind, m) {}
   static bool classof(const InputFile *f) { return f->kind() == DLLKind; }
   void parse() override;
-  MachineTypes getMachineType() const override;
+  MachineTypes getMachineType() override;
 
   struct Symbol {
     StringRef dllName;

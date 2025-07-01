@@ -25,5 +25,5 @@ int wctob (wint_t wc )
 	 || invalid_char)
       return EOF;
 
-    return (unsigned char) c;
+    return (int) c;
 }

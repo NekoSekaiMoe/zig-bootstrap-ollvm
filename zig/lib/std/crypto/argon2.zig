@@ -14,7 +14,7 @@ const pwhash = crypto.pwhash;
 
 const Thread = std.Thread;
 const Blake2b512 = blake2.Blake2b512;
-const Blocks = std.ArrayListAligned([block_length]u64, .@"16");
+const Blocks = std.ArrayListAligned([block_length]u64, 16);
 const H0 = [Blake2b512.digest_length + 8]u8;
 
 const EncodingError = crypto.errors.EncodingError;
@@ -90,10 +90,6 @@ pub const Params = struct {
     pub const moderate_2id = Self.fromLimits(3, 268435456);
     /// Baseline parameters for offline usage using argon2id type
     pub const sensitive_2id = Self.fromLimits(4, 1073741824);
-
-    /// Recommended parameters for argon2id type according to the
-    /// [OWASP cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
-    pub const owasp_2id = Self{ .t = 2, .m = 19 * 1024, .p = 1 };
 
     /// Create parameters from ops and mem limits, where mem_limit given in bytes
     pub fn fromLimits(ops_limit: u32, mem_limit: usize) Self {
@@ -496,7 +492,6 @@ pub fn kdf(
     if (password.len > max_int) return KdfError.WeakParameters;
     if (salt.len < 8 or salt.len > max_int) return KdfError.WeakParameters;
     if (params.t < 1 or params.p < 1) return KdfError.WeakParameters;
-    if (params.m / 8 < params.p) return KdfError.WeakParameters;
 
     var h0 = initHash(password, salt, params, derived_key.len, mode);
     const memory = @max(

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2010, 2023 Apple Inc. All rights reserved.
+ * Copyright (c) 2007, 2010 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -28,10 +28,7 @@
 #ifndef _SECURE__STDIO_H_
 #define _SECURE__STDIO_H_
 
-#include <_bounds.h>
 #include <secure/_common.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 #if _USE_FORTIFY_LEVEL > 0
 
@@ -42,7 +39,7 @@ _LIBC_SINGLE_BY_DEFAULT()
 
 /* sprintf, vsprintf, snprintf, vsnprintf */
 #if __has_builtin(__builtin___sprintf_chk) || defined(__GNUC__)
-extern int __sprintf_chk (char * __restrict _LIBC_UNSAFE_INDEXABLE, int, size_t,
+extern int __sprintf_chk (char * __restrict, int, size_t,
 			  const char * __restrict, ...);
 
 #undef sprintf
@@ -52,7 +49,7 @@ extern int __sprintf_chk (char * __restrict _LIBC_UNSAFE_INDEXABLE, int, size_t,
 
 #if __DARWIN_C_LEVEL >= 200112L
 #if __has_builtin(__builtin___snprintf_chk) || defined(__GNUC__)
-extern int __snprintf_chk (char * __restrict _LIBC_COUNT(__maxlen), size_t __maxlen, int, size_t,
+extern int __snprintf_chk (char * __restrict, size_t, int, size_t,
 			   const char * __restrict, ...);
 
 #undef snprintf
@@ -61,7 +58,7 @@ extern int __snprintf_chk (char * __restrict _LIBC_COUNT(__maxlen), size_t __max
 #endif
 
 #if __has_builtin(__builtin___vsprintf_chk) || defined(__GNUC__)
-extern int __vsprintf_chk (char * __restrict _LIBC_UNSAFE_INDEXABLE, int, size_t,
+extern int __vsprintf_chk (char * __restrict, int, size_t,
 			   const char * __restrict, va_list);
 
 #undef vsprintf
@@ -70,7 +67,7 @@ extern int __vsprintf_chk (char * __restrict _LIBC_UNSAFE_INDEXABLE, int, size_t
 #endif
 
 #if __has_builtin(__builtin___vsnprintf_chk) || defined(__GNUC__)
-extern int __vsnprintf_chk (char * __restrict _LIBC_COUNT(__maxlen), size_t __maxlen, int, size_t,
+extern int __vsnprintf_chk (char * __restrict, size_t, int, size_t,
 			    const char * __restrict, va_list);
 
 #undef vsnprintf

@@ -11,7 +11,7 @@ const system_defaults = @import("system_defaults");
 const Linux = @This();
 
 distro: Distro.Tag = .unknown,
-extra_opts: std.ArrayListUnmanaged([]const u8) = .empty,
+extra_opts: std.ArrayListUnmanaged([]const u8) = .{},
 gcc_detector: GCCDetector = .{},
 
 pub fn discover(self: *Linux, tc: *Toolchain) !void {
@@ -27,7 +27,7 @@ pub fn discover(self: *Linux, tc: *Toolchain) !void {
 fn buildExtraOpts(self: *Linux, tc: *const Toolchain) !void {
     const gpa = tc.driver.comp.gpa;
     const target = tc.getTarget();
-    const is_android = target.abi.isAndroid();
+    const is_android = target.isAndroid();
     if (self.distro.isAlpine() or is_android) {
         try self.extra_opts.ensureUnusedCapacity(gpa, 2);
         self.extra_opts.appendAssumeCapacity("-z");
@@ -40,7 +40,7 @@ fn buildExtraOpts(self: *Linux, tc: *const Toolchain) !void {
         self.extra_opts.appendAssumeCapacity("relro");
     }
 
-    if ((target.cpu.arch.isArm() and !target.cpu.arch.isThumb()) or target.cpu.arch.isAARCH64() or is_android) {
+    if (target.cpu.arch.isARM() or target.cpu.arch.isAARCH64() or is_android) {
         try self.extra_opts.ensureUnusedCapacity(gpa, 2);
         self.extra_opts.appendAssumeCapacity("-z");
         self.extra_opts.appendAssumeCapacity("max-page-size=4096");
@@ -113,7 +113,7 @@ fn findPaths(self: *Linux, tc: *Toolchain) !void {
     try tc.addPathIfExists(&.{ sysroot, "/lib", multiarch_triple }, .file);
     try tc.addPathIfExists(&.{ sysroot, "/lib", "..", os_lib_dir }, .file);
 
-    if (target.abi.isAndroid()) {
+    if (target.isAndroid()) {
         // TODO
     }
     try tc.addPathIfExists(&.{ sysroot, "/usr", "lib", multiarch_triple }, .file);
@@ -156,7 +156,7 @@ fn getStatic(self: *const Linux, d: *const Driver) bool {
 
 pub fn getDefaultLinker(self: *const Linux, target: std.Target) []const u8 {
     _ = self;
-    if (target.abi.isAndroid()) {
+    if (target.isAndroid()) {
         return "ld.lld";
     }
     return "ld";
@@ -169,7 +169,8 @@ pub fn buildLinkerArgs(self: *const Linux, tc: *const Toolchain, argv: *std.Arra
     const is_pie = self.getPIE(d);
     const is_static_pie = try self.getStaticPIE(d);
     const is_static = self.getStatic(d);
-    const is_android = target.abi.isAndroid();
+    const is_android = target.isAndroid();
+    const is_iamcu = target.os.tag == .elfiamcu;
     const is_ve = target.cpu.arch == .ve;
     const has_crt_begin_end_files = target.abi != .none; // TODO: clang checks for MIPS vendor
 
@@ -224,7 +225,7 @@ pub fn buildLinkerArgs(self: *const Linux, tc: *const Toolchain, argv: *std.Arra
     try argv.appendSlice(&.{ "-o", d.output_name orelse "a.out" });
 
     if (!d.nostdlib and !d.nostartfiles and !d.relocatable) {
-        if (!is_android) {
+        if (!is_android and !is_iamcu) {
             if (!d.shared) {
                 const crt1 = if (is_pie)
                     "Scrt1.o"
@@ -240,7 +241,9 @@ pub fn buildLinkerArgs(self: *const Linux, tc: *const Toolchain, argv: *std.Arra
             try argv.appendSlice(&.{ "-z", "max-page-size=0x4000000" });
         }
 
-        if (has_crt_begin_end_files) {
+        if (is_iamcu) {
+            try argv.append(try tc.getFilePath("crt0.o"));
+        } else if (has_crt_begin_end_files) {
             var path: []const u8 = "";
             if (tc.getRuntimeLibKind() == .compiler_rt and !is_android) {
                 const crt_begin = try tc.getCompilerRt("crtbegin", .object);
@@ -282,13 +285,19 @@ pub fn buildLinkerArgs(self: *const Linux, tc: *const Toolchain, argv: *std.Arra
             if (!d.nolibc) {
                 try argv.append("-lc");
             }
+            if (is_iamcu) {
+                try argv.append("-lgloss");
+            }
             if (is_static or is_static_pie) {
                 try argv.append("--end-group");
             } else {
                 try tc.addRuntimeLibs(argv);
             }
+            if (is_iamcu) {
+                try argv.appendSlice(&.{ "--as-needed", "-lsoftfp", "--no-as-needed" });
+            }
         }
-        if (!d.nostartfiles) {
+        if (!d.nostartfiles and !is_iamcu) {
             if (has_crt_begin_end_files) {
                 var path: []const u8 = "";
                 if (tc.getRuntimeLibKind() == .compiler_rt and !is_android) {
@@ -317,8 +326,8 @@ pub fn buildLinkerArgs(self: *const Linux, tc: *const Toolchain, argv: *std.Arra
 }
 
 fn getMultiarchTriple(target: std.Target) ?[]const u8 {
-    const is_android = target.abi.isAndroid();
-    const is_mips_r6 = target.cpu.has(.mips, .mips32r6);
+    const is_android = target.isAndroid();
+    const is_mips_r6 = std.Target.mips.featureSetHas(target.cpu.features, .mips32r6);
     return switch (target.cpu.arch) {
         .arm, .thumb => if (is_android) "arm-linux-androideabi" else if (target.abi == .gnueabihf) "arm-linux-gnueabihf" else "arm-linux-gnueabi",
         .armeb, .thumbeb => if (target.abi == .gnueabihf) "armeb-linux-gnueabihf" else "armeb-linux-gnueabi",
@@ -348,6 +357,7 @@ fn getOSLibDir(target: std.Target) []const u8 {
         .powerpc,
         .powerpcle,
         .sparc,
+        .sparcel,
         => return "lib32",
         else => {},
     }
@@ -371,7 +381,7 @@ pub fn defineSystemIncludes(self: *const Linux, tc: *const Toolchain) !void {
 
     // musl prefers /usr/include before builtin includes, so musl targets will add builtins
     // at the end of this function (unless disabled with nostdlibinc)
-    if (!tc.driver.nobuiltininc and (!target.abi.isMusl() or tc.driver.nostdlibinc)) {
+    if (!tc.driver.nobuiltininc and (!target.isMusl() or tc.driver.nostdlibinc)) {
         try comp.addBuiltinIncludeDir(tc.driver.aro_name);
     }
 
@@ -402,7 +412,7 @@ pub fn defineSystemIncludes(self: *const Linux, tc: *const Toolchain) !void {
     try comp.addSystemIncludeDir("/usr/include");
 
     std.debug.assert(!tc.driver.nostdlibinc);
-    if (!tc.driver.nobuiltininc and target.abi.isMusl()) {
+    if (!tc.driver.nobuiltininc and target.isMusl()) {
         try comp.addBuiltinIncludeDir(tc.driver.aro_name);
     }
 }
@@ -414,7 +424,7 @@ test Linux {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var comp = Compilation.init(std.testing.allocator, std.fs.cwd());
+    var comp = Compilation.init(std.testing.allocator);
     defer comp.deinit();
     comp.environment = .{
         .path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -468,7 +478,7 @@ test Linux {
     var argv = std.ArrayList([]const u8).init(driver.comp.gpa);
     defer argv.deinit();
 
-    var linker_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var linker_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const linker_path = try toolchain.getLinkerPath(&linker_path_buf);
     try argv.append(linker_path);
 

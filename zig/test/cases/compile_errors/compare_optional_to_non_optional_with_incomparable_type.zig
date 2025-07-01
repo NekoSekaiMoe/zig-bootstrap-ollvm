@@ -5,7 +5,7 @@ export fn entry() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :4:12: error: operator == not allowed for type '?[3]i32'

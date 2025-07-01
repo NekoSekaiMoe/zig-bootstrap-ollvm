@@ -77,7 +77,6 @@ class Preprocessor;
 class PreprocessorOptions;
 class Sema;
 class TargetInfo;
-class SyntaxOnlyAction;
 
 /// \brief Enumerates the available scopes for skipping function bodies.
 enum class SkipFunctionBodiesScope { None, Preamble, PreambleAndMainFile };
@@ -241,7 +240,7 @@ private:
 
   /// A list of the serialization ID numbers for each of the top-level
   /// declarations parsed within the precompiled preamble.
-  std::vector<LocalDeclID> TopLevelDeclsInPreamble;
+  std::vector<serialization::DeclID> TopLevelDeclsInPreamble;
 
   /// Whether we should be caching code-completion results.
   bool ShouldCacheCodeCompletionResults : 1;
@@ -355,7 +354,6 @@ private:
 
   /// Bit used by CIndex to mark when a translation unit may be in an
   /// inconsistent state, and is not safe to free.
-  LLVM_PREFERRED_TYPE(bool)
   unsigned UnsafeToFree : 1;
 
   /// \brief Enumerator specifying the scope for skipping function bodies.
@@ -692,13 +690,12 @@ public:
   ///
   /// \returns - The initialized ASTUnit or null if the AST failed to load.
   static std::unique_ptr<ASTUnit>
-  LoadFromASTFile(StringRef Filename, const PCHContainerReader &PCHContainerRdr,
-                  WhatToLoad ToLoad,
+  LoadFromASTFile(const std::string &Filename,
+                  const PCHContainerReader &PCHContainerRdr, WhatToLoad ToLoad,
                   IntrusiveRefCntPtr<DiagnosticsEngine> Diags,
                   const FileSystemOptions &FileSystemOpts,
                   std::shared_ptr<HeaderSearchOptions> HSOpts,
-                  std::shared_ptr<LangOptions> LangOpts = nullptr,
-                  bool OnlyLocalDecls = false,
+                  bool UseDebugInfo = false, bool OnlyLocalDecls = false,
                   CaptureDiagsKind CaptureDiagnostics = CaptureDiagsKind::None,
                   bool AllowASTWithCompilerErrors = false,
                   bool UserFilesAreVolatile = false,
@@ -836,7 +833,7 @@ public:
       bool StorePreamblesInMemory = false,
       StringRef PreambleStoragePath = StringRef(), bool OnlyLocalDecls = false,
       CaptureDiagsKind CaptureDiagnostics = CaptureDiagsKind::None,
-      ArrayRef<RemappedFile> RemappedFiles = {},
+      ArrayRef<RemappedFile> RemappedFiles = std::nullopt,
       bool RemappedFilesKeepOriginalName = true,
       unsigned PrecompilePreambleAfterNParses = 0,
       TranslationUnitKind TUKind = TU_Complete,
@@ -864,7 +861,7 @@ public:
   /// \returns True if a failure occurred that causes the ASTUnit not to
   /// contain any translation-unit information, false otherwise.
   bool Reparse(std::shared_ptr<PCHContainerOperations> PCHContainerOps,
-               ArrayRef<RemappedFile> RemappedFiles = {},
+               ArrayRef<RemappedFile> RemappedFiles = std::nullopt,
                IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS = nullptr);
 
   /// Free data that will be re-generated on the next parse.
@@ -890,10 +887,6 @@ public:
   /// \param IncludeBriefComments Whether to include brief documentation within
   /// the set of code completions returned.
   ///
-  /// \param Act If supplied, this argument is used to parse the input file,
-  /// allowing customized parsing by overriding SyntaxOnlyAction lifecycle
-  /// methods.
-  ///
   /// FIXME: The Diag, LangOpts, SourceMgr, FileMgr, StoredDiagnostics, and
   /// OwnedBuffers parameters are all disgusting hacks. They will go away.
   void CodeComplete(StringRef File, unsigned Line, unsigned Column,
@@ -904,8 +897,7 @@ public:
                     DiagnosticsEngine &Diag, LangOptions &LangOpts,
                     SourceManager &SourceMgr, FileManager &FileMgr,
                     SmallVectorImpl<StoredDiagnostic> &StoredDiagnostics,
-                    SmallVectorImpl<const llvm::MemoryBuffer *> &OwnedBuffers,
-                    std::unique_ptr<SyntaxOnlyAction> Act);
+                    SmallVectorImpl<const llvm::MemoryBuffer *> &OwnedBuffers);
 
   /// Save this translation unit to a file with the given name.
   ///

@@ -29,6 +29,9 @@ namespace orc {
 
 // --raw_ostream operators for ORC types--
 
+/// Render a SymbolStringPtr.
+raw_ostream &operator<<(raw_ostream &OS, const SymbolStringPtr &Sym);
+
 /// Render a SymbolNameSet.
 raw_ostream &operator<<(raw_ostream &OS, const SymbolNameSet &Symbols);
 
@@ -67,7 +70,7 @@ raw_ostream &operator<<(raw_ostream &OS, const MaterializationUnit &MU);
 raw_ostream &operator<<(raw_ostream &OS,
                         const JITDylibLookupFlags &JDLookupFlags);
 
-/// Render a SymbolLookupFlags instance.
+/// Rendar a SymbolLookupFlags instance.
 raw_ostream &operator<<(raw_ostream &OS, const SymbolLookupFlags &LookupFlags);
 
 /// Render a SymbolLookupSet entry.

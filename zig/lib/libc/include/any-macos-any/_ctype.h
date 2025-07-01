@@ -63,15 +63,11 @@
  *	@(#)ctype.h	8.4 (Berkeley) 1/21/94
  */
 
-#ifndef	_CTYPE_H_
-#define _CTYPE_H_
+#ifndef	__CTYPE_H_
 #define __CTYPE_H_
 
 #include <sys/cdefs.h>
-#include <_bounds.h>
 #include <runetype.h>
-
-_LIBC_SINGLE_BY_DEFAULT()
 
 #define	_CTYPE_A	0x00000100L		/* Alpha */
 #define	_CTYPE_C	0x00000200L		/* Control */
@@ -121,7 +117,6 @@ _LIBC_SINGLE_BY_DEFAULT()
 #define __DARWIN_CTYPE_inline		__header_inline
 
 #define __DARWIN_CTYPE_TOP_inline	__header_inline
-
 
 /*
  * Use inline functions if we are allowed to and the compiler supports them.
@@ -384,5 +379,9 @@ int     isspecial(int);
 __END_DECLS
 
 #endif /* using inlines */
+
+#ifdef _USE_EXTENDED_LOCALES_
+#include <xlocale/_ctype.h>
+#endif /* _USE_EXTENDED_LOCALES_ */
 
 #endif /* !_CTYPE_H_ */

@@ -11,7 +11,7 @@ export fn entry2() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:14: error: expected type 'f32', found 'f64'

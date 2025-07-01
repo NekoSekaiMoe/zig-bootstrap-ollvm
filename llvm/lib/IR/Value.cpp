@@ -36,7 +36,7 @@
 
 using namespace llvm;
 
-cl::opt<bool> UseDerefAtPointSemantics(
+static cl::opt<unsigned> UseDerefAtPointSemantics(
     "use-dereferenceable-at-point-semantics", cl::Hidden, cl::init(false),
     cl::desc("Deref attributes and metadata infer facts at definition only"));
 
@@ -51,9 +51,9 @@ static inline Type *checkType(Type *Ty) {
 }
 
 Value::Value(Type *ty, unsigned scid)
-    : SubclassID(scid), HasValueHandle(0), SubclassOptionalData(0),
-      SubclassData(0), NumUserOperands(0), IsUsedByMD(false), HasName(false),
-      HasMetadata(false), VTy(checkType(ty)), UseList(nullptr) {
+    : VTy(checkType(ty)), UseList(nullptr), SubclassID(scid), HasValueHandle(0),
+      SubclassOptionalData(0), SubclassData(0), NumUserOperands(0),
+      IsUsedByMD(false), HasName(false), HasMetadata(false) {
   static_assert(ConstantFirstVal == 0, "!(SubclassID < ConstantFirstVal)");
   // FIXME: Why isn't this in the subclass gunk??
   // Note, we cannot call isa<CallInst> before the CallInst has been
@@ -330,7 +330,8 @@ void Value::setNameImpl(const Twine &NewName) {
 
   SmallString<256> NameData;
   StringRef NameRef = NeedNewName ? NewName.toStringRef(NameData) : "";
-  assert(!NameRef.contains(0) && "Null bytes are not allowed in names");
+  assert(NameRef.find_first_of(0) == StringRef::npos &&
+         "Null bytes are not allowed in names");
 
   // Name isn't changing?
   if (getName() == NameRef)
@@ -377,7 +378,7 @@ void Value::setNameImpl(const Twine &NewName) {
 void Value::setName(const Twine &NewName) {
   setNameImpl(NewName);
   if (Function *F = dyn_cast<Function>(this))
-    F->updateAfterNameChange();
+    F->recalculateIntrinsicID();
 }
 
 void Value::takeName(Value *V) {
@@ -574,16 +575,10 @@ void Value::replaceUsesWithIf(Value *New,
 /// with New.
 static void replaceDbgUsesOutsideBlock(Value *V, Value *New, BasicBlock *BB) {
   SmallVector<DbgVariableIntrinsic *> DbgUsers;
-  SmallVector<DbgVariableRecord *> DPUsers;
-  findDbgUsers(DbgUsers, V, &DPUsers);
+  findDbgUsers(DbgUsers, V);
   for (auto *DVI : DbgUsers) {
     if (DVI->getParent() != BB)
       DVI->replaceVariableLocationOp(V, New);
-  }
-  for (auto *DVR : DPUsers) {
-    DbgMarker *Marker = DVR->getMarker();
-    if (Marker->getParent() != BB)
-      DVR->replaceVariableLocationOp(V, New);
   }
 }
 
@@ -652,10 +647,9 @@ static const Value *stripPointerCastsAndOffsets(
       }
       V = GEP->getPointerOperand();
     } else if (Operator::getOpcode(V) == Instruction::BitCast) {
-      Value *NewV = cast<Operator>(V)->getOperand(0);
-      if (!NewV->getType()->isPointerTy())
+      V = cast<Operator>(V)->getOperand(0);
+      if (!V->getType()->isPointerTy())
         return V;
-      V = NewV;
     } else if (StripKind != PSK_ZeroIndicesSameRepresentation &&
                Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
       // TODO: If we know an address space cast will not change the
@@ -1016,7 +1010,7 @@ getOffsetFromIndex(const GEPOperator *GEP, unsigned Idx, const DataLayout &DL) {
 
     // Otherwise, we have a sequential type like an array or fixed-length
     // vector. Multiply the index by the ElementSize.
-    TypeSize Size = GTI.getSequentialElementStride(DL);
+    TypeSize Size = DL.getTypeAllocSize(GTI.getIndexedType());
     if (Size.isScalable())
       return std::nullopt;
     Offset += Size.getFixedValue() * OpC->getSExtValue();

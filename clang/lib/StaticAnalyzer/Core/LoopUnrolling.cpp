@@ -190,17 +190,6 @@ static bool isCapturedByReference(ExplodedNode *N, const DeclRefExpr *DR) {
   return FD->getType()->isReferenceType();
 }
 
-static bool isFoundInStmt(const Stmt *S, const VarDecl *VD) {
-  if (const DeclStmt *DS = dyn_cast<DeclStmt>(S)) {
-    for (const Decl *D : DS->decls()) {
-      // Once we reach the declaration of the VD we can return.
-      if (D->getCanonicalDecl() == VD)
-        return true;
-    }
-  }
-  return false;
-}
-
 // A loop counter is considered escaped if:
 // case 1: It is a global variable.
 // case 2: It is a reference parameter or a reference capture.
@@ -230,19 +219,13 @@ static bool isPossiblyEscaped(ExplodedNode *N, const DeclRefExpr *DR) {
       continue;
     }
 
-    if (isFoundInStmt(S, VD)) {
-      return false;
-    }
-
-    if (const auto *SS = dyn_cast<SwitchStmt>(S)) {
-      if (const auto *CST = dyn_cast<CompoundStmt>(SS->getBody())) {
-        for (const Stmt *CB : CST->body()) {
-          if (isFoundInStmt(CB, VD))
-            return false;
-        }
+    if (const DeclStmt *DS = dyn_cast<DeclStmt>(S)) {
+      for (const Decl *D : DS->decls()) {
+        // Once we reach the declaration of the VD we can return.
+        if (D->getCanonicalDecl() == VD)
+          return false;
       }
     }
-
     // Check the usage of the pass-by-ref function calls and adress-of operator
     // on VD and reference initialized by VD.
     ASTContext &ASTCtx =
@@ -265,8 +248,8 @@ static bool isPossiblyEscaped(ExplodedNode *N, const DeclRefExpr *DR) {
   llvm_unreachable("Reached root without finding the declaration of VD");
 }
 
-static bool shouldCompletelyUnroll(const Stmt *LoopStmt, ASTContext &ASTCtx,
-                                   ExplodedNode *Pred, unsigned &maxStep) {
+bool shouldCompletelyUnroll(const Stmt *LoopStmt, ASTContext &ASTCtx,
+                            ExplodedNode *Pred, unsigned &maxStep) {
 
   if (!isLoopStmt(LoopStmt))
     return false;
@@ -283,10 +266,10 @@ static bool shouldCompletelyUnroll(const Stmt *LoopStmt, ASTContext &ASTCtx,
   llvm::APInt InitNum =
       Matches[0].getNodeAs<IntegerLiteral>("initNum")->getValue();
   auto CondOp = Matches[0].getNodeAs<BinaryOperator>("conditionOperator");
-  unsigned MaxWidth = std::max(InitNum.getBitWidth(), BoundNum.getBitWidth());
-
-  InitNum = InitNum.zext(MaxWidth);
-  BoundNum = BoundNum.zext(MaxWidth);
+  if (InitNum.getBitWidth() != BoundNum.getBitWidth()) {
+    InitNum = InitNum.zext(BoundNum.getBitWidth());
+    BoundNum = BoundNum.zext(InitNum.getBitWidth());
+  }
 
   if (CondOp->getOpcode() == BO_GE || CondOp->getOpcode() == BO_LE)
     maxStep = (BoundNum - InitNum + 1).abs().getZExtValue();
@@ -297,7 +280,7 @@ static bool shouldCompletelyUnroll(const Stmt *LoopStmt, ASTContext &ASTCtx,
   return !isPossiblyEscaped(Pred, CounterVarRef);
 }
 
-static bool madeNewBranch(ExplodedNode *N, const Stmt *LoopStmt) {
+bool madeNewBranch(ExplodedNode *N, const Stmt *LoopStmt) {
   const Stmt *S = nullptr;
   while (!N->pred_empty()) {
     if (N->succ_size() > 1)

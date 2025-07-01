@@ -10,11 +10,8 @@
 # zstd::libzstd_shared
 # zstd::libzstd_static
 
-if(MSVC OR "${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
+if(MSVC)
   set(zstd_STATIC_LIBRARY_SUFFIX "_static\\${CMAKE_STATIC_LIBRARY_SUFFIX}$")
-elseif(WIN32)
-  set(zstd_SHARED_LIBRARY_SUFFIX "\\${CMAKE_SHARED_LIBRARY_SUFFIX}$")
-  set(zstd_STATIC_LIBRARY_SUFFIX ".lib")
 else()
   set(zstd_STATIC_LIBRARY_SUFFIX "\\${CMAKE_STATIC_LIBRARY_SUFFIX}$")
 endif()
@@ -36,13 +33,10 @@ if(zstd_FOUND)
     set(zstd_STATIC_LIBRARY "${zstd_LIBRARY}")
   elseif (NOT TARGET zstd::libzstd_shared)
     add_library(zstd::libzstd_shared SHARED IMPORTED)
-    if(MSVC OR "${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
-      include(GNUInstallDirs) # For CMAKE_INSTALL_LIBDIR and friends.
+    if(MSVC)
       # IMPORTED_LOCATION is the path to the DLL and IMPORTED_IMPLIB is the "library".
       get_filename_component(zstd_DIRNAME "${zstd_LIBRARY}" DIRECTORY)
-      if(NOT "${CMAKE_INSTALL_LIBDIR}" STREQUAL "" AND NOT "${CMAKE_INSTALL_BINDIR}" STREQUAL "")
-        string(REGEX REPLACE "${CMAKE_INSTALL_LIBDIR}$" "${CMAKE_INSTALL_BINDIR}" zstd_DIRNAME "${zstd_DIRNAME}")
-      endif()
+      string(REGEX REPLACE "${CMAKE_INSTALL_LIBDIR}$" "${CMAKE_INSTALL_BINDIR}" zstd_DIRNAME "${zstd_DIRNAME}")
       get_filename_component(zstd_BASENAME "${zstd_LIBRARY}" NAME)
       string(REGEX REPLACE "\\${CMAKE_LINK_LIBRARY_SUFFIX}$" "${CMAKE_SHARED_LIBRARY_SUFFIX}" zstd_BASENAME "${zstd_BASENAME}")
       set_target_properties(zstd::libzstd_shared PROPERTIES

@@ -29,6 +29,7 @@
 #include "clang/Lex/Token.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -132,9 +133,7 @@ static bool EvaluateDefined(PPValue &Result, Token &PeekTok, DefinedTracker &DT,
   Result.Val.setIsUnsigned(false); // Result is signed intmax_t.
   DT.IncludedUndefinedIds = !Macro;
 
-  PP.emitMacroExpansionWarnings(
-      PeekTok,
-      (II->getName() == "INFINITY" || II->getName() == "NAN") ? true : false);
+  PP.emitMacroExpansionWarnings(PeekTok);
 
   // If there is a macro, mark it used.
   if (Result.Val != 0 && ValueLive)
@@ -268,7 +267,7 @@ static bool EvaluateValue(PPValue &Result, Token &PeekTok, DefinedTracker &DT,
             const StringRef IdentifierName = II->getName();
             if (llvm::any_of(UndefPrefixes,
                              [&IdentifierName](const std::string &Prefix) {
-                               return IdentifierName.starts_with(Prefix);
+                               return IdentifierName.startswith(Prefix);
                              }))
               PP.Diag(PeekTok, diag::warn_pp_undef_prefix)
                   << AddFlagValue{llvm::join(UndefPrefixes, ",")} << II;
@@ -332,13 +331,13 @@ static bool EvaluateValue(PPValue &Result, Token &PeekTok, DefinedTracker &DT,
                                  : diag::ext_cxx23_size_t_suffix
                            : diag::err_cxx23_size_t_suffix);
 
-    // 'wb/uwb' literals are a C23 feature.
-    // '__wb/__uwb' are a C++ extension.
+    // 'wb/uwb' literals are a C2x feature. We explicitly do not support the
+    // suffix in C++ as an extension because a library-based UDL that resolves
+    // to a library type may be more appropriate there.
     if (Literal.isBitInt)
-      PP.Diag(PeekTok, PP.getLangOpts().CPlusPlus ? diag::ext_cxx_bitint_suffix
-                       : PP.getLangOpts().C23
-                           ? diag::warn_c23_compat_bitint_suffix
-                           : diag::ext_c23_bitint_suffix);
+      PP.Diag(PeekTok, PP.getLangOpts().C2x
+                           ? diag::warn_c2x_compat_bitint_suffix
+                           : diag::ext_c2x_bitint_suffix);
 
     // Parse the integer literal into Result.
     if (Literal.GetIntegerValue(Result.Val)) {
@@ -869,9 +868,7 @@ static bool EvaluateDirectiveSubExpr(PPValue &LHS, unsigned MinPrec,
 /// may occur after a #if or #elif directive.  If the expression is equivalent
 /// to "!defined(X)" return X in IfNDefMacro.
 Preprocessor::DirectiveEvalResult
-Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
-                                          Token &Tok, bool &EvaluatedDefined,
-                                          bool CheckForEoD) {
+Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro) {
   SaveAndRestore PPDir(ParsingIfOrElifDirective, true);
   // Save the current state of 'DisableMacroExpansion' and reset it to false. If
   // 'DisableMacroExpansion' is true, then we must be in a macro argument list
@@ -883,6 +880,7 @@ Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
   DisableMacroExpansion = false;
 
   // Peek ahead one token.
+  Token Tok;
   LexNonComment(Tok);
 
   // C99 6.10.1p3 - All expressions are evaluated as intmax_t or uintmax_t.
@@ -895,7 +893,7 @@ Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
     // Parse error, skip the rest of the macro line.
     SourceRange ConditionRange = ExprStartLoc;
     if (Tok.isNot(tok::eod))
-      ConditionRange = DiscardUntilEndOfDirective(Tok);
+      ConditionRange = DiscardUntilEndOfDirective();
 
     // Restore 'DisableMacroExpansion'.
     DisableMacroExpansion = DisableMacroExpansionAtStartOfDirective;
@@ -903,13 +901,10 @@ Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
     // We cannot trust the source range from the value because there was a
     // parse error. Track the range manually -- the end of the directive is the
     // end of the condition range.
-    return {std::nullopt,
-            false,
+    return {false,
             DT.IncludedUndefinedIds,
             {ExprStartLoc, ConditionRange.getEnd()}};
   }
-
-  EvaluatedDefined = DT.State != DefinedTracker::Unknown;
 
   // If we are at the end of the expression after just parsing a value, there
   // must be no (unparenthesized) binary operators involved, so we can exit
@@ -922,10 +917,7 @@ Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
 
     // Restore 'DisableMacroExpansion'.
     DisableMacroExpansion = DisableMacroExpansionAtStartOfDirective;
-    bool IsNonZero = ResVal.Val != 0;
-    SourceRange ValRange = ResVal.getRange();
-    return {std::move(ResVal.Val), IsNonZero, DT.IncludedUndefinedIds,
-            ValRange};
+    return {ResVal.Val != 0, DT.IncludedUndefinedIds, ResVal.getRange()};
   }
 
   // Otherwise, we must have a binary operator (e.g. "#if 1 < 2"), so parse the
@@ -934,37 +926,21 @@ Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
                                Tok, true, DT.IncludedUndefinedIds, *this)) {
     // Parse error, skip the rest of the macro line.
     if (Tok.isNot(tok::eod))
-      DiscardUntilEndOfDirective(Tok);
+      DiscardUntilEndOfDirective();
 
     // Restore 'DisableMacroExpansion'.
     DisableMacroExpansion = DisableMacroExpansionAtStartOfDirective;
-    SourceRange ValRange = ResVal.getRange();
-    return {std::nullopt, false, DT.IncludedUndefinedIds, ValRange};
+    return {false, DT.IncludedUndefinedIds, ResVal.getRange()};
   }
 
-  if (CheckForEoD) {
-    // If we aren't at the tok::eod token, something bad happened, like an extra
-    // ')' token.
-    if (Tok.isNot(tok::eod)) {
-      Diag(Tok, diag::err_pp_expected_eol);
-      DiscardUntilEndOfDirective(Tok);
-    }
+  // If we aren't at the tok::eod token, something bad happened, like an extra
+  // ')' token.
+  if (Tok.isNot(tok::eod)) {
+    Diag(Tok, diag::err_pp_expected_eol);
+    DiscardUntilEndOfDirective();
   }
-
-  EvaluatedDefined = EvaluatedDefined || DT.State != DefinedTracker::Unknown;
 
   // Restore 'DisableMacroExpansion'.
   DisableMacroExpansion = DisableMacroExpansionAtStartOfDirective;
-  bool IsNonZero = ResVal.Val != 0;
-  SourceRange ValRange = ResVal.getRange();
-  return {std::move(ResVal.Val), IsNonZero, DT.IncludedUndefinedIds, ValRange};
-}
-
-Preprocessor::DirectiveEvalResult
-Preprocessor::EvaluateDirectiveExpression(IdentifierInfo *&IfNDefMacro,
-                                          bool CheckForEoD) {
-  Token Tok;
-  bool EvaluatedDefined;
-  return EvaluateDirectiveExpression(IfNDefMacro, Tok, EvaluatedDefined,
-                                     CheckForEoD);
+  return {ResVal.Val != 0, DT.IncludedUndefinedIds, ResVal.getRange()};
 }

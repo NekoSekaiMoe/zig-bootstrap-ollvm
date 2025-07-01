@@ -248,13 +248,14 @@ pub const Address = extern union {
                 posix.SO.REUSEADDR,
                 &mem.toBytes(@as(c_int, 1)),
             );
-            if (@hasDecl(posix.SO, "REUSEPORT") and address.any.family != posix.AF.UNIX) {
-                try posix.setsockopt(
+            switch (native_os) {
+                .windows => {},
+                else => try posix.setsockopt(
                     sockfd,
                     posix.SOL.SOCKET,
                     posix.SO.REUSEPORT,
                     &mem.toBytes(@as(c_int, 1)),
-                );
+                ),
             }
         }
 
@@ -683,49 +684,16 @@ pub const Ip6Address = extern struct {
                 break :blk buf;
             },
         };
-
-        // Find the longest zero run
-        var longest_start: usize = 8;
-        var longest_len: usize = 0;
-        var current_start: usize = 0;
-        var current_len: usize = 0;
-
-        for (native_endian_parts, 0..) |part, i| {
-            if (part == 0) {
-                if (current_len == 0) {
-                    current_start = i;
-                }
-                current_len += 1;
-                if (current_len > longest_len) {
-                    longest_start = current_start;
-                    longest_len = current_len;
-                }
-            } else {
-                current_len = 0;
-            }
-        }
-
-        // Only compress if the longest zero run is 2 or more
-        if (longest_len < 2) {
-            longest_start = 8;
-            longest_len = 0;
-        }
-
         try out_stream.writeAll("[");
         var i: usize = 0;
         var abbrv = false;
         while (i < native_endian_parts.len) : (i += 1) {
-            if (i == longest_start) {
-                // Emit "::" for the longest zero run
+            if (native_endian_parts[i] == 0) {
                 if (!abbrv) {
                     try out_stream.writeAll(if (i == 0) "::" else ":");
                     abbrv = true;
                 }
-                i += longest_len - 1; // Skip the compressed range
                 continue;
-            }
-            if (abbrv) {
-                abbrv = false;
             }
             try std.fmt.format(out_stream, "{x}", .{native_endian_parts[i]});
             if (i != native_endian_parts.len - 1) {
@@ -783,19 +751,6 @@ fn if_nametoindex(name: []const u8) IPv6InterfaceError!u32 {
         if (index == 0)
             return error.InterfaceNotFound;
         return @as(u32, @bitCast(index));
-    }
-
-    if (native_os == .windows) {
-        if (name.len >= posix.IFNAMESIZE)
-            return error.NameTooLong;
-
-        var interface_name: [posix.IFNAMESIZE:0]u8 = undefined;
-        @memcpy(interface_name[0..name.len], name);
-        interface_name[name.len] = 0;
-        const index = std.os.windows.ws2_32.if_nametoindex(@as([*:0]const u8, &interface_name));
-        if (index == 0)
-            return error.InterfaceNotFound;
-        return index;
     }
 
     @compileError("std.net.if_nametoindex unimplemented for this OS");
@@ -898,8 +853,8 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
         defer allocator.free(port_c);
 
         const ws2_32 = windows.ws2_32;
-        const hints: posix.addrinfo = .{
-            .flags = .{ .NUMERICSERV = true },
+        const hints = posix.addrinfo{
+            .flags = ws2_32.AI.NUMERICSERV,
             .family = posix.AF.UNSPEC,
             .socktype = posix.SOCK.STREAM,
             .protocol = posix.IPPROTO.TCP,
@@ -969,8 +924,9 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
         const port_c = try std.fmt.allocPrintZ(allocator, "{}", .{port});
         defer allocator.free(port_c);
 
-        const hints: posix.addrinfo = .{
-            .flags = .{ .NUMERICSERV = true },
+        const sys = if (native_os == .windows) windows.ws2_32 else posix.system;
+        const hints = posix.addrinfo{
+            .flags = sys.AI.NUMERICSERV,
             .family = posix.AF.UNSPEC,
             .socktype = posix.SOCK.STREAM,
             .protocol = posix.IPPROTO.TCP,
@@ -980,8 +936,8 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
             .next = null,
         };
         var res: ?*posix.addrinfo = null;
-        switch (posix.system.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
-            @as(posix.system.EAI, @enumFromInt(0)) => {},
+        switch (sys.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
+            @as(sys.EAI, @enumFromInt(0)) => {},
             .ADDRFAMILY => return error.HostLacksNetworkAddresses,
             .AGAIN => return error.TemporaryNameServerFailure,
             .BADFLAGS => unreachable, // Invalid hints
@@ -997,7 +953,7 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
             },
             else => unreachable,
         }
-        defer if (res) |some| posix.system.freeaddrinfo(some);
+        defer if (res) |some| sys.freeaddrinfo(some);
 
         const addr_count = blk: {
             var count: usize = 0;
@@ -1029,6 +985,7 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
     }
 
     if (native_os == .linux) {
+        const flags = std.c.AI.NUMERICSERV;
         const family = posix.AF.UNSPEC;
         var lookup_addrs = std.ArrayList(LookupAddr).init(allocator);
         defer lookup_addrs.deinit();
@@ -1036,7 +993,7 @@ pub fn getAddressList(allocator: mem.Allocator, name: []const u8, port: u16) Get
         var canon = std.ArrayList(u8).init(arena);
         defer canon.deinit();
 
-        try linuxLookupName(&lookup_addrs, &canon, name, family, .{ .NUMERICSERV = true }, port);
+        try linuxLookupName(&lookup_addrs, &canon, name, family, flags, port);
 
         result.addrs = try arena.alloc(Address, lookup_addrs.items.len);
         if (canon.items.len != 0) {
@@ -1071,7 +1028,7 @@ fn linuxLookupName(
     canon: *std.ArrayList(u8),
     opt_name: ?[]const u8,
     family: posix.sa_family_t,
-    flags: posix.AI,
+    flags: u32,
     port: u16,
 ) !void {
     if (opt_name) |name| {
@@ -1080,7 +1037,7 @@ fn linuxLookupName(
         try canon.appendSlice(name);
         if (Address.parseExpectingFamily(name, family, port)) |addr| {
             try addrs.append(LookupAddr{ .addr = addr });
-        } else |name_err| if (flags.NUMERICHOST) {
+        } else |name_err| if ((flags & std.c.AI.NUMERICHOST) != 0) {
             return name_err;
         } else {
             try linuxLookupNameFromHosts(addrs, canon, name, family, port);
@@ -1312,10 +1269,10 @@ fn addrCmpLessThan(context: void, b: LookupAddr, a: LookupAddr) bool {
 fn linuxLookupNameFromNull(
     addrs: *std.ArrayList(LookupAddr),
     family: posix.sa_family_t,
-    flags: posix.AI,
+    flags: u32,
     port: u16,
 ) !void {
-    if (flags.PASSIVE) {
+    if ((flags & std.c.AI.PASSIVE) != 0) {
         if (family != posix.AF.INET6) {
             (try addrs.addOne()).* = LookupAddr{
                 .addr = Address.initIp4([1]u8{0} ** 4, port),
@@ -1406,7 +1363,7 @@ pub fn isValidHostName(hostname: []const u8) bool {
     if (hostname.len >= 254) return false;
     if (!std.unicode.utf8ValidateSlice(hostname)) return false;
     for (hostname) |byte| {
-        if (!std.ascii.isAscii(byte) or byte == '.' or byte == '-' or std.ascii.isAlphanumeric(byte)) {
+        if (!std.ascii.isASCII(byte) or byte == '.' or byte == '-' or std.ascii.isAlphanumeric(byte)) {
             continue;
         }
         return false;
@@ -1973,10 +1930,8 @@ pub const Server = struct {
 };
 
 test {
-    if (builtin.os.tag != .wasi) {
-        _ = Server;
-        _ = Stream;
-        _ = Address;
-        _ = @import("net/test.zig");
-    }
+    _ = @import("net/test.zig");
+    _ = Server;
+    _ = Stream;
+    _ = Address;
 }

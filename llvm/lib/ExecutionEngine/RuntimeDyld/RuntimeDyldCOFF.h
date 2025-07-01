@@ -14,7 +14,10 @@
 #define LLVM_RUNTIME_DYLD_COFF_H
 
 #include "RuntimeDyldImpl.h"
-#include "llvm/Support/MathExtras.h"
+
+#define DEBUG_TYPE "dyld"
+
+using namespace llvm;
 
 namespace llvm {
 
@@ -46,12 +49,6 @@ protected:
 
   static constexpr StringRef getImportSymbolPrefix() { return "__imp_"; }
 
-  bool relocationNeedsDLLImportStub(const RelocationRef &R) const override;
-
-  unsigned sizeAfterAddingDLLImportStub(unsigned Size) const override {
-    return alignTo(Size, PointerSize) + PointerSize;
-  }
-
 private:
   unsigned PointerSize;
   uint32_t PointerReloc;
@@ -59,4 +56,6 @@ private:
 
 } // end namespace llvm
 
-#endif // LLVM_RUNTIME_DYLD_COFF_H
+#undef DEBUG_TYPE
+
+#endif

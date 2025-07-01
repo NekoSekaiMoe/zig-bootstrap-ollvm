@@ -49,8 +49,6 @@
 #ifndef LLVM_CLANG_ASTMATCHERS_ASTMATCHERSMACROS_H
 #define LLVM_CLANG_ASTMATCHERS_ASTMATCHERSMACROS_H
 
-#include "clang/Support/Compiler.h"
-
 /// AST_MATCHER_FUNCTION(ReturnType, DefineMatcher) { ... }
 /// defines a zero parameter function named DefineMatcher() that returns a
 /// ReturnType object.
@@ -369,7 +367,7 @@
     static QualType (T::*value())() const { return &T::FunctionName; }         \
   };                                                                           \
   }                                                                            \
-  CLANG_ABI extern const ::clang::ast_matchers::internal::                     \
+  extern const ::clang::ast_matchers::internal::                               \
       TypeTraversePolymorphicMatcher<                                          \
           QualType,                                                            \
           ::clang::ast_matchers::internal::TypeMatcher##MatcherName##Getter,   \
@@ -409,7 +407,7 @@
     static TypeLoc (T::*value())() const { return &T::FunctionName##Loc; }     \
   };                                                                           \
   }                                                                            \
-  CLANG_ABI extern const ::clang::ast_matchers::internal::                     \
+  extern const ::clang::ast_matchers::internal::                               \
       TypeTraversePolymorphicMatcher<                                          \
           TypeLoc,                                                             \
           ::clang::ast_matchers::internal::                                    \

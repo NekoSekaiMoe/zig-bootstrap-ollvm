@@ -65,16 +65,6 @@ bool CSEConfigFull::shouldCSEOpc(unsigned Opc) {
   case TargetOpcode::G_BUILD_VECTOR:
   case TargetOpcode::G_BUILD_VECTOR_TRUNC:
   case TargetOpcode::G_SEXT_INREG:
-  case TargetOpcode::G_FADD:
-  case TargetOpcode::G_FSUB:
-  case TargetOpcode::G_FMUL:
-  case TargetOpcode::G_FDIV:
-  case TargetOpcode::G_FABS:
-  // TODO: support G_FNEG.
-  case TargetOpcode::G_FMAXNUM:
-  case TargetOpcode::G_FMINNUM:
-  case TargetOpcode::G_FMAXNUM_IEEE:
-  case TargetOpcode::G_FMINNUM_IEEE:
     return true;
   }
   return false;
@@ -86,9 +76,9 @@ bool CSEConfigConstantOnly::shouldCSEOpc(unsigned Opc) {
 }
 
 std::unique_ptr<CSEConfigBase>
-llvm::getStandardCSEConfigForOpt(CodeGenOptLevel Level) {
+llvm::getStandardCSEConfigForOpt(CodeGenOpt::Level Level) {
   std::unique_ptr<CSEConfigBase> Config;
-  if (Level == CodeGenOptLevel::None)
+  if (Level == CodeGenOpt::None)
     Config = std::make_unique<CSEConfigConstantOnly>();
   else
     Config = std::make_unique<CSEConfigFull>();
@@ -173,7 +163,7 @@ MachineInstr *GISelCSEInfo::getMachineInstrIfExists(FoldingSetNodeID &ID,
                                                     void *&InsertPos) {
   handleRecordedInsts();
   if (auto *Inst = getNodeIfExists(ID, MBB, InsertPos)) {
-    LLVM_DEBUG(dbgs() << "CSEInfo::Found Instr " << *Inst->MI);
+    LLVM_DEBUG(dbgs() << "CSEInfo::Found Instr " << *Inst->MI;);
     return const_cast<MachineInstr *>(Inst->MI);
   }
   return nullptr;
@@ -181,7 +171,10 @@ MachineInstr *GISelCSEInfo::getMachineInstrIfExists(FoldingSetNodeID &ID,
 
 void GISelCSEInfo::countOpcodeHit(unsigned Opc) {
 #ifndef NDEBUG
-  ++OpcodeHitTable[Opc];
+  if (OpcodeHitTable.count(Opc))
+    OpcodeHitTable[Opc] += 1;
+  else
+    OpcodeHitTable[Opc] = 1;
 #endif
   // Else do nothing.
 }
@@ -251,6 +244,8 @@ void GISelCSEInfo::changedInstr(MachineInstr &MI) { changingInstr(MI); }
 void GISelCSEInfo::analyze(MachineFunction &MF) {
   setMF(MF);
   for (auto &MBB : MF) {
+    if (MBB.empty())
+      continue;
     for (MachineInstr &MI : MBB) {
       if (!shouldCSE(MI.getOpcode()))
         continue;
@@ -320,11 +315,11 @@ Error GISelCSEInfo::verify() {
 }
 
 void GISelCSEInfo::print() {
-  LLVM_DEBUG({
-    for (auto &It : OpcodeHitTable)
-      dbgs() << "CSEInfo::CSE Hit for Opc " << It.first << " : " << It.second
-             << "\n";
-  });
+  LLVM_DEBUG(for (auto &It
+                  : OpcodeHitTable) {
+    dbgs() << "CSEInfo::CSE Hit for Opc " << It.first << " : " << It.second
+           << "\n";
+  };);
 }
 /// -----------------------------------------
 // ---- Profiling methods for FoldingSetNode --- //
@@ -363,20 +358,6 @@ GISelInstProfileBuilder::addNodeIDRegType(const RegisterBank *RB) const {
   return *this;
 }
 
-const GISelInstProfileBuilder &GISelInstProfileBuilder::addNodeIDRegType(
-    MachineRegisterInfo::VRegAttrs Attrs) const {
-  addNodeIDRegType(Attrs.Ty);
-
-  const RegClassOrRegBank &RCOrRB = Attrs.RCOrRB;
-  if (RCOrRB) {
-    if (const auto *RB = dyn_cast_if_present<const RegisterBank *>(RCOrRB))
-      addNodeIDRegType(RB);
-    else
-      addNodeIDRegType(cast<const TargetRegisterClass *>(RCOrRB));
-  }
-  return *this;
-}
-
 const GISelInstProfileBuilder &
 GISelInstProfileBuilder::addNodeIDImmediate(int64_t Imm) const {
   ID.AddInteger(Imm);
@@ -410,7 +391,17 @@ GISelInstProfileBuilder::addNodeIDFlag(unsigned Flag) const {
 
 const GISelInstProfileBuilder &
 GISelInstProfileBuilder::addNodeIDReg(Register Reg) const {
-  addNodeIDRegType(MRI.getVRegAttrs(Reg));
+  LLT Ty = MRI.getType(Reg);
+  if (Ty.isValid())
+    addNodeIDRegType(Ty);
+
+  if (const RegClassOrRegBank &RCOrRB = MRI.getRegClassOrRegBank(Reg)) {
+    if (const auto *RB = dyn_cast_if_present<const RegisterBank *>(RCOrRB))
+      addNodeIDRegType(RB);
+    else if (const auto *RC =
+                 dyn_cast_if_present<const TargetRegisterClass *>(RCOrRB))
+      addNodeIDRegType(RC);
+  }
   return *this;
 }
 

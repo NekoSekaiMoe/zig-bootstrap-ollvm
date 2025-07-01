@@ -741,7 +741,9 @@ bool X86OptimizeLEAPass::runOnMachineFunction(MachineFunction &MF) {
 
     // Remove redundant address calculations. Do it only for -Os/-Oz since only
     // a code size gain is expected from this part of the pass.
-    if (llvm::shouldOptimizeForSize(&MBB, PSI, MBFI))
+    bool OptForSize = MF.getFunction().hasOptSize() ||
+                      llvm::shouldOptimizeForSize(&MBB, PSI, MBFI);
+    if (OptForSize)
       Changed |= removeRedundantAddrCalc(LEAs);
   }
 

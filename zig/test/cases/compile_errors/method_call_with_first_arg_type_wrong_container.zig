@@ -24,7 +24,7 @@ export fn foo() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :23:6: error: no field or member function named 'init' in 'tmp.List'

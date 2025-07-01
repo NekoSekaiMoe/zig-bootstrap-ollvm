@@ -22,17 +22,15 @@
 
 using namespace llvm;
 
-Error dumpDebugAbbrev(DWARFContext &DCtx, DWARFYAML::Data &Y) {
+void dumpDebugAbbrev(DWARFContext &DCtx, DWARFYAML::Data &Y) {
   auto AbbrevSetPtr = DCtx.getDebugAbbrev();
   if (AbbrevSetPtr) {
     uint64_t AbbrevTableID = 0;
-    if (Error Err = AbbrevSetPtr->parse())
-      return Err;
-    for (const auto &AbbrvDeclSet : *AbbrevSetPtr) {
+    AbbrevSetPtr->parse();
+    for (auto AbbrvDeclSet : *AbbrevSetPtr) {
       Y.DebugAbbrev.emplace_back();
       Y.DebugAbbrev.back().ID = AbbrevTableID++;
-      for (const DWARFAbbreviationDeclaration &AbbrvDecl :
-           AbbrvDeclSet.second) {
+      for (auto AbbrvDecl : AbbrvDeclSet.second) {
         DWARFYAML::Abbrev Abbrv;
         Abbrv.Code = AbbrvDecl.getCode();
         Abbrv.Tag = AbbrvDecl.getTag();
@@ -50,7 +48,6 @@ Error dumpDebugAbbrev(DWARFContext &DCtx, DWARFYAML::Data &Y) {
       }
     }
   }
-  return Error::success();
 }
 
 Error dumpDebugAddr(DWARFContext &DCtx, DWARFYAML::Data &Y) {
@@ -223,12 +220,7 @@ void dumpDebugInfo(DWARFContext &DCtx, DWARFYAML::Data &Y) {
     if (NewUnit.Version >= 5)
       NewUnit.Type = (dwarf::UnitType)CU->getUnitType();
     const DWARFDebugAbbrev *DebugAbbrev = DCtx.getDebugAbbrev();
-    // FIXME: Ideally we would propagate this error upwards, but that would
-    // prevent us from displaying any debug info at all. For now we just consume
-    // the error and display everything that was parsed successfully.
-    if (Error Err = DebugAbbrev->parse())
-      llvm::consumeError(std::move(Err));
-
+    DebugAbbrev->parse();
     NewUnit.AbbrevTableID = std::distance(
         DebugAbbrev->begin(),
         llvm::find_if(
@@ -338,7 +330,7 @@ void dumpDebugInfo(DWARFContext &DCtx, DWARFYAML::Data &Y) {
 
       NewUnit.Entries.push_back(NewEntry);
     }
-    Y.Units.push_back(NewUnit);
+    Y.CompileUnits.push_back(NewUnit);
   }
 }
 

@@ -78,9 +78,17 @@ public:
   /// \brief If enabled, allow AMDGPU unsafe floating point atomics.
   bool AllowAMDGPUUnsafeFPAtomics = false;
 
+  /// \brief Enumeration value for AMDGPU code object version, which is the
+  /// code object version times 100.
+  enum CodeObjectVersionKind {
+    COV_None,
+    COV_2 = 200,
+    COV_3 = 300,
+    COV_4 = 400,
+    COV_5 = 500,
+  };
   /// \brief Code object version for AMDGPU.
-  llvm::CodeObjectVersionKind CodeObjectVersion =
-      llvm::CodeObjectVersionKind::COV_None;
+  CodeObjectVersionKind CodeObjectVersion = CodeObjectVersionKind::COV_None;
 
   /// \brief Enumeration values for AMDGPU printf lowering scheme
   enum class AMDGPUPrintfKind {
@@ -100,10 +108,6 @@ public:
   // "default" for the case when the user has not explicitly specified a
   // code model.
   std::string CodeModel;
-
-  // The large data threshold used for certain code models on certain
-  // architectures.
-  uint64_t LargeDataThreshold;
 
   /// The version of the SDK which was used during the compilation.
   /// The option is used for two different purposes:

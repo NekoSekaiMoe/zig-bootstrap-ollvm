@@ -22,6 +22,7 @@
 
 namespace llvm {
 class Module;
+class ModulePass;
 class Pass;
 
 struct EmbedBitcodeOptions {
@@ -37,12 +38,15 @@ struct EmbedBitcodeOptions {
 class EmbedBitcodePass : public PassInfoMixin<EmbedBitcodePass> {
   bool IsThinLTO;
   bool EmitLTOSummary;
+  ModulePassManager MPM;
 
 public:
   EmbedBitcodePass(EmbedBitcodeOptions Opts)
-      : EmbedBitcodePass(Opts.IsThinLTO, Opts.EmitLTOSummary) {}
-  EmbedBitcodePass(bool IsThinLTO, bool EmitLTOSummary)
-      : IsThinLTO(IsThinLTO), EmitLTOSummary(EmitLTOSummary) {}
+      : EmbedBitcodePass(Opts.IsThinLTO, Opts.EmitLTOSummary,
+                         ModulePassManager()) {}
+  EmbedBitcodePass(bool IsThinLTO, bool EmitLTOSummary, ModulePassManager &&MPM)
+      : IsThinLTO(IsThinLTO), EmitLTOSummary(EmitLTOSummary),
+        MPM(std::move(MPM)) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
 

@@ -62,30 +62,27 @@ ARMBaseRegisterInfo::ARMBaseRegisterInfo()
 const MCPhysReg*
 ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   const ARMSubtarget &STI = MF->getSubtarget<ARMSubtarget>();
-  ARMSubtarget::PushPopSplitVariation PushPopSplit =
-      STI.getPushPopSplitVariation(*MF);
+  bool UseSplitPush = STI.splitFramePushPop(*MF);
   const Function &F = MF->getFunction();
 
   if (F.getCallingConv() == CallingConv::GHC) {
     // GHC set of callee saved regs is empty as all those regs are
     // used for passing STG regs around
     return CSR_NoRegs_SaveList;
-  } else if (PushPopSplit == ARMSubtarget::SplitR11WindowsSEH) {
+  } else if (STI.splitFramePointerPush(*MF)) {
     return CSR_Win_SplitFP_SaveList;
   } else if (F.getCallingConv() == CallingConv::CFGuard_Check) {
     return CSR_Win_AAPCS_CFGuard_Check_SaveList;
   } else if (F.getCallingConv() == CallingConv::SwiftTail) {
-    return STI.isTargetDarwin() ? CSR_iOS_SwiftTail_SaveList
-                                : (PushPopSplit == ARMSubtarget::SplitR7
-                                       ? CSR_ATPCS_SplitPush_SwiftTail_SaveList
-                                       : CSR_AAPCS_SwiftTail_SaveList);
+    return STI.isTargetDarwin()
+               ? CSR_iOS_SwiftTail_SaveList
+               : (UseSplitPush ? CSR_ATPCS_SplitPush_SwiftTail_SaveList
+                               : CSR_AAPCS_SwiftTail_SaveList);
   } else if (F.hasFnAttribute("interrupt")) {
     if (STI.isMClass()) {
       // M-class CPUs have hardware which saves the registers needed to allow a
       // function conforming to the AAPCS to function as a handler.
-      return PushPopSplit == ARMSubtarget::SplitR7
-                 ? CSR_ATPCS_SplitPush_SaveList
-                 : CSR_AAPCS_SaveList;
+      return UseSplitPush ? CSR_ATPCS_SplitPush_SaveList : CSR_AAPCS_SaveList;
     } else if (F.getFnAttribute("interrupt").getValueAsString() == "FIQ") {
       // Fast interrupt mode gives the handler a private copy of R8-R14, so less
       // need to be saved to restore user-mode state.
@@ -102,9 +99,8 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     if (STI.isTargetDarwin())
       return CSR_iOS_SwiftError_SaveList;
 
-    return PushPopSplit == ARMSubtarget::SplitR7
-               ? CSR_ATPCS_SplitPush_SwiftError_SaveList
-               : CSR_AAPCS_SwiftError_SaveList;
+    return UseSplitPush ? CSR_ATPCS_SplitPush_SwiftError_SaveList :
+      CSR_AAPCS_SwiftError_SaveList;
   }
 
   if (STI.isTargetDarwin() && F.getCallingConv() == CallingConv::CXX_FAST_TLS)
@@ -115,12 +111,9 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   if (STI.isTargetDarwin())
     return CSR_iOS_SaveList;
 
-  if (PushPopSplit == ARMSubtarget::SplitR7)
-    return STI.createAAPCSFrameChain() ? CSR_AAPCS_SplitPush_R7_SaveList
+  if (UseSplitPush)
+    return STI.createAAPCSFrameChain() ? CSR_AAPCS_SplitPush_SaveList
                                        : CSR_ATPCS_SplitPush_SaveList;
-
-  if (PushPopSplit == ARMSubtarget::SplitR11AAPCSSignRA)
-    return CSR_AAPCS_SplitPush_R11_SaveList;
 
   return CSR_AAPCS_SaveList;
 }
@@ -214,7 +207,7 @@ getReservedRegs(const MachineFunction &MF) const {
   markSuperRegs(Reserved, ARM::PC);
   markSuperRegs(Reserved, ARM::FPSCR);
   markSuperRegs(Reserved, ARM::APSR_NZCV);
-  if (TFI->isFPReserved(MF))
+  if (TFI->hasFP(MF))
     markSuperRegs(Reserved, STI.getFramePointerReg());
   if (hasBasePointer(MF))
     markSuperRegs(Reserved, BasePtr);
@@ -262,31 +255,30 @@ bool ARMBaseRegisterInfo::isInlineAsmReadOnlyReg(const MachineFunction &MF,
 const TargetRegisterClass *
 ARMBaseRegisterInfo::getLargestLegalSuperClass(const TargetRegisterClass *RC,
                                                const MachineFunction &MF) const {
-  unsigned SuperID = RC->getID();
-  auto I = RC->superclasses().begin();
-  auto E = RC->superclasses().end();
+  const TargetRegisterClass *Super = RC;
+  TargetRegisterClass::sc_iterator I = RC->getSuperClasses();
   do {
-    switch (SuperID) {
+    switch (Super->getID()) {
     case ARM::GPRRegClassID:
     case ARM::SPRRegClassID:
     case ARM::DPRRegClassID:
     case ARM::GPRPairRegClassID:
-      return getRegClass(SuperID);
+      return Super;
     case ARM::QPRRegClassID:
     case ARM::QQPRRegClassID:
     case ARM::QQQQPRRegClassID:
       if (MF.getSubtarget<ARMSubtarget>().hasNEON())
-        return getRegClass(SuperID);
+        return Super;
       break;
     case ARM::MQPRRegClassID:
     case ARM::MQQPRRegClassID:
     case ARM::MQQQQPRRegClassID:
       if (MF.getSubtarget<ARMSubtarget>().hasMVEIntegerOps())
-        return getRegClass(SuperID);
+        return Super;
       break;
     }
-    SuperID = (I != E) ? *I++ : ~0U;
-  } while (SuperID != ~0U);
+    Super = *I++;
+  } while (Super);
   return RC;
 }
 
@@ -300,8 +292,6 @@ const TargetRegisterClass *
 ARMBaseRegisterInfo::getCrossCopyRegClass(const TargetRegisterClass *RC) const {
   if (RC == &ARM::CCRRegClass)
     return &ARM::rGPRRegClass;  // Can't copy CCR registers.
-  if (RC == &ARM::cl_FPSCR_NZCVRegClass)
-    return &ARM::rGPRRegClass;
   return RC;
 }
 
@@ -334,12 +324,12 @@ ARMBaseRegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
 }
 
 // Get the other register in a GPRPair.
-static MCRegister getPairedGPR(MCRegister Reg, bool Odd,
-                               const MCRegisterInfo *RI) {
+static MCPhysReg getPairedGPR(MCPhysReg Reg, bool Odd,
+                              const MCRegisterInfo *RI) {
   for (MCPhysReg Super : RI->superregs(Reg))
     if (ARM::GPRPairRegClass.contains(Super))
       return RI->getSubReg(Super, Odd ? ARM::gsub_1 : ARM::gsub_0);
-  return MCRegister();
+  return 0;
 }
 
 // Resolve the RegPairEven / RegPairOdd register allocator hints.
@@ -390,7 +380,7 @@ bool ARMBaseRegisterInfo::getRegAllocationHints(
     if (Reg == PairedPhys || (getEncodingValue(Reg) & 1) != Odd)
       continue;
     // Don't provide hints that are paired to a reserved register.
-    MCRegister Paired = getPairedGPR(Reg, !Odd, this);
+    MCPhysReg Paired = getPairedGPR(Reg, !Odd, this);
     if (!Paired || MRI.isReserved(Paired))
       continue;
     Hints.push_back(Reg);

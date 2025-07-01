@@ -13,7 +13,9 @@
 #include <memory>
 #include <system_error>
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
@@ -75,15 +77,13 @@ public:
   virtual void printFileHeaders() = 0;
   virtual void printSectionHeaders() = 0;
   virtual void printRelocations() = 0;
-  virtual void printSymbols(bool PrintSymbols, bool PrintDynamicSymbols,
-                            bool ExtraSymInfo) {
+  virtual void printSymbols(bool PrintSymbols, bool PrintDynamicSymbols) {
     if (PrintSymbols)
-      printSymbols(ExtraSymInfo);
+      printSymbols();
     if (PrintDynamicSymbols)
       printDynamicSymbols();
   }
   virtual void printSymbols(bool PrintSymbols, bool PrintDynamicSymbols,
-                            bool ExtraSymInfo,
                             std::optional<SymbolComparator> SymComp) {
     if (SymComp) {
       if (PrintSymbols)
@@ -91,7 +91,7 @@ public:
       if (PrintDynamicSymbols)
         printDynamicSymbols(SymComp);
     } else {
-      printSymbols(PrintSymbols, PrintDynamicSymbols, ExtraSymInfo);
+      printSymbols(PrintSymbols, PrintDynamicSymbols);
     }
   }
   virtual void printProgramHeaders(bool PrintProgramHeaders,
@@ -129,9 +129,7 @@ public:
   virtual void printGroupSections() {}
   virtual void printHashHistograms() {}
   virtual void printCGProfile() {}
-  // If PrettyPGOAnalysis is true, prints BFI as relative frequency and BPI as
-  // percentage. Otherwise raw values are displayed.
-  virtual void printBBAddrMaps(bool PrettyPGOAnalysis) {}
+  virtual void printBBAddrMaps() {}
   virtual void printAddrsig() {}
   virtual void printNotes() {}
   virtual void printELFLinkerOptions() {}
@@ -177,9 +175,9 @@ public:
   void printAsStringList(StringRef StringContent, size_t StringDataOffset = 0);
 
   void printSectionsAsString(const object::ObjectFile &Obj,
-                             ArrayRef<std::string> Sections, bool Decompress);
+                             ArrayRef<std::string> Sections);
   void printSectionsAsHex(const object::ObjectFile &Obj,
-                          ArrayRef<std::string> Sections, bool Decompress);
+                          ArrayRef<std::string> Sections);
 
   std::function<Error(const Twine &Msg)> WarningHandler;
   void reportUniqueWarning(Error Err) const;
@@ -189,7 +187,7 @@ protected:
   ScopedPrinter &W;
 
 private:
-  virtual void printSymbols(bool ExtraSymInfo) {}
+  virtual void printSymbols() {}
   virtual void printSymbols(std::optional<SymbolComparator> Comp) {}
   virtual void printDynamicSymbols() {}
   virtual void printDynamicSymbols(std::optional<SymbolComparator> Comp) {}

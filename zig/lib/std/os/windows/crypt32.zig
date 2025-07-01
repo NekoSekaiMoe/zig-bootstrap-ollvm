@@ -4,6 +4,7 @@ const BOOL = windows.BOOL;
 const DWORD = windows.DWORD;
 const BYTE = windows.BYTE;
 const LPCWSTR = windows.LPCWSTR;
+const WINAPI = windows.WINAPI;
 
 pub const CERT_INFO = *opaque {};
 pub const HCERTSTORE = *opaque {};
@@ -18,14 +19,14 @@ pub const CERT_CONTEXT = extern struct {
 pub extern "crypt32" fn CertOpenSystemStoreW(
     _: ?*const anyopaque,
     szSubsystemProtocol: LPCWSTR,
-) callconv(.winapi) ?HCERTSTORE;
+) callconv(WINAPI) ?HCERTSTORE;
 
 pub extern "crypt32" fn CertCloseStore(
     hCertStore: HCERTSTORE,
     dwFlags: DWORD,
-) callconv(.winapi) BOOL;
+) callconv(WINAPI) BOOL;
 
 pub extern "crypt32" fn CertEnumCertificatesInStore(
     hCertStore: HCERTSTORE,
     pPrevCertContext: ?*CERT_CONTEXT,
-) callconv(.winapi) ?*CERT_CONTEXT;
+) callconv(WINAPI) ?*CERT_CONTEXT;

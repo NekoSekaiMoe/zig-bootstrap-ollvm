@@ -1,4 +1,4 @@
-fn foo() callconv(.naked) void {
+fn foo() callconv(.Naked) void {
     return;
 }
 
@@ -7,7 +7,7 @@ comptime {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:5: error: cannot return from naked function

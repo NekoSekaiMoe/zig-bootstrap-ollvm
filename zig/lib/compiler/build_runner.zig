@@ -8,20 +8,9 @@ const process = std.process;
 const ArrayList = std.ArrayList;
 const File = std.fs.File;
 const Step = std.Build.Step;
-const Watch = std.Build.Watch;
-const Fuzz = std.Build.Fuzz;
-const Allocator = std.mem.Allocator;
-const fatal = std.process.fatal;
-const runner = @This();
 
 pub const root = @import("@build");
 pub const dependencies = @import("@dependencies");
-
-pub const std_options: std.Options = .{
-    .side_channels_mitigations = .none,
-    .http_disable_tls = true,
-    .crypto_fork_safety = false,
-};
 
 pub fn main() !void {
     // Here we use an ArenaAllocator backed by a page allocator because a build is a short-lived,
@@ -40,15 +29,21 @@ pub fn main() !void {
     // skip my own exe name
     var arg_idx: usize = 1;
 
-    const zig_exe = nextArg(args, &arg_idx) orelse fatal("missing zig compiler path", .{});
-    const zig_lib_dir = nextArg(args, &arg_idx) orelse fatal("missing zig lib directory path", .{});
-    const build_root = nextArg(args, &arg_idx) orelse fatal("missing build root directory path", .{});
-    const cache_root = nextArg(args, &arg_idx) orelse fatal("missing cache root directory path", .{});
-    const global_cache_root = nextArg(args, &arg_idx) orelse fatal("missing global cache root directory path", .{});
-
-    const zig_lib_directory: std.Build.Cache.Directory = .{
-        .path = zig_lib_dir,
-        .handle = try std.fs.cwd().openDir(zig_lib_dir, .{}),
+    const zig_exe = nextArg(args, &arg_idx) orelse {
+        std.debug.print("Expected path to zig compiler\n", .{});
+        return error.InvalidArgs;
+    };
+    const build_root = nextArg(args, &arg_idx) orelse {
+        std.debug.print("Expected build root directory path\n", .{});
+        return error.InvalidArgs;
+    };
+    const cache_root = nextArg(args, &arg_idx) orelse {
+        std.debug.print("Expected cache root directory path\n", .{});
+        return error.InvalidArgs;
+    };
+    const global_cache_root = nextArg(args, &arg_idx) orelse {
+        std.debug.print("Expected global cache root directory path\n", .{});
+        return error.InvalidArgs;
     };
 
     const build_root_directory: std.Build.Cache.Directory = .{
@@ -75,7 +70,6 @@ pub fn main() !void {
         .zig_exe = zig_exe,
         .env_map = try process.getEnvMap(arena),
         .global_cache_root = global_cache_directory,
-        .zig_lib_directory = zig_lib_directory,
         .host = .{
             .query = .{},
             .result = try std.zig.system.resolveTargetQuery(.{}),
@@ -103,16 +97,13 @@ pub fn main() !void {
     var dir_list = std.Build.DirList{};
     var summary: ?Summary = null;
     var max_rss: u64 = 0;
-    var skip_oom_steps = false;
+    var skip_oom_steps: bool = false;
     var color: Color = .auto;
-    var prominent_compile_errors = false;
-    var help_menu = false;
-    var steps_menu = false;
+    var seed: u32 = 0;
+    var prominent_compile_errors: bool = false;
+    var help_menu: bool = false;
+    var steps_menu: bool = false;
     var output_tmp_nonce: ?[16]u8 = null;
-    var watch = false;
-    var fuzz = false;
-    var debounce_interval_ms: u16 = 50;
-    var listen_port: u16 = 0;
 
     while (nextArg(args, &arg_idx)) |arg| {
         if (mem.startsWith(u8, arg, "-Z")) {
@@ -190,40 +181,17 @@ pub fn main() !void {
                 const next_arg = nextArg(args, &arg_idx) orelse
                     fatalWithHint("expected [all|new|failures|none] after '{s}'", .{arg});
                 summary = std.meta.stringToEnum(Summary, next_arg) orelse {
-                    fatalWithHint("expected [all|new|failures|none] after '{s}', found '{s}'", .{
+                    fatalWithHint("expected [all|failures|none] after '{s}', found '{s}'", .{
                         arg, next_arg,
                     });
                 };
+            } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
+                builder.zig_lib_dir = .{ .cwd_relative = nextArgOrFatal(args, &arg_idx) };
             } else if (mem.eql(u8, arg, "--seed")) {
                 const next_arg = nextArg(args, &arg_idx) orelse
                     fatalWithHint("expected u32 after '{s}'", .{arg});
-                graph.random_seed = std.fmt.parseUnsigned(u32, next_arg, 0) catch |err| {
-                    fatal("unable to parse seed '{s}' as unsigned 32-bit integer: {s}\n", .{
-                        next_arg, @errorName(err),
-                    });
-                };
-            } else if (mem.eql(u8, arg, "--build-id")) {
-                builder.build_id = .fast;
-            } else if (mem.startsWith(u8, arg, "--build-id=")) {
-                const style = arg["--build-id=".len..];
-                builder.build_id = std.zig.BuildId.parse(style) catch |err| {
-                    fatal("unable to parse --build-id style '{s}': {s}", .{
-                        style, @errorName(err),
-                    });
-                };
-            } else if (mem.eql(u8, arg, "--debounce")) {
-                const next_arg = nextArg(args, &arg_idx) orelse
-                    fatalWithHint("expected u16 after '{s}'", .{arg});
-                debounce_interval_ms = std.fmt.parseUnsigned(u16, next_arg, 0) catch |err| {
-                    fatal("unable to parse debounce interval '{s}' as unsigned 16-bit integer: {s}\n", .{
-                        next_arg, @errorName(err),
-                    });
-                };
-            } else if (mem.eql(u8, arg, "--port")) {
-                const next_arg = nextArg(args, &arg_idx) orelse
-                    fatalWithHint("expected u16 after '{s}'", .{arg});
-                listen_port = std.fmt.parseUnsigned(u16, next_arg, 10) catch |err| {
-                    fatal("unable to parse port '{s}' as unsigned 16-bit integer: {s}\n", .{
+                seed = std.fmt.parseUnsigned(u32, next_arg, 0) catch |err| {
+                    fatal("unable to parse seed '{s}' as 32-bit integer: {s}\n", .{
                         next_arg, @errorName(err),
                     });
                 };
@@ -232,20 +200,15 @@ pub fn main() !void {
                 try debug_log_scopes.append(next_arg);
             } else if (mem.eql(u8, arg, "--debug-pkg-config")) {
                 builder.debug_pkg_config = true;
-            } else if (mem.eql(u8, arg, "--debug-rt")) {
-                graph.debug_compiler_runtime_libs = true;
             } else if (mem.eql(u8, arg, "--debug-compile-errors")) {
                 builder.debug_compile_errors = true;
-            } else if (mem.eql(u8, arg, "--debug-incremental")) {
-                builder.debug_incremental = true;
             } else if (mem.eql(u8, arg, "--system")) {
                 // The usage text shows another argument after this parameter
                 // but it is handled by the parent process. The build runner
                 // only sees this flag.
                 graph.system_package_mode = true;
-            } else if (mem.eql(u8, arg, "--libc-runtimes") or mem.eql(u8, arg, "--glibc-runtimes")) {
-                // --glibc-runtimes was the old name of the flag; kept for compatibility for now.
-                builder.libc_runtimes_dir = nextArgOrFatal(args, &arg_idx);
+            } else if (mem.eql(u8, arg, "--glibc-runtimes")) {
+                builder.glibc_runtimes_dir = nextArgOrFatal(args, &arg_idx);
             } else if (mem.eql(u8, arg, "--verbose-link")) {
                 builder.verbose_link = true;
             } else if (mem.eql(u8, arg, "--verbose-air")) {
@@ -264,14 +227,6 @@ pub fn main() !void {
                 builder.verbose_llvm_cpu_features = true;
             } else if (mem.eql(u8, arg, "--prominent-compile-errors")) {
                 prominent_compile_errors = true;
-            } else if (mem.eql(u8, arg, "--watch")) {
-                watch = true;
-            } else if (mem.eql(u8, arg, "--fuzz")) {
-                fuzz = true;
-            } else if (mem.eql(u8, arg, "-fincremental")) {
-                graph.incremental = true;
-            } else if (mem.eql(u8, arg, "-fno-incremental")) {
-                graph.incremental = false;
             } else if (mem.eql(u8, arg, "-fwine")) {
                 builder.enable_wine = true;
             } else if (mem.eql(u8, arg, "-fno-wine")) {
@@ -292,10 +247,6 @@ pub fn main() !void {
                 builder.enable_darling = true;
             } else if (mem.eql(u8, arg, "-fno-darling")) {
                 builder.enable_darling = false;
-            } else if (mem.eql(u8, arg, "-fallow-so-scripts")) {
-                graph.allow_so_scripts = true;
-            } else if (mem.eql(u8, arg, "-fno-allow-so-scripts")) {
-                graph.allow_so_scripts = false;
             } else if (mem.eql(u8, arg, "-freference-trace")) {
                 builder.reference_trace = 256;
             } else if (mem.startsWith(u8, arg, "-freference-trace=")) {
@@ -334,26 +285,23 @@ pub fn main() !void {
     const ttyconf = get_tty_conf(color, stderr);
     switch (ttyconf) {
         .no_color => try graph.env_map.put("NO_COLOR", "1"),
-        .escape_codes => try graph.env_map.put("CLICOLOR_FORCE", "1"),
+        .escape_codes => try graph.env_map.put("YES_COLOR", "1"),
         .windows_api => {},
     }
 
-    const main_progress_node = std.Progress.start(.{
-        .disable_printing = (color == .off),
-    });
-    defer main_progress_node.end();
+    var progress: std.Progress = .{ .dont_print_on_dumb = true };
+    const main_progress_node = progress.start("", 0);
 
     builder.debug_log_scopes = debug_log_scopes.items;
     builder.resolveInstallPrefix(install_prefix, dir_list);
     {
-        var prog_node = main_progress_node.start("Configure", 0);
+        var prog_node = main_progress_node.start("user build.zig logic", 0);
         defer prog_node.end();
         try builder.runBuild(root);
-        createModuleDependencies(builder) catch @panic("OOM");
     }
 
     if (graph.needed_lazy_dependencies.entries.len != 0) {
-        var buffer: std.ArrayListUnmanaged(u8) = .empty;
+        var buffer: std.ArrayListUnmanaged(u8) = .{};
         for (graph.needed_lazy_dependencies.keys()) |k| {
             try buffer.appendSlice(arena, k);
             try buffer.append(arena, '\n');
@@ -391,17 +339,13 @@ pub fn main() !void {
         .max_rss_is_default = false,
         .max_rss_mutex = .{},
         .skip_oom_steps = skip_oom_steps,
-        .watch = watch,
-        .fuzz = fuzz,
         .memory_blocked_steps = std.ArrayList(*Step).init(arena),
-        .step_stack = .{},
         .prominent_compile_errors = prominent_compile_errors,
 
         .claimed_rss = 0,
-        .summary = summary orelse if (watch) .new else .failures,
+        .summary = summary,
         .ttyconf = ttyconf,
         .stderr = stderr,
-        .thread_pool = undefined,
     };
 
     if (run.max_rss == 0) {
@@ -409,114 +353,18 @@ pub fn main() !void {
         run.max_rss_is_default = true;
     }
 
-    const gpa = arena;
-    prepare(gpa, arena, builder, targets.items, &run, graph.random_seed) catch |err| switch (err) {
+    runStepNames(
+        arena,
+        builder,
+        targets.items,
+        main_progress_node,
+        thread_pool_options,
+        &run,
+        seed,
+    ) catch |err| switch (err) {
         error.UncleanExit => process.exit(1),
         else => return err,
     };
-
-    var w = if (watch) try Watch.init() else undefined;
-
-    try run.thread_pool.init(thread_pool_options);
-    defer run.thread_pool.deinit();
-
-    rebuild: while (true) {
-        runStepNames(
-            gpa,
-            builder,
-            targets.items,
-            main_progress_node,
-            &run,
-        ) catch |err| switch (err) {
-            error.UncleanExit => {
-                assert(!run.watch);
-                process.exit(1);
-            },
-            else => return err,
-        };
-        if (fuzz) {
-            switch (builtin.os.tag) {
-                // Current implementation depends on two things that need to be ported to Windows:
-                // * Memory-mapping to share data between the fuzzer and build runner.
-                // * COFF/PE support added to `std.debug.Info` (it needs a batching API for resolving
-                //   many addresses to source locations).
-                .windows => fatal("--fuzz not yet implemented for {s}", .{@tagName(builtin.os.tag)}),
-                else => {},
-            }
-            if (@bitSizeOf(usize) != 64) {
-                // Current implementation depends on posix.mmap()'s second parameter, `length: usize`,
-                // being compatible with `std.fs.getEndPos() u64`'s return value. This is not the case
-                // on 32-bit platforms.
-                // Affects or affected by issues #5185, #22523, and #22464.
-                fatal("--fuzz not yet implemented on {d}-bit platforms", .{@bitSizeOf(usize)});
-            }
-            const listen_address = std.net.Address.parseIp("127.0.0.1", listen_port) catch unreachable;
-            try Fuzz.start(
-                gpa,
-                arena,
-                global_cache_directory,
-                zig_lib_directory,
-                zig_exe,
-                &run.thread_pool,
-                run.step_stack.keys(),
-                run.ttyconf,
-                listen_address,
-                main_progress_node,
-            );
-        }
-
-        if (!watch) return cleanExit();
-
-        if (!Watch.have_impl) fatal("--watch not yet implemented for {s}", .{@tagName(builtin.os.tag)});
-
-        try w.update(gpa, run.step_stack.keys());
-
-        // Wait until a file system notification arrives. Read all such events
-        // until the buffer is empty. Then wait for a debounce interval, resetting
-        // if any more events come in. After the debounce interval has passed,
-        // trigger a rebuild on all steps with modified inputs, as well as their
-        // recursive dependants.
-        var caption_buf: [std.Progress.Node.max_name_len]u8 = undefined;
-        const caption = std.fmt.bufPrint(&caption_buf, "watching {d} directories, {d} processes", .{
-            w.dir_table.entries.len, countSubProcesses(run.step_stack.keys()),
-        }) catch &caption_buf;
-        var debouncing_node = main_progress_node.start(caption, 0);
-        var debounce_timeout: Watch.Timeout = .none;
-        while (true) switch (try w.wait(gpa, debounce_timeout)) {
-            .timeout => {
-                debouncing_node.end();
-                markFailedStepsDirty(gpa, run.step_stack.keys());
-                continue :rebuild;
-            },
-            .dirty => if (debounce_timeout == .none) {
-                debounce_timeout = .{ .ms = debounce_interval_ms };
-                debouncing_node.end();
-                debouncing_node = main_progress_node.start("Debouncing (Change Detected)", 0);
-            },
-            .clean => {},
-        };
-    }
-}
-
-fn markFailedStepsDirty(gpa: Allocator, all_steps: []const *Step) void {
-    for (all_steps) |step| switch (step.state) {
-        .dependency_failure, .failure, .skipped => step.recursiveReset(gpa),
-        else => continue,
-    };
-    // Now that all dirty steps have been found, the remaining steps that
-    // succeeded from last run shall be marked "cached".
-    for (all_steps) |step| switch (step.state) {
-        .success => step.result_cached = true,
-        else => continue,
-    };
-}
-
-fn countSubProcesses(all_steps: []const *Step) usize {
-    var count: usize = 0;
-    for (all_steps) |s| {
-        count += @intFromBool(s.getZigProcess() != null);
-    }
-    return count;
 }
 
 const Run = struct {
@@ -524,33 +372,27 @@ const Run = struct {
     max_rss_is_default: bool,
     max_rss_mutex: std.Thread.Mutex,
     skip_oom_steps: bool,
-    watch: bool,
-    fuzz: bool,
     memory_blocked_steps: std.ArrayList(*Step),
-    step_stack: std.AutoArrayHashMapUnmanaged(*Step, void),
     prominent_compile_errors: bool,
-    thread_pool: std.Thread.Pool,
 
     claimed_rss: usize,
-    summary: Summary,
+    summary: ?Summary,
     ttyconf: std.io.tty.Config,
     stderr: File,
-
-    fn cleanExit(run: Run) void {
-        if (run.watch or run.fuzz) return;
-        return runner.cleanExit();
-    }
 };
 
-fn prepare(
-    gpa: Allocator,
-    arena: Allocator,
+fn runStepNames(
+    arena: std.mem.Allocator,
     b: *std.Build,
     step_names: []const []const u8,
+    parent_prog_node: *std.Progress.Node,
+    thread_pool_options: std.Thread.Pool.Options,
     run: *Run,
     seed: u32,
 ) !void {
-    const step_stack = &run.step_stack;
+    const gpa = b.allocator;
+    var step_stack: std.AutoArrayHashMapUnmanaged(*Step, void) = .{};
+    defer step_stack.deinit(gpa);
 
     if (step_names.len == 0) {
         try step_stack.put(gpa, b.default_step, {});
@@ -573,8 +415,8 @@ fn prepare(
     rand.shuffle(*Step, starting_steps);
 
     for (starting_steps) |s| {
-        constructGraphAndCheckForDependencyLoop(b, s, &run.step_stack, rand) catch |err| switch (err) {
-            error.DependencyLoopDetected => return uncleanExit(),
+        constructGraphAndCheckForDependencyLoop(b, s, &step_stack, rand) catch |err| switch (err) {
+            error.DependencyLoopDetected => return error.UncleanExit,
             else => |e| return e,
         };
     }
@@ -599,22 +441,18 @@ fn prepare(
             if (run.max_rss_is_default) {
                 std.debug.print("note: use --maxrss to override the default", .{});
             }
+            return error.UncleanExit;
         }
     }
-}
 
-fn runStepNames(
-    gpa: Allocator,
-    b: *std.Build,
-    step_names: []const []const u8,
-    parent_prog_node: std.Progress.Node,
-    run: *Run,
-) !void {
-    const step_stack = &run.step_stack;
-    const thread_pool = &run.thread_pool;
+    var thread_pool: std.Thread.Pool = undefined;
+    try thread_pool.init(thread_pool_options);
+    defer thread_pool.deinit();
 
     {
-        const step_prog = parent_prog_node.start("steps", step_stack.count());
+        defer parent_prog_node.end();
+
+        var step_prog = parent_prog_node.start("steps", step_stack.count());
         defer step_prog.end();
 
         var wait_group: std.Thread.WaitGroup = .{};
@@ -629,7 +467,7 @@ fn runStepNames(
             if (step.state == .skipped_oom) continue;
 
             thread_pool.spawnWg(&wait_group, workerMakeOneStep, .{
-                &wait_group, b, step, step_prog, run,
+                &wait_group, &thread_pool, b, step, &step_prog, run,
             });
         }
     }
@@ -646,6 +484,8 @@ fn runStepNames(
     var failure_count: usize = 0;
     var pending_count: usize = 0;
     var total_compile_errors: usize = 0;
+    var compile_error_steps: std.ArrayListUnmanaged(*Step) = .{};
+    defer compile_error_steps.deinit(gpa);
 
     for (step_stack.keys()) |s| {
         test_fail_count += s.test_results.fail_count;
@@ -675,6 +515,7 @@ fn runStepNames(
                 const compile_errors_len = s.result_error_bundle.errorMessageCount();
                 if (compile_errors_len > 0) {
                     total_compile_errors += compile_errors_len;
+                    try compile_error_steps.append(gpa, s);
                 }
             },
         }
@@ -682,21 +523,13 @@ fn runStepNames(
 
     // A proper command line application defaults to silently succeeding.
     // The user may request verbose mode if they have a different preference.
-    const failures_only = switch (run.summary) {
-        .failures, .none => true,
-        else => false,
-    };
-    if (failure_count == 0 and failures_only) {
-        return run.cleanExit();
-    }
+    const failures_only = run.summary != .all and run.summary != .new;
+    if (failure_count == 0 and failures_only) return cleanExit();
 
     const ttyconf = run.ttyconf;
+    const stderr = run.stderr;
 
-    if (run.summary != .none) {
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
-        const stderr = run.stderr;
-
+    if (run.summary != Summary.none) {
         const total_count = success_count + failure_count + pending_count + skipped_count;
         ttyconf.setColor(stderr, .cyan) catch {};
         stderr.writeAll("Build Summary:") catch {};
@@ -710,23 +543,25 @@ fn runStepNames(
         if (test_fail_count > 0) stderr.writer().print("; {d} failed", .{test_fail_count}) catch {};
         if (test_leak_count > 0) stderr.writer().print("; {d} leaked", .{test_leak_count}) catch {};
 
+        if (run.summary == null) {
+            ttyconf.setColor(stderr, .dim) catch {};
+            stderr.writeAll(" (disable with --summary none)") catch {};
+            ttyconf.setColor(stderr, .reset) catch {};
+        }
         stderr.writeAll("\n") catch {};
 
         // Print a fancy tree with build results.
-        var step_stack_copy = try step_stack.clone(gpa);
-        defer step_stack_copy.deinit(gpa);
-
         var print_node: PrintNode = .{ .parent = null };
         if (step_names.len == 0) {
             print_node.last = true;
-            printTreeStep(b, b.default_step, run, stderr, ttyconf, &print_node, &step_stack_copy) catch {};
+            printTreeStep(b, b.default_step, run, stderr, ttyconf, &print_node, &step_stack) catch {};
         } else {
             const last_index = if (run.summary == .all) b.top_level_steps.count() else blk: {
                 var i: usize = step_names.len;
                 while (i > 0) {
                     i -= 1;
                     const step = b.top_level_steps.get(step_names[i]).?.step;
-                    const found = switch (run.summary) {
+                    const found = switch (run.summary orelse .failures) {
                         .all, .none => unreachable,
                         .failures => step.state != .success,
                         .new => !step.result_cached,
@@ -738,33 +573,30 @@ fn runStepNames(
             for (step_names, 0..) |step_name, i| {
                 const tls = b.top_level_steps.get(step_name).?;
                 print_node.last = i + 1 == last_index;
-                printTreeStep(b, &tls.step, run, stderr, ttyconf, &print_node, &step_stack_copy) catch {};
+                printTreeStep(b, &tls.step, run, stderr, ttyconf, &print_node, &step_stack) catch {};
             }
         }
     }
 
-    if (failure_count == 0) {
-        return run.cleanExit();
-    }
+    if (failure_count == 0) return cleanExit();
 
     // Finally, render compile errors at the bottom of the terminal.
+    // We use a separate compile_error_steps array list because step_stack is destructively
+    // mutated in printTreeStep above.
     if (run.prominent_compile_errors and total_compile_errors > 0) {
-        for (step_stack.keys()) |s| {
+        for (compile_error_steps.items) |s| {
             if (s.result_error_bundle.errorMessageCount() > 0) {
-                s.result_error_bundle.renderToStdErr(.{ .ttyconf = ttyconf });
+                s.result_error_bundle.renderToStdErr(renderOptions(ttyconf));
             }
         }
 
-        if (!run.watch) {
-            // Signal to parent process that we have printed compile errors. The
-            // parent process may choose to omit the "following command failed"
-            // line in this case.
-            std.debug.lockStdErr();
-            process.exit(2);
-        }
+        // Signal to parent process that we have printed compile errors. The
+        // parent process may choose to omit the "following command failed"
+        // line in this case.
+        process.exit(2);
     }
 
-    if (!run.watch) return uncleanExit();
+    process.exit(1);
 }
 
 const PrintNode = struct {
@@ -935,7 +767,7 @@ fn printTreeStep(
     step_stack: *std.AutoArrayHashMapUnmanaged(*Step, void),
 ) !void {
     const first = step_stack.swapRemove(s);
-    const summary = run.summary;
+    const summary = run.summary orelse .failures;
     const skip = switch (summary) {
         .none => unreachable,
         .all => false,
@@ -1056,13 +888,12 @@ fn constructGraphAndCheckForDependencyLoop(
 
 fn workerMakeOneStep(
     wg: *std.Thread.WaitGroup,
+    thread_pool: *std.Thread.Pool,
     b: *std.Build,
     s: *Step,
-    prog_node: std.Progress.Node,
+    prog_node: *std.Progress.Node,
     run: *Run,
 ) void {
-    const thread_pool = &run.thread_pool;
-
     // First, check the conditions for running this step. If they are not met,
     // then we return without doing the step, relying on another worker to
     // queue this step up again when dependencies are met.
@@ -1110,14 +941,11 @@ fn workerMakeOneStep(
         }
     }
 
-    const sub_prog_node = prog_node.start(s.name, 0);
+    var sub_prog_node = prog_node.start(s.name, 0);
+    sub_prog_node.activate();
     defer sub_prog_node.end();
 
-    const make_result = s.make(.{
-        .progress_node = sub_prog_node,
-        .thread_pool = thread_pool,
-        .watch = run.watch,
-    });
+    const make_result = s.make(&sub_prog_node);
 
     // No matter the result, we want to display error/warning messages.
     const show_compile_errors = !run.prominent_compile_errors and
@@ -1126,11 +954,10 @@ fn workerMakeOneStep(
     const show_stderr = s.result_stderr.len > 0;
 
     if (show_error_msgs or show_compile_errors or show_stderr) {
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
+        sub_prog_node.context.lock_stderr();
+        defer sub_prog_node.context.unlock_stderr();
 
-        const gpa = b.allocator;
-        printErrorMessages(gpa, s, .{ .ttyconf = run.ttyconf }, run.stderr, run.prominent_compile_errors) catch {};
+        printErrorMessages(b, s, run) catch {};
     }
 
     handle_result: {
@@ -1147,7 +974,7 @@ fn workerMakeOneStep(
         // Successful completion of a step, so we queue up its dependants as well.
         for (s.dependants.items) |dep| {
             thread_pool.spawnWg(wg, workerMakeOneStep, .{
-                wg, b, dep, prog_node, run,
+                wg, thread_pool, b, dep, prog_node, run,
             });
         }
     }
@@ -1172,7 +999,7 @@ fn workerMakeOneStep(
                 remaining -= dep.max_rss;
 
                 thread_pool.spawnWg(wg, workerMakeOneStep, .{
-                    wg, b, dep, prog_node, run,
+                    wg, thread_pool, b, dep, prog_node, run,
                 });
             } else {
                 run.memory_blocked_steps.items[i] = dep;
@@ -1183,17 +1010,15 @@ fn workerMakeOneStep(
     }
 }
 
-pub fn printErrorMessages(
-    gpa: Allocator,
-    failing_step: *Step,
-    options: std.zig.ErrorBundle.RenderOptions,
-    stderr: File,
-    prominent_compile_errors: bool,
-) !void {
+fn printErrorMessages(b: *std.Build, failing_step: *Step, run: *const Run) !void {
+    const gpa = b.allocator;
+    const stderr = run.stderr;
+    const ttyconf = run.ttyconf;
+
     // Provide context for where these error messages are coming from by
     // printing the corresponding Step subtree.
 
-    var step_stack: std.ArrayListUnmanaged(*Step) = .empty;
+    var step_stack: std.ArrayListUnmanaged(*Step) = .{};
     defer step_stack.deinit(gpa);
     try step_stack.append(gpa, failing_step);
     while (step_stack.items[step_stack.items.len - 1].dependants.items.len != 0) {
@@ -1201,10 +1026,9 @@ pub fn printErrorMessages(
     }
 
     // Now, `step_stack` has the subtree that we want to print, in reverse order.
-    const ttyconf = options.ttyconf;
     try ttyconf.setColor(stderr, .dim);
     var indent: usize = 0;
-    while (step_stack.pop()) |s| : (indent += 1) {
+    while (step_stack.popOrNull()) |s| : (indent += 1) {
         if (indent > 0) {
             try stderr.writer().writeByteNTimes(' ', (indent - 1) * 3);
             try printChildNodePrefix(stderr, ttyconf);
@@ -1227,9 +1051,8 @@ pub fn printErrorMessages(
         }
     }
 
-    if (!prominent_compile_errors and failing_step.result_error_bundle.errorMessageCount() > 0) {
-        try failing_step.result_error_bundle.renderToWriter(options, stderr.writer());
-    }
+    if (!run.prominent_compile_errors and failing_step.result_error_bundle.errorMessageCount() > 0)
+        try failing_step.result_error_bundle.renderToWriter(renderOptions(ttyconf), stderr.writer());
 
     for (failing_step.result_error_msgs.items) |msg| {
         try ttyconf.setColor(stderr, .red);
@@ -1277,10 +1100,9 @@ fn usage(b: *std.Build, out_stream: anytype) !void {
         \\  -fqemu,     -fno-qemu        Integration with system-installed QEMU to execute
         \\                               foreign-architecture programs on Linux hosts
         \\                               (default: no)
-        \\  --libc-runtimes [path]       Enhances QEMU integration by providing dynamic libc
-        \\                               (e.g. glibc or musl) built for multiple foreign
-        \\                               architectures, allowing execution of non-native
-        \\                               programs that link with libc.
+        \\  --glibc-runtimes [path]      Enhances QEMU integration by providing glibc built
+        \\                               for multiple foreign architectures, allowing
+        \\                               execution of non-native programs that link with glibc.
         \\  -frosetta,  -fno-rosetta     Rely on Rosetta to execute x86_64 programs on
         \\                               ARM64 macOS hosts. (default: no)
         \\  -fwasmtime, -fno-wasmtime    Integration with system-installed wasmtime to
@@ -1301,14 +1123,7 @@ fn usage(b: *std.Build, out_stream: anytype) !void {
         \\  -j<N>                        Limit concurrent jobs (default is to use all CPU cores)
         \\  --maxrss <bytes>             Limit memory usage (default is to use available memory)
         \\  --skip-oom-steps             Instead of failing, skip steps that would exceed --maxrss
-        \\  --fetch[=mode]               Fetch dependency tree (optionally choose laziness) and exit
-        \\    needed                     (Default) Lazy dependencies are fetched as needed
-        \\    all                        Lazy dependencies are always fetched
-        \\  --watch                      Continuously rebuild when source files are modified
-        \\  --fuzz                       Continuously search for unit test failures
-        \\  --debounce <ms>              Delay before rebuilding after changed file detected
-        \\     -fincremental             Enable incremental compilation
-        \\  -fno-incremental             Disable incremental compilation
+        \\  --fetch                      Exit after fetching dependency tree
         \\
         \\Project-Specific Options:
         \\
@@ -1366,24 +1181,14 @@ fn usage(b: *std.Build, out_stream: anytype) !void {
         \\Advanced Options:
         \\  -freference-trace[=num]      How many lines of reference trace should be shown per compile error
         \\  -fno-reference-trace         Disable reference trace
-        \\  -fallow-so-scripts           Allows .so files to be GNU ld scripts
-        \\  -fno-allow-so-scripts        (default) .so files must be ELF files
         \\  --build-file [file]          Override path to build.zig
         \\  --cache-dir [path]           Override path to local Zig cache directory
         \\  --global-cache-dir [path]    Override path to global Zig cache directory
         \\  --zig-lib-dir [arg]          Override path to Zig lib directory
         \\  --build-runner [file]        Override path to build runner
         \\  --seed [integer]             For shuffling dependency traversal order (default: random)
-        \\  --build-id[=style]           At a minor link-time expense, embeds a build ID in binaries
-        \\      fast                     8-byte non-cryptographic hash (COFF, ELF, WASM)
-        \\      sha1, tree               20-byte cryptographic hash (ELF, WASM)
-        \\      md5                      16-byte cryptographic hash (ELF)
-        \\      uuid                     16-byte random UUID (ELF, WASM)
-        \\      0x[hexstring]            Constant ID, maximum 32 bytes (ELF, WASM)
-        \\      none                     (default) No build ID
         \\  --debug-log [scope]          Enable debugging the compiler
         \\  --debug-pkg-config           Fail if unknown pkg-config flags encountered
-        \\  --debug-rt                   Debug compiler runtime libraries
         \\  --verbose-link               Enable compiler debug output for linking
         \\  --verbose-air                Enable compiler debug output for Zig AIR
         \\  --verbose-llvm-ir[=file]     Enable compiler debug output for LLVM IR
@@ -1395,41 +1200,32 @@ fn usage(b: *std.Build, out_stream: anytype) !void {
     );
 }
 
-fn nextArg(args: []const [:0]const u8, idx: *usize) ?[:0]const u8 {
+fn nextArg(args: [][:0]const u8, idx: *usize) ?[:0]const u8 {
     if (idx.* >= args.len) return null;
     defer idx.* += 1;
     return args[idx.*];
 }
 
-fn nextArgOrFatal(args: []const [:0]const u8, idx: *usize) [:0]const u8 {
+fn nextArgOrFatal(args: [][:0]const u8, idx: *usize) [:0]const u8 {
     return nextArg(args, idx) orelse {
-        std.debug.print("expected argument after '{s}'\n  access the help menu with 'zig build -h'\n", .{args[idx.* - 1]});
+        std.debug.print("expected argument after '{s}'\n  access the help menu with 'zig build -h'\n", .{args[idx.*]});
         process.exit(1);
     };
 }
 
-fn argsRest(args: []const [:0]const u8, idx: usize) ?[]const [:0]const u8 {
+fn argsRest(args: [][:0]const u8, idx: usize) ?[][:0]const u8 {
     if (idx >= args.len) return null;
     return args[idx..];
 }
 
-/// Perhaps in the future there could be an Advanced Options flag such as
-/// --debug-build-runner-leaks which would make this function return instead of
-/// calling exit.
 fn cleanExit() void {
-    std.debug.lockStdErr();
+    // Perhaps in the future there could be an Advanced Options flag such as
+    // --debug-build-runner-leaks which would make this function return instead
+    // of calling exit.
     process.exit(0);
 }
 
-/// Perhaps in the future there could be an Advanced Options flag such as
-/// --debug-build-runner-leaks which would make this function return instead of
-/// calling exit.
-fn uncleanExit() error{UncleanExit} {
-    std.debug.lockStdErr();
-    process.exit(1);
-}
-
-const Color = std.zig.Color;
+const Color = enum { auto, off, on };
 const Summary = enum { all, new, failures, none };
 
 fn get_tty_conf(color: Color, stderr: File) std.io.tty.Config {
@@ -1440,8 +1236,21 @@ fn get_tty_conf(color: Color, stderr: File) std.io.tty.Config {
     };
 }
 
+fn renderOptions(ttyconf: std.io.tty.Config) std.zig.ErrorBundle.RenderOptions {
+    return .{
+        .ttyconf = ttyconf,
+        .include_source_line = ttyconf != .no_color,
+        .include_reference_trace = ttyconf != .no_color,
+    };
+}
+
 fn fatalWithHint(comptime f: []const u8, args: anytype) noreturn {
     std.debug.print(f ++ "\n  access the help menu with 'zig build -h'\n", args);
+    process.exit(1);
+}
+
+fn fatal(comptime f: []const u8, args: anytype) noreturn {
+    std.debug.print(f ++ "\n", args);
     process.exit(1);
 }
 
@@ -1461,83 +1270,5 @@ fn validateSystemLibraryOptions(b: *std.Build) void {
     if (bad) {
         std.debug.print("  access the help menu with 'zig build -h'\n", .{});
         process.exit(1);
-    }
-}
-
-/// Starting from all top-level steps in `b`, traverses the entire step graph
-/// and adds all step dependencies implied by module graphs.
-fn createModuleDependencies(b: *std.Build) Allocator.Error!void {
-    const arena = b.graph.arena;
-
-    var all_steps: std.AutoArrayHashMapUnmanaged(*Step, void) = .empty;
-    var next_step_idx: usize = 0;
-
-    try all_steps.ensureUnusedCapacity(arena, b.top_level_steps.count());
-    for (b.top_level_steps.values()) |tls| {
-        all_steps.putAssumeCapacityNoClobber(&tls.step, {});
-    }
-
-    while (next_step_idx < all_steps.count()) {
-        const step = all_steps.keys()[next_step_idx];
-        next_step_idx += 1;
-
-        // Set up any implied dependencies for this step. It's important that we do this first, so
-        // that the loop below discovers steps implied by the module graph.
-        try createModuleDependenciesForStep(step);
-
-        try all_steps.ensureUnusedCapacity(arena, step.dependencies.items.len);
-        for (step.dependencies.items) |other_step| {
-            all_steps.putAssumeCapacity(other_step, {});
-        }
-    }
-}
-
-/// If the given `Step` is a `Step.Compile`, adds any dependencies for that step which
-/// are implied by the module graph rooted at `step.cast(Step.Compile).?.root_module`.
-fn createModuleDependenciesForStep(step: *Step) Allocator.Error!void {
-    const root_module = if (step.cast(Step.Compile)) |cs| root: {
-        break :root cs.root_module;
-    } else return; // not a compile step so no module dependencies
-
-    // Starting from `root_module`, discover all modules in this graph.
-    const modules = root_module.getGraph().modules;
-
-    // For each of those modules, set up the implied step dependencies.
-    for (modules) |mod| {
-        if (mod.root_source_file) |lp| lp.addStepDependencies(step);
-        for (mod.include_dirs.items) |include_dir| switch (include_dir) {
-            .path,
-            .path_system,
-            .path_after,
-            .framework_path,
-            .framework_path_system,
-            .embed_path,
-            => |lp| lp.addStepDependencies(step),
-
-            .other_step => |other| {
-                other.getEmittedIncludeTree().addStepDependencies(step);
-                step.dependOn(&other.step);
-            },
-
-            .config_header_step => |other| step.dependOn(&other.step),
-        };
-        for (mod.lib_paths.items) |lp| lp.addStepDependencies(step);
-        for (mod.rpaths.items) |rpath| switch (rpath) {
-            .lazy_path => |lp| lp.addStepDependencies(step),
-            .special => {},
-        };
-        for (mod.link_objects.items) |link_object| switch (link_object) {
-            .static_path,
-            .assembly_file,
-            => |lp| lp.addStepDependencies(step),
-            .other_step => |other| step.dependOn(&other.step),
-            .system_lib => {},
-            .c_source_file => |source| source.file.addStepDependencies(step),
-            .c_source_files => |source_files| source_files.root.addStepDependencies(step),
-            .win32_resource_file => |rc_source| {
-                rc_source.file.addStepDependencies(step);
-                for (rc_source.include_paths) |lp| lp.addStepDependencies(step);
-            },
-        };
     }
 }

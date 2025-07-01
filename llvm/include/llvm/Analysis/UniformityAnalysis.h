@@ -15,9 +15,7 @@
 #define LLVM_ANALYSIS_UNIFORMITYANALYSIS_H
 
 #include "llvm/ADT/GenericUniformityInfo.h"
-#include "llvm/IR/PassManager.h"
-#include "llvm/IR/SSAContext.h"
-#include "llvm/Pass.h"
+#include "llvm/Analysis/CycleAnalysis.h"
 
 namespace llvm {
 
@@ -49,8 +47,6 @@ public:
   explicit UniformityInfoPrinterPass(raw_ostream &OS);
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-
-  static bool isRequired() { return true; }
 };
 
 /// Legacy analysis pass which computes a \ref CycleInfo.

@@ -41,7 +41,8 @@ public:
 
   /// tblgen'erated driver function for lowering simple MI->MC
   /// pseudo instructions.
-  bool lowerPseudoInstExpansion(const MachineInstr *MI, MCInst &Inst);
+  bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
+                                   const MachineInstr *MI);
 
   void emitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) override;
 

@@ -35,7 +35,6 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -44,17 +43,12 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 using namespace llvm;
 
 #define DEBUG_TYPE "memory-builtins"
-
-static cl::opt<unsigned> ObjectSizeOffsetVisitorMaxVisitInstructions(
-    "object-size-offset-visitor-max-visit-instructions",
-    cl::desc("Maximum number of instructions for ObjectSizeOffsetVisitor to "
-             "look at"),
-    cl::init(100));
 
 enum AllocType : uint8_t {
   OpNewLike          = 1<<0, // allocates; never returns null
@@ -156,7 +150,8 @@ static const std::pair<LibFunc, AllocFnsTy> AllocationFnData[] = {
 };
 // clang-format on
 
-static const Function *getCalledFunction(const Value *V) {
+static const Function *getCalledFunction(const Value *V,
+                                         bool &IsNoBuiltin) {
   // Don't care about intrinsics in this case.
   if (isa<IntrinsicInst>(V))
     return nullptr;
@@ -165,10 +160,11 @@ static const Function *getCalledFunction(const Value *V) {
   if (!CB)
     return nullptr;
 
-  if (CB->isNoBuiltin())
-    return nullptr;
+  IsNoBuiltin = CB->isNoBuiltin();
 
-  return CB->getCalledFunction();
+  if (const Function *Callee = CB->getCalledFunction())
+    return Callee;
+  return nullptr;
 }
 
 /// Returns the allocation data for the given value if it's a call to a known
@@ -218,31 +214,40 @@ getAllocationDataForFunction(const Function *Callee, AllocType AllocTy,
 static std::optional<AllocFnsTy>
 getAllocationData(const Value *V, AllocType AllocTy,
                   const TargetLibraryInfo *TLI) {
-  if (const Function *Callee = getCalledFunction(V))
-    return getAllocationDataForFunction(Callee, AllocTy, TLI);
+  bool IsNoBuiltinCall;
+  if (const Function *Callee = getCalledFunction(V, IsNoBuiltinCall))
+    if (!IsNoBuiltinCall)
+      return getAllocationDataForFunction(Callee, AllocTy, TLI);
   return std::nullopt;
 }
 
 static std::optional<AllocFnsTy>
 getAllocationData(const Value *V, AllocType AllocTy,
                   function_ref<const TargetLibraryInfo &(Function &)> GetTLI) {
-  if (const Function *Callee = getCalledFunction(V))
-    return getAllocationDataForFunction(
-        Callee, AllocTy, &GetTLI(const_cast<Function &>(*Callee)));
+  bool IsNoBuiltinCall;
+  if (const Function *Callee = getCalledFunction(V, IsNoBuiltinCall))
+    if (!IsNoBuiltinCall)
+      return getAllocationDataForFunction(
+          Callee, AllocTy, &GetTLI(const_cast<Function &>(*Callee)));
   return std::nullopt;
 }
 
 static std::optional<AllocFnsTy>
-getAllocationSize(const CallBase *CB, const TargetLibraryInfo *TLI) {
-  if (const Function *Callee = getCalledFunction(CB)) {
-    // Prefer to use existing information over allocsize. This will give us an
-    // accurate AllocTy.
+getAllocationSize(const Value *V, const TargetLibraryInfo *TLI) {
+  bool IsNoBuiltinCall;
+  const Function *Callee =
+      getCalledFunction(V, IsNoBuiltinCall);
+  if (!Callee)
+    return std::nullopt;
+
+  // Prefer to use existing information over allocsize. This will give us an
+  // accurate AllocTy.
+  if (!IsNoBuiltinCall)
     if (std::optional<AllocFnsTy> Data =
             getAllocationDataForFunction(Callee, AnyAlloc, TLI))
       return Data;
-  }
 
-  Attribute Attr = CB->getFnAttr(Attribute::AllocSize);
+  Attribute Attr = Callee->getFnAttribute(Attribute::AllocSize);
   if (Attr == Attribute())
     return std::nullopt;
 
@@ -252,7 +257,7 @@ getAllocationSize(const CallBase *CB, const TargetLibraryInfo *TLI) {
   // Because allocsize only tells us how many bytes are allocated, we're not
   // really allowed to assume anything, so we use MallocLike.
   Result.AllocTy = MallocLike;
-  Result.NumParams = CB->arg_size();
+  Result.NumParams = Callee->getNumOperands();
   Result.FstParam = Args.first;
   Result.SndParam = Args.second.value_or(-1);
   // Allocsize has no way to specify an alignment argument
@@ -270,7 +275,10 @@ static AllocFnKind getAllocFnKind(const Value *V) {
 }
 
 static AllocFnKind getAllocFnKind(const Function *F) {
-  return F->getAttributes().getAllocKind();
+  Attribute Attr = F->getFnAttribute(Attribute::AllocKind);
+  if (Attr.isValid())
+    return AllocFnKind(Attr.getValueAsInt());
+  return AllocFnKind::Unknown;
 }
 
 static bool checkFnAllocKind(const Value *V, AllocFnKind Wanted) {
@@ -374,7 +382,7 @@ llvm::getAllocSize(const CallBase *CB, const TargetLibraryInfo *TLI,
 
   // Get the index type for this address space, results and intermediate
   // computations are performed at that width.
-  auto &DL = CB->getDataLayout();
+  auto &DL = CB->getModule()->getDataLayout();
   const unsigned IntTyBits = DL.getIndexTypeSizeInBits(CB->getType());
 
   // Handle strdup-like functions separately.
@@ -498,20 +506,21 @@ std::optional<FreeFnsTy> getFreeFunctionDataForFunction(const Function *Callee,
 
 std::optional<StringRef>
 llvm::getAllocationFamily(const Value *I, const TargetLibraryInfo *TLI) {
-  if (const Function *Callee = getCalledFunction(I)) {
-    LibFunc TLIFn;
-    if (TLI && TLI->getLibFunc(*Callee, TLIFn) && TLI->has(TLIFn)) {
-      // Callee is some known library function.
-      const auto AllocData =
-          getAllocationDataForFunction(Callee, AnyAlloc, TLI);
-      if (AllocData)
-        return mangledNameForMallocFamily(AllocData->Family);
-      const auto FreeData = getFreeFunctionDataForFunction(Callee, TLIFn);
-      if (FreeData)
-        return mangledNameForMallocFamily(FreeData->Family);
-    }
-  }
+  bool IsNoBuiltin;
+  const Function *Callee = getCalledFunction(I, IsNoBuiltin);
+  if (Callee == nullptr || IsNoBuiltin)
+    return std::nullopt;
+  LibFunc TLIFn;
 
+  if (TLI && TLI->getLibFunc(*Callee, TLIFn) && TLI->has(TLIFn)) {
+    // Callee is some known library function.
+    const auto AllocData = getAllocationDataForFunction(Callee, AnyAlloc, TLI);
+    if (AllocData)
+      return mangledNameForMallocFamily(AllocData->Family);
+    const auto FreeData = getFreeFunctionDataForFunction(Callee, TLIFn);
+    if (FreeData)
+      return mangledNameForMallocFamily(FreeData->Family);
+  }
   // Callee isn't a known library function, still check attributes.
   if (checkFnAllocKind(I, AllocFnKind::Free | AllocFnKind::Alloc |
                               AllocFnKind::Realloc)) {
@@ -543,13 +552,16 @@ bool llvm::isLibFreeFunction(const Function *F, const LibFunc TLIFn) {
 }
 
 Value *llvm::getFreedOperand(const CallBase *CB, const TargetLibraryInfo *TLI) {
-  if (const Function *Callee = getCalledFunction(CB)) {
-    LibFunc TLIFn;
-    if (TLI && TLI->getLibFunc(*Callee, TLIFn) && TLI->has(TLIFn) &&
-        isLibFreeFunction(Callee, TLIFn)) {
-      // All currently supported free functions free the first argument.
-      return CB->getArgOperand(0);
-    }
+  bool IsNoBuiltinCall;
+  const Function *Callee = getCalledFunction(CB, IsNoBuiltinCall);
+  if (Callee == nullptr || IsNoBuiltinCall)
+    return nullptr;
+
+  LibFunc TLIFn;
+  if (TLI && TLI->getLibFunc(*Callee, TLIFn) && TLI->has(TLIFn) &&
+      isLibFreeFunction(Callee, TLIFn)) {
+    // All currently supported free functions free the first argument.
+    return CB->getArgOperand(0);
   }
 
   if (checkFnAllocKind(CB, AllocFnKind::Free))
@@ -561,14 +573,10 @@ Value *llvm::getFreedOperand(const CallBase *CB, const TargetLibraryInfo *TLI) {
 //===----------------------------------------------------------------------===//
 //  Utility functions to compute size of objects.
 //
-static APInt getSizeWithOverflow(const SizeOffsetAPInt &Data) {
-  APInt Size = Data.Size;
-  APInt Offset = Data.Offset;
-
-  if (Offset.isNegative() || Size.ult(Offset))
-    return APInt::getZero(Size.getBitWidth());
-
-  return Size - Offset;
+static APInt getSizeWithOverflow(const SizeOffsetType &Data) {
+  if (Data.second.isNegative() || Data.first.ult(Data.second))
+    return APInt(Data.first.getBitWidth(), 0);
+  return Data.first - Data.second;
 }
 
 /// Compute the size of the object pointed by Ptr. Returns true and the
@@ -578,8 +586,8 @@ static APInt getSizeWithOverflow(const SizeOffsetAPInt &Data) {
 bool llvm::getObjectSize(const Value *Ptr, uint64_t &Size, const DataLayout &DL,
                          const TargetLibraryInfo *TLI, ObjectSizeOpts Opts) {
   ObjectSizeOffsetVisitor Visitor(DL, TLI, Ptr->getContext(), Opts);
-  SizeOffsetAPInt Data = Visitor.compute(const_cast<Value *>(Ptr));
-  if (!Data.bothKnown())
+  SizeOffsetType Data = Visitor.compute(const_cast<Value*>(Ptr));
+  if (!Visitor.bothKnown(Data))
     return false;
 
   Size = getSizeWithOverflow(Data).getZExtValue();
@@ -628,7 +636,8 @@ Value *llvm::lowerObjectSizeCall(
   } else {
     LLVMContext &Ctx = ObjectSize->getFunction()->getContext();
     ObjectSizeOffsetEvaluator Eval(DL, TLI, Ctx, EvalOptions);
-    SizeOffsetValue SizeOffsetPair = Eval.compute(ObjectSize->getArgOperand(0));
+    SizeOffsetEvalType SizeOffsetPair =
+        Eval.compute(ObjectSize->getArgOperand(0));
 
     if (SizeOffsetPair != ObjectSizeOffsetEvaluator::unknown()) {
       IRBuilder<TargetFolder, IRBuilderCallbackInserter> Builder(
@@ -638,19 +647,19 @@ Value *llvm::lowerObjectSizeCall(
           }));
       Builder.SetInsertPoint(ObjectSize);
 
-      Value *Size = SizeOffsetPair.Size;
-      Value *Offset = SizeOffsetPair.Offset;
-
       // If we've outside the end of the object, then we can always access
       // exactly 0 bytes.
-      Value *ResultSize = Builder.CreateSub(Size, Offset);
-      Value *UseZero = Builder.CreateICmpULT(Size, Offset);
+      Value *ResultSize =
+          Builder.CreateSub(SizeOffsetPair.first, SizeOffsetPair.second);
+      Value *UseZero =
+          Builder.CreateICmpULT(SizeOffsetPair.first, SizeOffsetPair.second);
       ResultSize = Builder.CreateZExtOrTrunc(ResultSize, ResultType);
       Value *Ret = Builder.CreateSelect(
           UseZero, ConstantInt::get(ResultType, 0), ResultSize);
 
       // The non-constant size expression cannot evaluate to -1.
-      if (!isa<Constant>(Size) || !isa<Constant>(Offset))
+      if (!isa<Constant>(SizeOffsetPair.first) ||
+          !isa<Constant>(SizeOffsetPair.second))
         Builder.CreateAssumption(
             Builder.CreateICmpNE(Ret, ConstantInt::get(ResultType, -1)));
 
@@ -661,8 +670,7 @@ Value *llvm::lowerObjectSizeCall(
   if (!MustSucceed)
     return nullptr;
 
-  return MaxVal ? Constant::getAllOnesValue(ResultType)
-                : Constant::getNullValue(ResultType);
+  return ConstantInt::get(ResultType, MaxVal ? -1ULL : 0);
 }
 
 STATISTIC(ObjectVisitorArgument,
@@ -670,73 +678,10 @@ STATISTIC(ObjectVisitorArgument,
 STATISTIC(ObjectVisitorLoad,
           "Number of load instructions with unsolved size and offset");
 
-static std::optional<APInt>
-combinePossibleConstantValues(std::optional<APInt> LHS,
-                              std::optional<APInt> RHS,
-                              ObjectSizeOpts::Mode EvalMode) {
-  if (!LHS || !RHS)
-    return std::nullopt;
-  if (EvalMode == ObjectSizeOpts::Mode::Max)
-    return LHS->sge(*RHS) ? *LHS : *RHS;
-  else
-    return LHS->sle(*RHS) ? *LHS : *RHS;
-}
-
-static std::optional<APInt> aggregatePossibleConstantValuesImpl(
-    const Value *V, ObjectSizeOpts::Mode EvalMode, unsigned recursionDepth) {
-  constexpr unsigned maxRecursionDepth = 4;
-  if (recursionDepth == maxRecursionDepth)
-    return std::nullopt;
-
-  if (const auto *CI = dyn_cast<ConstantInt>(V)) {
-    return CI->getValue();
-  } else if (const auto *SI = dyn_cast<SelectInst>(V)) {
-    return combinePossibleConstantValues(
-        aggregatePossibleConstantValuesImpl(SI->getTrueValue(), EvalMode,
-                                            recursionDepth + 1),
-        aggregatePossibleConstantValuesImpl(SI->getFalseValue(), EvalMode,
-                                            recursionDepth + 1),
-        EvalMode);
-  } else if (const auto *PN = dyn_cast<PHINode>(V)) {
-    unsigned Count = PN->getNumIncomingValues();
-    if (Count == 0)
-      return std::nullopt;
-    auto Acc = aggregatePossibleConstantValuesImpl(
-        PN->getIncomingValue(0), EvalMode, recursionDepth + 1);
-    for (unsigned I = 1; Acc && I < Count; ++I) {
-      auto Tmp = aggregatePossibleConstantValuesImpl(
-          PN->getIncomingValue(I), EvalMode, recursionDepth + 1);
-      Acc = combinePossibleConstantValues(Acc, Tmp, EvalMode);
-    }
-    return Acc;
-  }
-
-  return std::nullopt;
-}
-
-static std::optional<APInt>
-aggregatePossibleConstantValues(const Value *V, ObjectSizeOpts::Mode EvalMode) {
-  if (auto *CI = dyn_cast<ConstantInt>(V))
-    return CI->getValue();
-
-  if (EvalMode != ObjectSizeOpts::Mode::Min &&
-      EvalMode != ObjectSizeOpts::Mode::Max)
-    return std::nullopt;
-
-  // Not using computeConstantRange here because we cannot guarantee it's not
-  // doing optimization based on UB which we want to avoid when expanding
-  // __builtin_object_size.
-  return aggregatePossibleConstantValuesImpl(V, EvalMode, 0u);
-}
-
-/// Align \p Size according to \p Alignment. If \p Size is greater than
-/// getSignedMaxValue(), set it as unknown as we can only represent signed value
-/// in OffsetSpan.
 APInt ObjectSizeOffsetVisitor::align(APInt Size, MaybeAlign Alignment) {
   if (Options.RoundToAlign && Alignment)
-    Size = APInt(IntTyBits, alignTo(Size.getZExtValue(), *Alignment));
-
-  return Size.isNegative() ? APInt() : Size;
+    return APInt(IntTyBits, alignTo(Size.getZExtValue(), *Alignment));
+  return Size;
 }
 
 ObjectSizeOffsetVisitor::ObjectSizeOffsetVisitor(const DataLayout &DL,
@@ -748,23 +693,7 @@ ObjectSizeOffsetVisitor::ObjectSizeOffsetVisitor(const DataLayout &DL,
   // a different address space.
 }
 
-SizeOffsetAPInt ObjectSizeOffsetVisitor::compute(Value *V) {
-  InstructionsVisited = 0;
-  OffsetSpan Span = computeImpl(V);
-
-  // In ExactSizeFromOffset mode, we don't care about the Before Field, so allow
-  // us to overwrite it if needs be.
-  if (Span.knownAfter() && !Span.knownBefore() &&
-      Options.EvalMode == ObjectSizeOpts::Mode::ExactSizeFromOffset)
-    Span.Before = APInt::getZero(Span.After.getBitWidth());
-
-  if (!Span.bothKnown())
-    return {};
-
-  return {Span.Before + Span.After, Span.Before};
-}
-
-OffsetSpan ObjectSizeOffsetVisitor::computeImpl(Value *V) {
+SizeOffsetType ObjectSizeOffsetVisitor::compute(Value *V) {
   unsigned InitialIntTyBits = DL.getIndexTypeSizeInBits(V->getType());
 
   // Stripping pointer casts can strip address space casts which can change the
@@ -776,97 +705,38 @@ OffsetSpan ObjectSizeOffsetVisitor::computeImpl(Value *V) {
   V = V->stripAndAccumulateConstantOffsets(
       DL, Offset, /* AllowNonInbounds */ true, /* AllowInvariantGroup */ true);
 
-  // Give it another try with approximated analysis. We don't start with this
-  // one because stripAndAccumulateConstantOffsets behaves differently wrt.
-  // overflows if we provide an external Analysis.
-  if ((Options.EvalMode == ObjectSizeOpts::Mode::Min ||
-       Options.EvalMode == ObjectSizeOpts::Mode::Max) &&
-      isa<GEPOperator>(V)) {
-    // External Analysis used to compute the Min/Max value of individual Offsets
-    // within a GEP.
-    ObjectSizeOpts::Mode EvalMode =
-        Options.EvalMode == ObjectSizeOpts::Mode::Min
-            ? ObjectSizeOpts::Mode::Max
-            : ObjectSizeOpts::Mode::Min;
-    auto OffsetRangeAnalysis = [EvalMode](Value &VOffset, APInt &Offset) {
-      if (auto PossibleOffset =
-              aggregatePossibleConstantValues(&VOffset, EvalMode)) {
-        Offset = *PossibleOffset;
-        return true;
-      }
-      return false;
-    };
-
-    V = V->stripAndAccumulateConstantOffsets(
-        DL, Offset, /* AllowNonInbounds */ true, /* AllowInvariantGroup */ true,
-        /*ExternalAnalysis=*/OffsetRangeAnalysis);
-  }
-
   // Later we use the index type size and zero but it will match the type of the
   // value that is passed to computeImpl.
   IntTyBits = DL.getIndexTypeSizeInBits(V->getType());
   Zero = APInt::getZero(IntTyBits);
-  OffsetSpan ORT = computeValue(V);
 
   bool IndexTypeSizeChanged = InitialIntTyBits != IntTyBits;
   if (!IndexTypeSizeChanged && Offset.isZero())
-    return ORT;
+    return computeImpl(V);
 
   // We stripped an address space cast that changed the index type size or we
   // accumulated some constant offset (or both). Readjust the bit width to match
   // the argument index type size and apply the offset, as required.
+  SizeOffsetType SOT = computeImpl(V);
   if (IndexTypeSizeChanged) {
-    if (ORT.knownBefore() &&
-        !::CheckedZextOrTrunc(ORT.Before, InitialIntTyBits))
-      ORT.Before = APInt();
-    if (ORT.knownAfter() && !::CheckedZextOrTrunc(ORT.After, InitialIntTyBits))
-      ORT.After = APInt();
+    if (knownSize(SOT) && !::CheckedZextOrTrunc(SOT.first, InitialIntTyBits))
+      SOT.first = APInt();
+    if (knownOffset(SOT) && !::CheckedZextOrTrunc(SOT.second, InitialIntTyBits))
+      SOT.second = APInt();
   }
-  // If the computed bound is "unknown" we cannot add the stripped offset.
-  if (ORT.knownBefore()) {
-    bool Overflow;
-    ORT.Before = ORT.Before.sadd_ov(Offset, Overflow);
-    if (Overflow)
-      ORT.Before = APInt();
-  }
-  if (ORT.knownAfter()) {
-    bool Overflow;
-    ORT.After = ORT.After.ssub_ov(Offset, Overflow);
-    if (Overflow)
-      ORT.After = APInt();
-  }
-
-  // We end up pointing on a location that's outside of the original object.
-  if (ORT.knownBefore() && ORT.Before.isNegative()) {
-    // This means that we *may* be accessing memory before the allocation.
-    // Conservatively return an unknown size.
-    //
-    // TODO: working with ranges instead of value would make it possible to take
-    // a better decision.
-    if (Options.EvalMode == ObjectSizeOpts::Mode::Min ||
-        Options.EvalMode == ObjectSizeOpts::Mode::Max) {
-      return ObjectSizeOffsetVisitor::unknown();
-    }
-    // Otherwise it's fine, caller can handle negative offset.
-  }
-  return ORT;
+  // If the computed offset is "unknown" we cannot add the stripped offset.
+  return {SOT.first,
+          SOT.second.getBitWidth() > 1 ? SOT.second + Offset : SOT.second};
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::computeValue(Value *V) {
+SizeOffsetType ObjectSizeOffsetVisitor::computeImpl(Value *V) {
   if (Instruction *I = dyn_cast<Instruction>(V)) {
     // If we have already seen this instruction, bail out. Cycles can happen in
     // unreachable code after constant propagation.
-    auto P = SeenInsts.try_emplace(I, ObjectSizeOffsetVisitor::unknown());
-    if (!P.second)
-      return P.first->second;
-    ++InstructionsVisited;
-    if (InstructionsVisited > ObjectSizeOffsetVisitorMaxVisitInstructions)
-      return ObjectSizeOffsetVisitor::unknown();
-    OffsetSpan Res = visit(*I);
-    // Cache the result for later visits. If we happened to visit this during
-    // the above recursion, we would consider it unknown until now.
-    SeenInsts[I] = Res;
-    return Res;
+    if (!SeenInsts.insert(I).second)
+      return unknown();
+
+    return visit(*I);
   }
   if (Argument *A = dyn_cast<Argument>(V))
     return visitArgument(*A);
@@ -881,75 +751,55 @@ OffsetSpan ObjectSizeOffsetVisitor::computeValue(Value *V) {
 
   LLVM_DEBUG(dbgs() << "ObjectSizeOffsetVisitor::compute() unhandled value: "
                     << *V << '\n');
-  return ObjectSizeOffsetVisitor::unknown();
+  return unknown();
 }
 
 bool ObjectSizeOffsetVisitor::CheckedZextOrTrunc(APInt &I) {
   return ::CheckedZextOrTrunc(I, IntTyBits);
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitAllocaInst(AllocaInst &I) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitAllocaInst(AllocaInst &I) {
   TypeSize ElemSize = DL.getTypeAllocSize(I.getAllocatedType());
   if (ElemSize.isScalable() && Options.EvalMode != ObjectSizeOpts::Mode::Min)
-    return ObjectSizeOffsetVisitor::unknown();
-  if (!isUIntN(IntTyBits, ElemSize.getKnownMinValue()))
-    return ObjectSizeOffsetVisitor::unknown();
+    return unknown();
   APInt Size(IntTyBits, ElemSize.getKnownMinValue());
-
   if (!I.isArrayAllocation())
-    return OffsetSpan(Zero, align(Size, I.getAlign()));
+    return std::make_pair(align(Size, I.getAlign()), Zero);
 
   Value *ArraySize = I.getArraySize();
-  if (auto PossibleSize =
-          aggregatePossibleConstantValues(ArraySize, Options.EvalMode)) {
-    APInt NumElems = *PossibleSize;
+  if (const ConstantInt *C = dyn_cast<ConstantInt>(ArraySize)) {
+    APInt NumElems = C->getValue();
     if (!CheckedZextOrTrunc(NumElems))
-      return ObjectSizeOffsetVisitor::unknown();
+      return unknown();
 
     bool Overflow;
     Size = Size.umul_ov(NumElems, Overflow);
-
-    return Overflow ? ObjectSizeOffsetVisitor::unknown()
-                    : OffsetSpan(Zero, align(Size, I.getAlign()));
+    return Overflow ? unknown()
+                    : std::make_pair(align(Size, I.getAlign()), Zero);
   }
-  return ObjectSizeOffsetVisitor::unknown();
+  return unknown();
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitArgument(Argument &A) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitArgument(Argument &A) {
   Type *MemoryTy = A.getPointeeInMemoryValueType();
   // No interprocedural analysis is done at the moment.
   if (!MemoryTy|| !MemoryTy->isSized()) {
     ++ObjectVisitorArgument;
-    return ObjectSizeOffsetVisitor::unknown();
+    return unknown();
   }
 
   APInt Size(IntTyBits, DL.getTypeAllocSize(MemoryTy));
-  return OffsetSpan(Zero, align(Size, A.getParamAlign()));
+  return std::make_pair(align(Size, A.getParamAlign()), Zero);
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitCallBase(CallBase &CB) {
-  auto Mapper = [this](const Value *V) -> const Value * {
-    if (!V->getType()->isIntegerTy())
-      return V;
-
-    if (auto PossibleBound =
-            aggregatePossibleConstantValues(V, Options.EvalMode))
-      return ConstantInt::get(V->getType(), *PossibleBound);
-
-    return V;
-  };
-
-  if (std::optional<APInt> Size = getAllocSize(&CB, TLI, Mapper)) {
-    // Very large unsigned value cannot be represented as OffsetSpan.
-    if (Size->isNegative())
-      return ObjectSizeOffsetVisitor::unknown();
-    return OffsetSpan(Zero, *Size);
-  }
-  return ObjectSizeOffsetVisitor::unknown();
+SizeOffsetType ObjectSizeOffsetVisitor::visitCallBase(CallBase &CB) {
+  if (std::optional<APInt> Size = getAllocSize(&CB, TLI))
+    return std::make_pair(*Size, Zero);
+  return unknown();
 }
 
-OffsetSpan
-ObjectSizeOffsetVisitor::visitConstantPointerNull(ConstantPointerNull &CPN) {
+SizeOffsetType
+ObjectSizeOffsetVisitor::visitConstantPointerNull(ConstantPointerNull& CPN) {
   // If null is unknown, there's nothing we can do. Additionally, non-zero
   // address spaces can make use of null, so we don't presume to know anything
   // about that.
@@ -958,44 +808,45 @@ ObjectSizeOffsetVisitor::visitConstantPointerNull(ConstantPointerNull &CPN) {
   // them on the floor, but it's unclear what we should do when a NULL from
   // addrspace(1) gets casted to addrspace(0) (or vice-versa).
   if (Options.NullIsUnknownSize || CPN.getType()->getAddressSpace())
-    return ObjectSizeOffsetVisitor::unknown();
-  return OffsetSpan(Zero, Zero);
+    return unknown();
+  return std::make_pair(Zero, Zero);
 }
 
-OffsetSpan
-ObjectSizeOffsetVisitor::visitExtractElementInst(ExtractElementInst &) {
-  return ObjectSizeOffsetVisitor::unknown();
+SizeOffsetType
+ObjectSizeOffsetVisitor::visitExtractElementInst(ExtractElementInst&) {
+  return unknown();
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitExtractValueInst(ExtractValueInst &) {
+SizeOffsetType
+ObjectSizeOffsetVisitor::visitExtractValueInst(ExtractValueInst&) {
   // Easy cases were already folded by previous passes.
-  return ObjectSizeOffsetVisitor::unknown();
+  return unknown();
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitGlobalAlias(GlobalAlias &GA) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitGlobalAlias(GlobalAlias &GA) {
   if (GA.isInterposable())
-    return ObjectSizeOffsetVisitor::unknown();
-  return computeImpl(GA.getAliasee());
+    return unknown();
+  return compute(GA.getAliasee());
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitGlobalVariable(GlobalVariable &GV) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitGlobalVariable(GlobalVariable &GV){
   if (!GV.getValueType()->isSized() || GV.hasExternalWeakLinkage() ||
       ((!GV.hasInitializer() || GV.isInterposable()) &&
        Options.EvalMode != ObjectSizeOpts::Mode::Min))
-    return ObjectSizeOffsetVisitor::unknown();
+    return unknown();
 
   APInt Size(IntTyBits, DL.getTypeAllocSize(GV.getValueType()));
-  return OffsetSpan(Zero, align(Size, GV.getAlign()));
+  return std::make_pair(align(Size, GV.getAlign()), Zero);
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitIntToPtrInst(IntToPtrInst &) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitIntToPtrInst(IntToPtrInst&) {
   // clueless
-  return ObjectSizeOffsetVisitor::unknown();
+  return unknown();
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::findLoadOffsetRange(
+SizeOffsetType ObjectSizeOffsetVisitor::findLoadSizeOffset(
     LoadInst &Load, BasicBlock &BB, BasicBlock::iterator From,
-    SmallDenseMap<BasicBlock *, OffsetSpan, 8> &VisitedBlocks,
+    SmallDenseMap<BasicBlock *, SizeOffsetType, 8> &VisitedBlocks,
     unsigned &ScannedInstCount) {
   constexpr unsigned MaxInstsToScan = 128;
 
@@ -1003,10 +854,10 @@ OffsetSpan ObjectSizeOffsetVisitor::findLoadOffsetRange(
   if (Where != VisitedBlocks.end())
     return Where->second;
 
-  auto Unknown = [&BB, &VisitedBlocks]() {
-    return VisitedBlocks[&BB] = ObjectSizeOffsetVisitor::unknown();
+  auto Unknown = [this, &BB, &VisitedBlocks]() {
+    return VisitedBlocks[&BB] = unknown();
   };
-  auto Known = [&BB, &VisitedBlocks](OffsetSpan SO) {
+  auto Known = [&BB, &VisitedBlocks](SizeOffsetType SO) {
     return VisitedBlocks[&BB] = SO;
   };
 
@@ -1030,7 +881,7 @@ OffsetSpan ObjectSizeOffsetVisitor::findLoadOffsetRange(
         continue;
       case AliasResult::MustAlias:
         if (SI->getValueOperand()->getType()->isPointerTy())
-          return Known(computeImpl(SI->getValueOperand()));
+          return Known(compute(SI->getValueOperand()));
         else
           return Unknown(); // No handling of non-pointer values by `compute`.
       default:
@@ -1077,102 +928,92 @@ OffsetSpan ObjectSizeOffsetVisitor::findLoadOffsetRange(
       if (!C)
         return Unknown();
 
-      APInt CSize = C->getValue();
-      if (CSize.isNegative())
-        return Unknown();
-
-      return Known({APInt(CSize.getBitWidth(), 0), CSize});
+      return Known({C->getValue(), APInt(C->getValue().getBitWidth(), 0)});
     }
 
     return Unknown();
   } while (From-- != BB.begin());
 
-  SmallVector<OffsetSpan> PredecessorSizeOffsets;
+  SmallVector<SizeOffsetType> PredecessorSizeOffsets;
   for (auto *PredBB : predecessors(&BB)) {
-    PredecessorSizeOffsets.push_back(findLoadOffsetRange(
+    PredecessorSizeOffsets.push_back(findLoadSizeOffset(
         Load, *PredBB, BasicBlock::iterator(PredBB->getTerminator()),
         VisitedBlocks, ScannedInstCount));
-    if (!PredecessorSizeOffsets.back().bothKnown())
+    if (!bothKnown(PredecessorSizeOffsets.back()))
       return Unknown();
   }
 
   if (PredecessorSizeOffsets.empty())
     return Unknown();
 
-  return Known(std::accumulate(
-      PredecessorSizeOffsets.begin() + 1, PredecessorSizeOffsets.end(),
-      PredecessorSizeOffsets.front(), [this](OffsetSpan LHS, OffsetSpan RHS) {
-        return combineOffsetRange(LHS, RHS);
-      }));
+  return Known(std::accumulate(PredecessorSizeOffsets.begin() + 1,
+                               PredecessorSizeOffsets.end(),
+                               PredecessorSizeOffsets.front(),
+                               [this](SizeOffsetType LHS, SizeOffsetType RHS) {
+                                 return combineSizeOffset(LHS, RHS);
+                               }));
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitLoadInst(LoadInst &LI) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitLoadInst(LoadInst &LI) {
   if (!Options.AA) {
     ++ObjectVisitorLoad;
-    return ObjectSizeOffsetVisitor::unknown();
+    return unknown();
   }
 
-  SmallDenseMap<BasicBlock *, OffsetSpan, 8> VisitedBlocks;
+  SmallDenseMap<BasicBlock *, SizeOffsetType, 8> VisitedBlocks;
   unsigned ScannedInstCount = 0;
-  OffsetSpan SO =
-      findLoadOffsetRange(LI, *LI.getParent(), BasicBlock::iterator(LI),
-                          VisitedBlocks, ScannedInstCount);
-  if (!SO.bothKnown())
+  SizeOffsetType SO =
+      findLoadSizeOffset(LI, *LI.getParent(), BasicBlock::iterator(LI),
+                         VisitedBlocks, ScannedInstCount);
+  if (!bothKnown(SO))
     ++ObjectVisitorLoad;
   return SO;
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::combineOffsetRange(OffsetSpan LHS,
-                                                       OffsetSpan RHS) {
-  if (!LHS.bothKnown() || !RHS.bothKnown())
-    return ObjectSizeOffsetVisitor::unknown();
+SizeOffsetType ObjectSizeOffsetVisitor::combineSizeOffset(SizeOffsetType LHS,
+                                                          SizeOffsetType RHS) {
+  if (!bothKnown(LHS) || !bothKnown(RHS))
+    return unknown();
 
   switch (Options.EvalMode) {
   case ObjectSizeOpts::Mode::Min:
-    return {LHS.Before.slt(RHS.Before) ? LHS.Before : RHS.Before,
-            LHS.After.slt(RHS.After) ? LHS.After : RHS.After};
-  case ObjectSizeOpts::Mode::Max: {
-    return {LHS.Before.sgt(RHS.Before) ? LHS.Before : RHS.Before,
-            LHS.After.sgt(RHS.After) ? LHS.After : RHS.After};
-  }
+    return (getSizeWithOverflow(LHS).slt(getSizeWithOverflow(RHS))) ? LHS : RHS;
+  case ObjectSizeOpts::Mode::Max:
+    return (getSizeWithOverflow(LHS).sgt(getSizeWithOverflow(RHS))) ? LHS : RHS;
   case ObjectSizeOpts::Mode::ExactSizeFromOffset:
-    return {LHS.Before.eq(RHS.Before) ? LHS.Before : APInt(),
-            LHS.After.eq(RHS.After) ? LHS.After : APInt()};
+    return (getSizeWithOverflow(LHS).eq(getSizeWithOverflow(RHS))) ? LHS
+                                                                   : unknown();
   case ObjectSizeOpts::Mode::ExactUnderlyingSizeAndOffset:
-    return (LHS == RHS) ? LHS : ObjectSizeOffsetVisitor::unknown();
+    return LHS == RHS && LHS.second.eq(RHS.second) ? LHS : unknown();
   }
   llvm_unreachable("missing an eval mode");
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitPHINode(PHINode &PN) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitPHINode(PHINode &PN) {
   if (PN.getNumIncomingValues() == 0)
-    return ObjectSizeOffsetVisitor::unknown();
+    return unknown();
   auto IncomingValues = PN.incoming_values();
   return std::accumulate(IncomingValues.begin() + 1, IncomingValues.end(),
-                         computeImpl(*IncomingValues.begin()),
-                         [this](OffsetSpan LHS, Value *VRHS) {
-                           return combineOffsetRange(LHS, computeImpl(VRHS));
+                         compute(*IncomingValues.begin()),
+                         [this](SizeOffsetType LHS, Value *VRHS) {
+                           return combineSizeOffset(LHS, compute(VRHS));
                          });
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitSelectInst(SelectInst &I) {
-  return combineOffsetRange(computeImpl(I.getTrueValue()),
-                            computeImpl(I.getFalseValue()));
+SizeOffsetType ObjectSizeOffsetVisitor::visitSelectInst(SelectInst &I) {
+  return combineSizeOffset(compute(I.getTrueValue()),
+                           compute(I.getFalseValue()));
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitUndefValue(UndefValue &) {
-  return OffsetSpan(Zero, Zero);
+SizeOffsetType ObjectSizeOffsetVisitor::visitUndefValue(UndefValue&) {
+  return std::make_pair(Zero, Zero);
 }
 
-OffsetSpan ObjectSizeOffsetVisitor::visitInstruction(Instruction &I) {
+SizeOffsetType ObjectSizeOffsetVisitor::visitInstruction(Instruction &I) {
   LLVM_DEBUG(dbgs() << "ObjectSizeOffsetVisitor unknown instruction:" << I
                     << '\n');
-  return ObjectSizeOffsetVisitor::unknown();
+  return unknown();
 }
-
-// Just set these right here...
-SizeOffsetValue::SizeOffsetValue(const SizeOffsetWeakTrackingVH &SOT)
-    : SizeOffsetType(SOT.Size, SOT.Offset) {}
 
 ObjectSizeOffsetEvaluator::ObjectSizeOffsetEvaluator(
     const DataLayout &DL, const TargetLibraryInfo *TLI, LLVMContext &Context,
@@ -1186,21 +1027,21 @@ ObjectSizeOffsetEvaluator::ObjectSizeOffsetEvaluator(
   // be different for later objects.
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::compute(Value *V) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::compute(Value *V) {
   // XXX - Are vectors of pointers possible here?
   IntTy = cast<IntegerType>(DL.getIndexType(V->getType()));
   Zero = ConstantInt::get(IntTy, 0);
 
-  SizeOffsetValue Result = compute_(V);
+  SizeOffsetEvalType Result = compute_(V);
 
-  if (!Result.bothKnown()) {
+  if (!bothKnown(Result)) {
     // Erase everything that was computed in this iteration from the cache, so
     // that no dangling references are left behind. We could be a bit smarter if
     // we kept a dependency graph. It's probably not worth the complexity.
     for (const Value *SeenVal : SeenVals) {
       CacheMapTy::iterator CacheIt = CacheMap.find(SeenVal);
       // non-computable results can be safely cached
-      if (CacheIt != CacheMap.end() && CacheIt->second.anyKnown())
+      if (CacheIt != CacheMap.end() && anyKnown(CacheIt->second))
         CacheMap.erase(CacheIt);
     }
 
@@ -1216,18 +1057,12 @@ SizeOffsetValue ObjectSizeOffsetEvaluator::compute(Value *V) {
   return Result;
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::compute_(Value *V) {
-
-  // Only trust ObjectSizeOffsetVisitor in exact mode, otherwise fallback on
-  // dynamic computation.
-  ObjectSizeOpts VisitorEvalOpts(EvalOpts);
-  VisitorEvalOpts.EvalMode = ObjectSizeOpts::Mode::ExactUnderlyingSizeAndOffset;
-  ObjectSizeOffsetVisitor Visitor(DL, TLI, Context, VisitorEvalOpts);
-
-  SizeOffsetAPInt Const = Visitor.compute(V);
-  if (Const.bothKnown())
-    return SizeOffsetValue(ConstantInt::get(Context, Const.Size),
-                           ConstantInt::get(Context, Const.Offset));
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::compute_(Value *V) {
+  ObjectSizeOffsetVisitor Visitor(DL, TLI, Context, EvalOpts);
+  SizeOffsetType Const = Visitor.compute(V);
+  if (Visitor.bothKnown(Const))
+    return std::make_pair(ConstantInt::get(Context, Const.first),
+                          ConstantInt::get(Context, Const.second));
 
   V = V->stripPointerCasts();
 
@@ -1243,13 +1078,13 @@ SizeOffsetValue ObjectSizeOffsetEvaluator::compute_(Value *V) {
     Builder.SetInsertPoint(I);
 
   // Now compute the size and offset.
-  SizeOffsetValue Result;
+  SizeOffsetEvalType Result;
 
   // Record the pointers that were handled in this run, so that they can be
   // cleaned later if something fails. We also use this set to break cycles that
   // can occur in dead code.
   if (!SeenVals.insert(V).second) {
-    Result = ObjectSizeOffsetEvaluator::unknown();
+    Result = unknown();
   } else if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
     Result = visitGEPOperator(*GEP);
   } else if (Instruction *I = dyn_cast<Instruction>(V)) {
@@ -1260,25 +1095,25 @@ SizeOffsetValue ObjectSizeOffsetEvaluator::compute_(Value *V) {
              isa<GlobalAlias>(V) ||
              isa<GlobalVariable>(V)) {
     // Ignore values where we cannot do more than ObjectSizeVisitor.
-    Result = ObjectSizeOffsetEvaluator::unknown();
+    Result = unknown();
   } else {
     LLVM_DEBUG(
         dbgs() << "ObjectSizeOffsetEvaluator::compute() unhandled value: " << *V
                << '\n');
-    Result = ObjectSizeOffsetEvaluator::unknown();
+    Result = unknown();
   }
 
   // Don't reuse CacheIt since it may be invalid at this point.
-  CacheMap[V] = SizeOffsetWeakTrackingVH(Result);
+  CacheMap[V] = Result;
   return Result;
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitAllocaInst(AllocaInst &I) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitAllocaInst(AllocaInst &I) {
   if (!I.getAllocatedType()->isSized())
-    return ObjectSizeOffsetEvaluator::unknown();
+    return unknown();
 
-  // must be a VLA or vscale.
-  assert(I.isArrayAllocation() || I.getAllocatedType()->isScalableTy());
+  // must be a VLA
+  assert(I.isArrayAllocation());
 
   // If needed, adjust the alloca's operand size to match the pointer indexing
   // size. Subsequent math operations expect the types to match.
@@ -1288,88 +1123,88 @@ SizeOffsetValue ObjectSizeOffsetEvaluator::visitAllocaInst(AllocaInst &I) {
   assert(ArraySize->getType() == Zero->getType() &&
          "Expected zero constant to have pointer index type");
 
-  Value *Size = Builder.CreateTypeSize(
-      ArraySize->getType(), DL.getTypeAllocSize(I.getAllocatedType()));
+  Value *Size = ConstantInt::get(ArraySize->getType(),
+                                 DL.getTypeAllocSize(I.getAllocatedType()));
   Size = Builder.CreateMul(Size, ArraySize);
-  return SizeOffsetValue(Size, Zero);
+  return std::make_pair(Size, Zero);
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitCallBase(CallBase &CB) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitCallBase(CallBase &CB) {
   std::optional<AllocFnsTy> FnData = getAllocationSize(&CB, TLI);
   if (!FnData)
-    return ObjectSizeOffsetEvaluator::unknown();
+    return unknown();
 
   // Handle strdup-like functions separately.
   if (FnData->AllocTy == StrDupLike) {
     // TODO: implement evaluation of strdup/strndup
-    return ObjectSizeOffsetEvaluator::unknown();
+    return unknown();
   }
 
   Value *FirstArg = CB.getArgOperand(FnData->FstParam);
   FirstArg = Builder.CreateZExtOrTrunc(FirstArg, IntTy);
   if (FnData->SndParam < 0)
-    return SizeOffsetValue(FirstArg, Zero);
+    return std::make_pair(FirstArg, Zero);
 
   Value *SecondArg = CB.getArgOperand(FnData->SndParam);
   SecondArg = Builder.CreateZExtOrTrunc(SecondArg, IntTy);
   Value *Size = Builder.CreateMul(FirstArg, SecondArg);
-  return SizeOffsetValue(Size, Zero);
+  return std::make_pair(Size, Zero);
 }
 
-SizeOffsetValue
-ObjectSizeOffsetEvaluator::visitExtractElementInst(ExtractElementInst &) {
-  return ObjectSizeOffsetEvaluator::unknown();
+SizeOffsetEvalType
+ObjectSizeOffsetEvaluator::visitExtractElementInst(ExtractElementInst&) {
+  return unknown();
 }
 
-SizeOffsetValue
-ObjectSizeOffsetEvaluator::visitExtractValueInst(ExtractValueInst &) {
-  return ObjectSizeOffsetEvaluator::unknown();
+SizeOffsetEvalType
+ObjectSizeOffsetEvaluator::visitExtractValueInst(ExtractValueInst&) {
+  return unknown();
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitGEPOperator(GEPOperator &GEP) {
-  SizeOffsetValue PtrData = compute_(GEP.getPointerOperand());
-  if (!PtrData.bothKnown())
-    return ObjectSizeOffsetEvaluator::unknown();
+SizeOffsetEvalType
+ObjectSizeOffsetEvaluator::visitGEPOperator(GEPOperator &GEP) {
+  SizeOffsetEvalType PtrData = compute_(GEP.getPointerOperand());
+  if (!bothKnown(PtrData))
+    return unknown();
 
   Value *Offset = emitGEPOffset(&Builder, DL, &GEP, /*NoAssumptions=*/true);
-  Offset = Builder.CreateAdd(PtrData.Offset, Offset);
-  return SizeOffsetValue(PtrData.Size, Offset);
+  Offset = Builder.CreateAdd(PtrData.second, Offset);
+  return std::make_pair(PtrData.first, Offset);
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitIntToPtrInst(IntToPtrInst &) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitIntToPtrInst(IntToPtrInst&) {
   // clueless
-  return ObjectSizeOffsetEvaluator::unknown();
+  return unknown();
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitLoadInst(LoadInst &LI) {
-  return ObjectSizeOffsetEvaluator::unknown();
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitLoadInst(LoadInst &LI) {
+  return unknown();
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitPHINode(PHINode &PHI) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitPHINode(PHINode &PHI) {
   // Create 2 PHIs: one for size and another for offset.
   PHINode *SizePHI   = Builder.CreatePHI(IntTy, PHI.getNumIncomingValues());
   PHINode *OffsetPHI = Builder.CreatePHI(IntTy, PHI.getNumIncomingValues());
 
   // Insert right away in the cache to handle recursive PHIs.
-  CacheMap[&PHI] = SizeOffsetWeakTrackingVH(SizePHI, OffsetPHI);
+  CacheMap[&PHI] = std::make_pair(SizePHI, OffsetPHI);
 
   // Compute offset/size for each PHI incoming pointer.
   for (unsigned i = 0, e = PHI.getNumIncomingValues(); i != e; ++i) {
-    BasicBlock *IncomingBlock = PHI.getIncomingBlock(i);
-    Builder.SetInsertPoint(IncomingBlock, IncomingBlock->getFirstInsertionPt());
-    SizeOffsetValue EdgeData = compute_(PHI.getIncomingValue(i));
+    Builder.SetInsertPoint(&*PHI.getIncomingBlock(i)->getFirstInsertionPt());
+    SizeOffsetEvalType EdgeData = compute_(PHI.getIncomingValue(i));
 
-    if (!EdgeData.bothKnown()) {
+    if (!bothKnown(EdgeData)) {
       OffsetPHI->replaceAllUsesWith(PoisonValue::get(IntTy));
       OffsetPHI->eraseFromParent();
       InsertedInstructions.erase(OffsetPHI);
       SizePHI->replaceAllUsesWith(PoisonValue::get(IntTy));
       SizePHI->eraseFromParent();
       InsertedInstructions.erase(SizePHI);
-      return ObjectSizeOffsetEvaluator::unknown();
+      return unknown();
     }
-    SizePHI->addIncoming(EdgeData.Size, IncomingBlock);
-    OffsetPHI->addIncoming(EdgeData.Offset, IncomingBlock);
+    SizePHI->addIncoming(EdgeData.first, PHI.getIncomingBlock(i));
+    OffsetPHI->addIncoming(EdgeData.second, PHI.getIncomingBlock(i));
   }
 
   Value *Size = SizePHI, *Offset = OffsetPHI;
@@ -1385,27 +1220,27 @@ SizeOffsetValue ObjectSizeOffsetEvaluator::visitPHINode(PHINode &PHI) {
     OffsetPHI->eraseFromParent();
     InsertedInstructions.erase(OffsetPHI);
   }
-  return SizeOffsetValue(Size, Offset);
+  return std::make_pair(Size, Offset);
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitSelectInst(SelectInst &I) {
-  SizeOffsetValue TrueSide = compute_(I.getTrueValue());
-  SizeOffsetValue FalseSide = compute_(I.getFalseValue());
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitSelectInst(SelectInst &I) {
+  SizeOffsetEvalType TrueSide  = compute_(I.getTrueValue());
+  SizeOffsetEvalType FalseSide = compute_(I.getFalseValue());
 
-  if (!TrueSide.bothKnown() || !FalseSide.bothKnown())
-    return ObjectSizeOffsetEvaluator::unknown();
+  if (!bothKnown(TrueSide) || !bothKnown(FalseSide))
+    return unknown();
   if (TrueSide == FalseSide)
     return TrueSide;
 
-  Value *Size =
-      Builder.CreateSelect(I.getCondition(), TrueSide.Size, FalseSide.Size);
-  Value *Offset =
-      Builder.CreateSelect(I.getCondition(), TrueSide.Offset, FalseSide.Offset);
-  return SizeOffsetValue(Size, Offset);
+  Value *Size = Builder.CreateSelect(I.getCondition(), TrueSide.first,
+                                     FalseSide.first);
+  Value *Offset = Builder.CreateSelect(I.getCondition(), TrueSide.second,
+                                       FalseSide.second);
+  return std::make_pair(Size, Offset);
 }
 
-SizeOffsetValue ObjectSizeOffsetEvaluator::visitInstruction(Instruction &I) {
+SizeOffsetEvalType ObjectSizeOffsetEvaluator::visitInstruction(Instruction &I) {
   LLVM_DEBUG(dbgs() << "ObjectSizeOffsetEvaluator unknown instruction:" << I
                     << '\n');
-  return ObjectSizeOffsetEvaluator::unknown();
+  return unknown();
 }

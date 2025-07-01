@@ -198,11 +198,11 @@ public:
   /// from.  Currently this is only used by _Pragma handling.
   SourceLocation getFileLoc() const { return FileLoc; }
 
+private:
   /// Lex - Return the next token in the file.  If this is the end of file, it
   /// return the tok::eof token.  This implicitly involves the preprocessor.
   bool Lex(Token &Result);
 
-private:
   /// Called when the preprocessor is in 'dependency scanning lexing mode'.
   bool LexDependencyDirectiveToken(Token &Result);
 
@@ -554,14 +554,7 @@ public:
   /// Returns the next token, or std::nullopt if the location is inside a macro.
   static std::optional<Token> findNextToken(SourceLocation Loc,
                                             const SourceManager &SM,
-                                            const LangOptions &LangOpts,
-                                            bool IncludeComments = false);
-
-  /// Finds the token that comes before the given location.
-  static std::optional<Token> findPreviousToken(SourceLocation Loc,
-                                                const SourceManager &SM,
-                                                const LangOptions &LangOpts,
-                                                bool IncludeComments);
+                                            const LangOptions &LangOpts);
 
   /// Checks that the given token is the first token that occurs after
   /// the given location (this excludes comments and whitespace). Returns the
@@ -582,23 +575,19 @@ public:
   /// sequence.
   static bool isNewLineEscaped(const char *BufferStart, const char *Str);
 
-  /// Represents a char and the number of bytes parsed to produce it.
-  struct SizedChar {
-    char Char;
-    unsigned Size;
-  };
-
   /// getCharAndSizeNoWarn - Like the getCharAndSize method, but does not ever
   /// emit a warning.
-  static inline SizedChar getCharAndSizeNoWarn(const char *Ptr,
-                                               const LangOptions &LangOpts) {
+  static inline char getCharAndSizeNoWarn(const char *Ptr, unsigned &Size,
+                                          const LangOptions &LangOpts) {
     // If this is not a trigraph and not a UCN or escaped newline, return
     // quickly.
     if (isObviouslySimpleCharacter(Ptr[0])) {
-      return {*Ptr, 1u};
+      Size = 1;
+      return *Ptr;
     }
 
-    return getCharAndSizeSlowNoWarn(Ptr, LangOpts);
+    Size = 0;
+    return getCharAndSizeSlowNoWarn(Ptr, Size, LangOpts);
   }
 
   /// Returns the leading whitespace for line that corresponds to the given
@@ -676,7 +665,8 @@ private:
     // quickly.
     if (isObviouslySimpleCharacter(Ptr[0])) return *Ptr++;
 
-    auto [C, Size] = getCharAndSizeSlow(Ptr, &Tok);
+    unsigned Size = 0;
+    char C = getCharAndSizeSlow(Ptr, Size, &Tok);
     Ptr += Size;
     return C;
   }
@@ -692,7 +682,9 @@ private:
 
     // Otherwise, re-lex the character with a current token, allowing
     // diagnostics to be emitted and flags to be set.
-    return Ptr + getCharAndSizeSlow(Ptr, &Tok).Size;
+    Size = 0;
+    getCharAndSizeSlow(Ptr, Size, &Tok);
+    return Ptr+Size;
   }
 
   /// getCharAndSize - Peek a single 'character' from the specified buffer,
@@ -707,14 +699,14 @@ private:
       return *Ptr;
     }
 
-    auto CharAndSize = getCharAndSizeSlow(Ptr);
-    Size = CharAndSize.Size;
-    return CharAndSize.Char;
+    Size = 0;
+    return getCharAndSizeSlow(Ptr, Size);
   }
 
   /// getCharAndSizeSlow - Handle the slow/uncommon case of the getCharAndSize
   /// method.
-  SizedChar getCharAndSizeSlow(const char *Ptr, Token *Tok = nullptr);
+  char getCharAndSizeSlow(const char *Ptr, unsigned &Size,
+                          Token *Tok = nullptr);
 
   /// getEscapedNewLineSize - Return the size of the specified escaped newline,
   /// or 0 if it is not an escaped newline. P[-1] is known to be a "\" on entry
@@ -728,8 +720,8 @@ private:
 
   /// getCharAndSizeSlowNoWarn - Same as getCharAndSizeSlow, but never emits a
   /// diagnostic.
-  static SizedChar getCharAndSizeSlowNoWarn(const char *Ptr,
-                                            const LangOptions &LangOpts);
+  static char getCharAndSizeSlowNoWarn(const char *Ptr, unsigned &Size,
+                                       const LangOptions &LangOpts);
 
   //===--------------------------------------------------------------------===//
   // Other lexer functions.
@@ -813,10 +805,9 @@ private:
   /// Try to consume an identifier character encoded in UTF-8.
   /// \param CurPtr Points to the start of the (potential) UTF-8 code unit
   ///        sequence. On success, updated to point past the end of it.
-  /// \param Result The token being formed.
   /// \return \c true if a UTF-8 sequence mapping to an acceptable identifier
   ///         character was lexed, \c false otherwise.
-  bool tryConsumeIdentifierUTF8Char(const char *&CurPtr, Token &Result);
+  bool tryConsumeIdentifierUTF8Char(const char *&CurPtr);
 };
 
 } // namespace clang

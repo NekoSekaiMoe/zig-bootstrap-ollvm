@@ -17,6 +17,7 @@
 #include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCFixupKindInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSectionWasm.h"
 #include "llvm/MC/MCSymbolWasm.h"
@@ -121,7 +122,7 @@ unsigned WebAssemblyWasmObjectWriter::getRelocType(
     return wasm::R_WASM_MEMORY_ADDR_LEB64;
   case FK_Data_4:
     if (SymA.isFunction()) {
-      if (FixupSection.isMetadata())
+      if (FixupSection.getKind().isMetadata())
         return wasm::R_WASM_FUNCTION_OFFSET_I32;
       assert(FixupSection.isWasmData());
       return wasm::R_WASM_TABLE_INDEX_I32;
@@ -130,7 +131,7 @@ unsigned WebAssemblyWasmObjectWriter::getRelocType(
       return wasm::R_WASM_GLOBAL_INDEX_I32;
     if (auto Section = static_cast<const MCSectionWasm *>(
             getTargetSection(Fixup.getValue()))) {
-      if (Section->isText())
+      if (Section->getKind().isText())
         return wasm::R_WASM_FUNCTION_OFFSET_I32;
       else if (!Section->isWasmData())
         return wasm::R_WASM_SECTION_OFFSET_I32;
@@ -139,7 +140,7 @@ unsigned WebAssemblyWasmObjectWriter::getRelocType(
                     : wasm::R_WASM_MEMORY_ADDR_I32;
   case FK_Data_8:
     if (SymA.isFunction()) {
-      if (FixupSection.isMetadata())
+      if (FixupSection.getKind().isMetadata())
         return wasm::R_WASM_FUNCTION_OFFSET_I64;
       return wasm::R_WASM_TABLE_INDEX_I64;
     }
@@ -147,7 +148,7 @@ unsigned WebAssemblyWasmObjectWriter::getRelocType(
       llvm_unreachable("unimplemented R_WASM_GLOBAL_INDEX_I64");
     if (auto Section = static_cast<const MCSectionWasm *>(
             getTargetSection(Fixup.getValue()))) {
-      if (Section->isText())
+      if (Section->getKind().isText())
         return wasm::R_WASM_FUNCTION_OFFSET_I64;
       else if (!Section->isWasmData())
         llvm_unreachable("unimplemented R_WASM_SECTION_OFFSET_I64");

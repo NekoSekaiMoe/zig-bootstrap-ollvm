@@ -20,8 +20,8 @@
 
 using namespace llvm;
 
-static_assert(std::is_trivial_v<MCSchedModel>,
-              "MCSchedModel is required to be a trivial type");
+static_assert(std::is_pod<MCSchedModel>::value,
+              "We shouldn't have a static constructor here");
 const MCSchedModel MCSchedModel::Default = {DefaultIssueWidth,
                                             DefaultMicroOpBufferSize,
                                             DefaultLoopMicroOpBufferSize,
@@ -30,7 +30,7 @@ const MCSchedModel MCSchedModel::Default = {DefaultIssueWidth,
                                             DefaultMispredictPenalty,
                                             false,
                                             true,
-                                            /*EnableIntervals=*/false,
+                                            false /*EnableIntervals*/,
                                             0,
                                             nullptr,
                                             nullptr,
@@ -69,28 +69,21 @@ int MCSchedModel::computeInstrLatency(const MCSubtargetInfo &STI,
 int MCSchedModel::computeInstrLatency(const MCSubtargetInfo &STI,
                                       const MCInstrInfo &MCII,
                                       const MCInst &Inst) const {
-  return MCSchedModel::computeInstrLatency<MCSubtargetInfo, MCInstrInfo,
-                                           InstrItineraryData, MCInst>(
-      STI, MCII, Inst,
-      [&](const MCSchedClassDesc *SCDesc) -> const MCSchedClassDesc * {
-        if (!SCDesc->isValid())
-          return nullptr;
+  unsigned SchedClass = MCII.get(Inst.getOpcode()).getSchedClass();
+  const MCSchedClassDesc *SCDesc = getSchedClassDesc(SchedClass);
+  if (!SCDesc->isValid())
+    return 0;
 
-        unsigned CPUID = getProcessorID();
-        unsigned SchedClass = 0;
-        while (SCDesc->isVariant()) {
-          SchedClass =
-              STI.resolveVariantSchedClass(SchedClass, &Inst, &MCII, CPUID);
-          SCDesc = getSchedClassDesc(SchedClass);
-        }
+  unsigned CPUID = getProcessorID();
+  while (SCDesc->isVariant()) {
+    SchedClass = STI.resolveVariantSchedClass(SchedClass, &Inst, &MCII, CPUID);
+    SCDesc = getSchedClassDesc(SchedClass);
+  }
 
-        if (!SchedClass) {
-          assert(false && "unsupported variant scheduling class");
-          return nullptr;
-        }
+  if (SchedClass)
+    return MCSchedModel::computeInstrLatency(STI, *SCDesc);
 
-        return SCDesc;
-      });
+  llvm_unreachable("unsupported variant scheduling class");
 }
 
 double
@@ -101,10 +94,10 @@ MCSchedModel::getReciprocalThroughput(const MCSubtargetInfo &STI,
   const MCWriteProcResEntry *I = STI.getWriteProcResBegin(&SCDesc);
   const MCWriteProcResEntry *E = STI.getWriteProcResEnd(&SCDesc);
   for (; I != E; ++I) {
-    if (!I->ReleaseAtCycle)
+    if (!I->Cycles)
       continue;
     unsigned NumUnits = SM.getProcResource(I->ProcResourceIdx)->NumUnits;
-    double Temp = NumUnits * 1.0 / I->ReleaseAtCycle;
+    double Temp = NumUnits * 1.0 / I->Cycles;
     Throughput = Throughput ? std::min(*Throughput, Temp) : Temp;
   }
   if (Throughput)

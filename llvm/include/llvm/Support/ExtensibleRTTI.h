@@ -81,6 +81,10 @@ public:
     return ClassID == classID();
   }
 
+  /// Check whether this instance is a subclass of QueryT.
+  template <typename QueryT>
+  bool isA() const { return isA(QueryT::classID()); }
+
 private:
   virtual void anchor();
 
@@ -89,15 +93,13 @@ private:
 
 /// Inheritance utility for extensible RTTI.
 ///
-/// Multiple inheritance is supported, but RTTIExtends only inherits
-/// constructors from the first base class. All subsequent bases will be
-/// default constructed. Virtual and non-public inheritance are not supported.
+/// Supports single inheritance only: A class can only have one
+/// ExtensibleRTTI-parent (i.e. a parent for which the isa<> test will work),
+/// though it can have many non-ExtensibleRTTI parents.
 ///
 /// RTTIExtents uses CRTP so the first template argument to RTTIExtends is the
-/// newly introduced type, and the *second and later* arguments are the parent
-/// classes.
+/// newly introduced type, and the *second* argument is the parent class.
 ///
-/// @code{.cpp}
 /// class MyType : public RTTIExtends<MyType, RTTIRoot> {
 /// public:
 ///   static char ID;
@@ -108,41 +110,21 @@ private:
 ///   static char ID;
 /// };
 ///
-/// class MyOtherType : public RTTIExtends<MyOtherType, MyType> {
-/// public:
-///   static char ID;
-/// };
-///
-/// class MyMultipleInheritanceType
-///   : public RTTIExtends<MyMultipleInheritanceType,
-///                        MyDerivedType, MyOtherType> {
-/// public:
-///   static char ID;
-/// };
-///
-/// @endcode
-///
-template <typename ThisT, typename ParentT, typename... ParentTs>
-class RTTIExtends : public ParentT, public ParentTs... {
+template <typename ThisT, typename ParentT>
+class RTTIExtends : public ParentT {
 public:
-  // Inherit constructors from the first Parent.
+  // Inherit constructors from ParentT.
   using ParentT::ParentT;
 
   static const void *classID() { return &ThisT::ID; }
 
   const void *dynamicClassID() const override { return &ThisT::ID; }
 
-  /// Check whether this instance is a subclass of QueryT.
-  template <typename QueryT> bool isA() const { return isA(QueryT::classID()); }
-
   bool isA(const void *const ClassID) const override {
-    return ClassID == classID() || ParentT::isA(ClassID) ||
-           (ParentTs::isA(ClassID) || ...);
+    return ClassID == classID() || ParentT::isA(ClassID);
   }
 
-  template <typename T> static bool classof(const T *R) {
-    return R->template isA<ThisT>();
-  }
+  static bool classof(const RTTIRoot *R) { return R->isA<ThisT>(); }
 };
 
 } // end namespace llvm

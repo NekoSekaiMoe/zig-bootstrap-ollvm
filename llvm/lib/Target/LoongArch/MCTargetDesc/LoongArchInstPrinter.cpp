@@ -11,9 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "LoongArchInstPrinter.h"
+#include "LoongArchBaseInfo.h"
 #include "LoongArchMCTargetDesc.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/CommandLine.h"
@@ -54,7 +56,7 @@ void LoongArchInstPrinter::printInst(const MCInst *MI, uint64_t Address,
   printAnnotation(O, Annot);
 }
 
-void LoongArchInstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
+void LoongArchInstPrinter::printRegName(raw_ostream &O, MCRegister Reg) const {
   O << '$' << getRegisterName(Reg);
 }
 

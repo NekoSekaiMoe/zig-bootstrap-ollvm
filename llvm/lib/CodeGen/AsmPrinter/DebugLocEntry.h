@@ -118,11 +118,13 @@ class DbgValueLoc {
 
 public:
   DbgValueLoc(const DIExpression *Expr, ArrayRef<DbgValueLocEntry> Locs)
-      : Expression(Expr), ValueLocEntries(Locs), IsVariadic(true) {}
+      : Expression(Expr), ValueLocEntries(Locs.begin(), Locs.end()),
+        IsVariadic(true) {}
 
   DbgValueLoc(const DIExpression *Expr, ArrayRef<DbgValueLocEntry> Locs,
               bool IsVariadic)
-      : Expression(Expr), ValueLocEntries(Locs), IsVariadic(IsVariadic) {
+      : Expression(Expr), ValueLocEntries(Locs.begin(), Locs.end()),
+        IsVariadic(IsVariadic) {
 #ifndef NDEBUG
     assert(Expr->isValid() ||
            !any_of(Locs, [](auto LE) { return LE.isLocation(); }));
@@ -236,10 +238,10 @@ public:
     if (Values.size() == 1)
       return;
     llvm::sort(Values);
-    Values.erase(llvm::unique(Values,
-                              [](const DbgValueLoc &A, const DbgValueLoc &B) {
-                                return A.getExpression() == B.getExpression();
-                              }),
+    Values.erase(std::unique(Values.begin(), Values.end(),
+                             [](const DbgValueLoc &A, const DbgValueLoc &B) {
+                               return A.getExpression() == B.getExpression();
+                             }),
                  Values.end());
   }
 

@@ -49,7 +49,7 @@ private:
 
   /// Identify lowered values that originated from f128 arguments and record
   /// this for use by RetCC_MipsN.
-  void PreAnalyzeCallReturnForF128(const SmallVectorImpl<ISD::OutputArg> &Outs, const Type *RetTy);
+  void PreAnalyzeReturnForF128(const SmallVectorImpl<ISD::OutputArg> &Outs);
 
   /// Identify lowered values that originated from f128 arguments and record
   /// this.
@@ -167,11 +167,10 @@ public:
 
   void PreAnalyzeReturn(const SmallVectorImpl<ISD::OutputArg> &Outs,
                         CCAssignFn Fn) {
-    const MachineFunction &MF = getMachineFunction();
     OriginalArgWasFloat.clear();
     OriginalArgWasF128.clear();
     OriginalArgWasFloatVector.clear();
-    PreAnalyzeCallReturnForF128(Outs, MF.getFunction().getReturnType());
+    PreAnalyzeReturnForF128(Outs);
     PreAnalyzeReturnForVectorFloat(Outs);
   }
 
@@ -183,8 +182,7 @@ public:
 
   bool CheckReturn(const SmallVectorImpl<ISD::OutputArg> &ArgsFlags,
                    CCAssignFn Fn) {
-    const MachineFunction &MF = getMachineFunction();
-    PreAnalyzeCallReturnForF128(ArgsFlags, MF.getFunction().getReturnType());
+    PreAnalyzeReturnForF128(ArgsFlags);
     PreAnalyzeReturnForVectorFloat(ArgsFlags);
     bool Return = CCState::CheckReturn(ArgsFlags, Fn);
     OriginalArgWasFloat.clear();
@@ -193,16 +191,6 @@ public:
     return Return;
   }
 
-  bool CheckCallReturn(const SmallVectorImpl<ISD::OutputArg> &ArgsFlags,
-                   CCAssignFn Fn, const Type *RetTy) {
-    PreAnalyzeCallReturnForF128(ArgsFlags, RetTy);
-    PreAnalyzeReturnForVectorFloat(ArgsFlags);
-    bool Return = CCState::CheckReturn(ArgsFlags, Fn);
-    OriginalArgWasFloat.clear();
-    OriginalArgWasF128.clear();
-    OriginalArgWasFloatVector.clear();
-    return Return;
-  }
   bool WasOriginalArgF128(unsigned ValNo) { return OriginalArgWasF128[ValNo]; }
   bool WasOriginalArgFloat(unsigned ValNo) {
       return OriginalArgWasFloat[ValNo];

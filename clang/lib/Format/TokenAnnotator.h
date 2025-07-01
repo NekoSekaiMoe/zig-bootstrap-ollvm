@@ -16,14 +16,13 @@
 #define LLVM_CLANG_LIB_FORMAT_TOKENANNOTATOR_H
 
 #include "UnwrappedLineParser.h"
+#include "clang/Format/Format.h"
 
 namespace clang {
 namespace format {
 
 enum LineType {
   LT_Invalid,
-  // Contains public/private/protected followed by TT_InheritanceColon.
-  LT_AccessModifier,
   LT_ImportStatement,
   LT_ObjCDecl, // An @interface, @implementation, or @protocol line.
   LT_ObjCMethodDecl,
@@ -33,23 +32,21 @@ enum LineType {
   LT_VirtualFunctionDecl,
   LT_ArrayOfStructInitializer,
   LT_CommentAbovePPDirective,
-  LT_RequiresExpression,
-  LT_SimpleRequirement,
 };
 
 enum ScopeType {
   // Contained in class declaration/definition.
   ST_Class,
-  // Contained in compound requirement.
-  ST_CompoundRequirement,
-  // Contained in other blocks (function, lambda, loop, if/else, child, etc).
+  // Contained within function definition.
+  ST_Function,
+  // Contained within other scope block (loop, if/else, etc).
   ST_Other,
 };
 
 class AnnotatedLine {
 public:
   AnnotatedLine(const UnwrappedLine &Line)
-      : First(Line.Tokens.front().Tok), Type(LT_Other), Level(Line.Level),
+      : First(Line.Tokens.front().Tok), Level(Line.Level),
         PPLevel(Line.PPLevel),
         MatchingOpeningBlockLineIndex(Line.MatchingOpeningBlockLineIndex),
         MatchingClosingBlockLineIndex(Line.MatchingClosingBlockLineIndex),
@@ -92,13 +89,6 @@ public:
         ContainsMacroCall = true;
       Current->Children.push_back(Children.back());
     }
-  }
-
-  size_t size() const {
-    size_t Size = 1;
-    for (const auto *Child : Children)
-      Size += Child->size();
-    return Size;
   }
 
   ~AnnotatedLine() {
@@ -154,21 +144,6 @@ public:
            startsWith(tok::kw_export, tok::kw_namespace);
   }
 
-  /// \c true if this line starts a C++ export block.
-  bool startsWithExportBlock() const {
-    return startsWith(tok::kw_export, tok::l_brace);
-  }
-
-  FormatToken *getFirstNonComment() const {
-    assert(First);
-    return First->is(tok::comment) ? First->getNextNonComment() : First;
-  }
-
-  FormatToken *getLastNonComment() const {
-    assert(Last);
-    return Last->is(tok::comment) ? Last->getPreviousNonComment() : Last;
-  }
-
   FormatToken *First;
   FormatToken *Last;
 
@@ -188,9 +163,6 @@ public:
 
   /// \c True if this line contains a macro call for which an expansion exists.
   bool ContainsMacroCall = false;
-
-  /// \c True if calculateFormattingInformation() has been called on this line.
-  bool Computed = false;
 
   /// \c True if this line should be formatted, i.e. intersects directly or
   /// indirectly with one of the input ranges.
@@ -223,10 +195,7 @@ private:
 class TokenAnnotator {
 public:
   TokenAnnotator(const FormatStyle &Style, const AdditionalKeywords &Keywords)
-      : Style(Style), IsCpp(Style.isCpp()),
-        LangOpts(getFormattingLangOpts(Style)), Keywords(Keywords) {
-    assert(IsCpp == (LangOpts.CXXOperatorNames || LangOpts.C17));
-  }
+      : Style(Style), Keywords(Keywords) {}
 
   /// Adapts the indent levels of comment lines to the indent of the
   /// subsequent line.
@@ -274,12 +243,9 @@ private:
 
   const FormatStyle &Style;
 
-  bool IsCpp;
-  LangOptions LangOpts;
-
   const AdditionalKeywords &Keywords;
 
-  SmallVector<ScopeType> Scopes, MacroBodyScopes;
+  SmallVector<ScopeType> Scopes;
 };
 
 } // end namespace format

@@ -28,8 +28,6 @@ if (fake_version_inc)
     COMMAND ${CMAKE_COMMAND} "-DNAMES=LLVM"
                              "-DLLVM_SOURCE_DIR=${llvm_source_dir}"
                              "-DHEADER_FILE=${version_inc}"
-                             "-DLLVM_FORCE_VC_REVISION=${LLVM_FORCE_VC_REVISION}"
-                             "-DLLVM_FORCE_VC_REPOSITORY=${LLVM_FORCE_VC_REPOSITORY}"
                              -P "${generate_vcs_version_script}")
 else()
   add_custom_command(OUTPUT "${version_inc}"
@@ -37,8 +35,6 @@ else()
     COMMAND ${CMAKE_COMMAND} "-DNAMES=LLVM"
                              "-DLLVM_SOURCE_DIR=${llvm_source_dir}"
                              "-DHEADER_FILE=${version_inc}"
-                             "-DLLVM_FORCE_VC_REVISION=${LLVM_FORCE_VC_REVISION}"
-                             "-DLLVM_FORCE_VC_REPOSITORY=${LLVM_FORCE_VC_REPOSITORY}"
                              -P "${generate_vcs_version_script}")
 endif()
 
@@ -48,4 +44,4 @@ set_source_files_properties("${version_inc}"
              HEADER_FILE_ONLY TRUE)
 
 add_custom_target(llvm_vcsrevision_h ALL DEPENDS "${generated_files}")
-set_target_properties(llvm_vcsrevision_h PROPERTIES FOLDER "LLVM/Resources")
+set_target_properties(llvm_vcsrevision_h PROPERTIES FOLDER "Misc")

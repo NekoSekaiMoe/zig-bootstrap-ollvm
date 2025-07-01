@@ -49,7 +49,7 @@ class ExplodedNodeSet;
 class ExprEngine;
 struct EvalCallOptions;
 class MemRegion;
-class NodeBuilderContext;
+struct NodeBuilderContext;
 class ObjCMethodCall;
 class RegionAndSymbolInvalidationTraits;
 class SVal;
@@ -164,6 +164,8 @@ public:
 
   bool hasPathSensitiveCheckers() const;
 
+  void finishedCheckerRegistration();
+
   const LangOptions &getLangOpts() const { return LangOpts; }
   const AnalyzerOptions &getAnalyzerOptions() const { return AOptions; }
   const Preprocessor &getPreprocessor() const {
@@ -219,10 +221,6 @@ public:
            "Requested checker is not registered! Maybe you should add it as a "
            "dependency in Checkers.td?");
     return static_cast<CHECKER *>(CheckerTags[tag]);
-  }
-
-  template <typename CHECKER> bool isRegisteredChecker() {
-    return CheckerTags.contains(getTag<CHECKER>());
   }
 
 //===----------------------------------------------------------------------===//
@@ -490,11 +488,13 @@ public:
   using CheckCallFunc =
       CheckerFn<void (const CallEvent &, CheckerContext &)>;
 
-  using CheckLocationFunc = CheckerFn<void(SVal location, bool isLoad,
-                                           const Stmt *S, CheckerContext &)>;
+  using CheckLocationFunc =
+      CheckerFn<void (const SVal &location, bool isLoad, const Stmt *S,
+                      CheckerContext &)>;
 
   using CheckBindFunc =
-      CheckerFn<void(SVal location, SVal val, const Stmt *S, CheckerContext &)>;
+      CheckerFn<void (const SVal &location, const SVal &val, const Stmt *S,
+                      CheckerContext &)>;
 
   using CheckEndAnalysisFunc =
       CheckerFn<void (ExplodedGraph &, BugReporter &, ExprEngine &)>;
@@ -530,7 +530,8 @@ public:
                                  RegionAndSymbolInvalidationTraits *ITraits)>;
 
   using EvalAssumeFunc =
-      CheckerFn<ProgramStateRef(ProgramStateRef, SVal cond, bool assumption)>;
+      CheckerFn<ProgramStateRef (ProgramStateRef, const SVal &cond,
+                                 bool assumption)>;
 
   using EvalCallFunc = CheckerFn<bool (const CallEvent &, CheckerContext &)>;
 

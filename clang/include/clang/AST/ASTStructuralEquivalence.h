@@ -39,10 +39,6 @@ enum class StructuralEquivalenceKind {
 };
 
 struct StructuralEquivalenceContext {
-  /// Store declaration pairs already found to be non-equivalent.
-  /// key: (from, to, IgnoreTemplateParmDepth)
-  using NonEquivalentDeclSet = llvm::DenseSet<std::tuple<Decl *, Decl *, int>>;
-
   /// AST contexts for which we are checking structural equivalence.
   ASTContext &FromCtx, &ToCtx;
 
@@ -56,7 +52,7 @@ struct StructuralEquivalenceContext {
 
   /// Declaration (from, to) pairs that are known not to be equivalent
   /// (which we have already complained about).
-  NonEquivalentDeclSet &NonEquivalentDecls;
+  llvm::DenseSet<std::pair<Decl *, Decl *>> &NonEquivalentDecls;
 
   StructuralEquivalenceKind EqKind;
 
@@ -73,20 +69,15 @@ struct StructuralEquivalenceContext {
   /// \c true if the last diagnostic came from ToCtx.
   bool LastDiagFromC2 = false;
 
-  /// Whether to ignore comparing the depth of template param(TemplateTypeParm)
-  bool IgnoreTemplateParmDepth;
-
-  StructuralEquivalenceContext(ASTContext &FromCtx, ASTContext &ToCtx,
-                               NonEquivalentDeclSet &NonEquivalentDecls,
-                               StructuralEquivalenceKind EqKind,
-                               bool StrictTypeSpelling = false,
-                               bool Complain = true,
-                               bool ErrorOnTagTypeMismatch = false,
-                               bool IgnoreTemplateParmDepth = false)
+  StructuralEquivalenceContext(
+      ASTContext &FromCtx, ASTContext &ToCtx,
+      llvm::DenseSet<std::pair<Decl *, Decl *>> &NonEquivalentDecls,
+      StructuralEquivalenceKind EqKind,
+      bool StrictTypeSpelling = false, bool Complain = true,
+      bool ErrorOnTagTypeMismatch = false)
       : FromCtx(FromCtx), ToCtx(ToCtx), NonEquivalentDecls(NonEquivalentDecls),
         EqKind(EqKind), StrictTypeSpelling(StrictTypeSpelling),
-        ErrorOnTagTypeMismatch(ErrorOnTagTypeMismatch), Complain(Complain),
-        IgnoreTemplateParmDepth(IgnoreTemplateParmDepth) {}
+        ErrorOnTagTypeMismatch(ErrorOnTagTypeMismatch), Complain(Complain) {}
 
   DiagnosticBuilder Diag1(SourceLocation Loc, unsigned DiagID);
   DiagnosticBuilder Diag2(SourceLocation Loc, unsigned DiagID);

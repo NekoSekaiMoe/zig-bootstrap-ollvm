@@ -92,11 +92,11 @@ using namespace ento;
 namespace {
 class GTestChecker : public Checker<check::PostCall> {
 
-  mutable IdentifierInfo *AssertionResultII = nullptr;
-  mutable IdentifierInfo *SuccessII = nullptr;
+  mutable IdentifierInfo *AssertionResultII;
+  mutable IdentifierInfo *SuccessII;
 
 public:
-  GTestChecker() = default;
+  GTestChecker();
 
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
 
@@ -119,6 +119,8 @@ private:
                                            CheckerContext &C);
 };
 } // End anonymous namespace.
+
+GTestChecker::GTestChecker() : AssertionResultII(nullptr), SuccessII(nullptr) {}
 
 /// Model a call to an un-inlined AssertionResult(bool) or
 /// AssertionResult(bool &, ...).

@@ -89,8 +89,8 @@ INITIALIZE_PASS(UnreachableMachineBlockElim, "unreachable-mbb-elimination",
 char &llvm::UnreachableMachineBlockElimID = UnreachableMachineBlockElim::ID;
 
 void UnreachableMachineBlockElim::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addPreserved<MachineLoopInfoWrapperPass>();
-  AU.addPreserved<MachineDominatorTreeWrapperPass>();
+  AU.addPreserved<MachineLoopInfo>();
+  AU.addPreserved<MachineDominatorTree>();
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
@@ -98,12 +98,8 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
   df_iterator_default_set<MachineBasicBlock*> Reachable;
   bool ModifiedPHI = false;
 
-  MachineDominatorTreeWrapperPass *MDTWrapper =
-      getAnalysisIfAvailable<MachineDominatorTreeWrapperPass>();
-  MachineDominatorTree *MDT = MDTWrapper ? &MDTWrapper->getDomTree() : nullptr;
-  MachineLoopInfoWrapperPass *MLIWrapper =
-      getAnalysisIfAvailable<MachineLoopInfoWrapperPass>();
-  MachineLoopInfo *MLI = MLIWrapper ? &MLIWrapper->getLI() : nullptr;
+  MachineDominatorTree *MDT = getAnalysisIfAvailable<MachineDominatorTree>();
+  MachineLoopInfo *MLI = getAnalysisIfAvailable<MachineLoopInfo>();
 
   // Mark all reachable blocks.
   for (MachineBasicBlock *BB : depth_first_ext(&F, Reachable))
@@ -121,7 +117,7 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
       if (MLI) MLI->removeBlock(&BB);
       if (MDT && MDT->getNode(&BB)) MDT->eraseNode(&BB);
 
-      while (!BB.succ_empty()) {
+      while (BB.succ_begin() != BB.succ_end()) {
         MachineBasicBlock* succ = *BB.succ_begin();
 
         for (MachineInstr &Phi : succ->phis()) {
@@ -141,10 +137,10 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
 
   // Actually remove the blocks now.
   for (MachineBasicBlock *BB : DeadBlocks) {
-    // Remove any call information for calls in the block.
+    // Remove any call site information for calls in the block.
     for (auto &I : BB->instrs())
-      if (I.shouldUpdateAdditionalCallInfo())
-        BB->getParent()->eraseAdditionalCallInfo(&I);
+      if (I.shouldUpdateCallSiteInfo())
+        BB->getParent()->eraseCallSiteInfo(&I);
 
     BB->eraseFromParent();
   }
@@ -195,8 +191,6 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
   }
 
   F.RenumberBlocks();
-  if (MDT)
-    MDT->updateBlockNumbers();
 
   return (!DeadBlocks.empty() || ModifiedPHI);
 }

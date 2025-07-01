@@ -15,17 +15,18 @@
 #define LLVM_ANALYSIS_PROFILESUMMARYINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ProfileSummary.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/BlockFrequency.h"
 #include <memory>
 #include <optional>
 
 namespace llvm {
-class BlockFrequencyInfo;
+class BasicBlock;
+class CallBase;
 class MachineFunction;
 
 /// Analysis providing profile information.
@@ -208,7 +209,7 @@ public:
 
   template <typename BFIT>
   bool isColdBlock(BlockFrequency BlockFreq, const BFIT *BFI) const {
-    auto Count = BFI->getProfileCountFromFreq(BlockFreq);
+    auto Count = BFI->getProfileCountFromFreq(BlockFreq.getFrequency());
     return Count && isColdCount(*Count);
   }
 
@@ -314,7 +315,7 @@ private:
   bool isHotOrColdBlockNthPercentile(int PercentileCutoff,
                                      BlockFrequency BlockFreq,
                                      BFIT *BFI) const {
-    auto Count = BFI->getProfileCountFromFreq(BlockFreq);
+    auto Count = BFI->getProfileCountFromFreq(BlockFreq.getFrequency());
     if (isHot)
       return Count && isHotCountNthPercentile(PercentileCutoff, *Count);
     else
@@ -388,7 +389,6 @@ class ProfileSummaryPrinterPass
 public:
   explicit ProfileSummaryPrinterPass(raw_ostream &OS) : OS(OS) {}
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
-  static bool isRequired() { return true; }
 };
 
 } // end namespace llvm

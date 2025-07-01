@@ -9,16 +9,17 @@
 // Implements generic name mangling support for blocks and Objective-C.
 //
 //===----------------------------------------------------------------------===//
-#include "clang/AST/Mangle.h"
-#include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/Mangle.h"
 #include "clang/AST/VTableBuilder.h"
 #include "clang/Basic/ABI.h"
+#include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DataLayout.h"
@@ -146,7 +147,7 @@ void MangleContext::mangleName(GlobalDecl GD, raw_ostream &Out) {
 
     // If the label isn't literal, or if this is an alias for an LLVM intrinsic,
     // do not add a "\01" prefix.
-    if (!ALA->getIsLiteralLabel() || ALA->getLabel().starts_with("llvm.")) {
+    if (!ALA->getIsLiteralLabel() || ALA->getLabel().startswith("llvm.")) {
       Out << ALA->getLabel();
       return;
     }
@@ -197,12 +198,8 @@ void MangleContext::mangleName(GlobalDecl GD, raw_ostream &Out) {
     Out << '_';
   else if (CC == CCM_Fast)
     Out << '@';
-  else if (CC == CCM_RegCall) {
-    if (getASTContext().getLangOpts().RegCall4)
-      Out << "__regcall4__";
-    else
-      Out << "__regcall3__";
-  }
+  else if (CC == CCM_RegCall)
+    Out << "__regcall3__";
 
   if (!MCXX)
     Out << D->getIdentifier()->getName();
@@ -224,7 +221,7 @@ void MangleContext::mangleName(GlobalDecl GD, raw_ostream &Out) {
   assert(!Proto->isVariadic());
   unsigned ArgWords = 0;
   if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD))
-    if (MD->isImplicitObjectMemberFunction())
+    if (!MD->isStatic())
       ++ArgWords;
   uint64_t DefaultPtrWidth = TI.getPointerWidth(LangAS::Default);
   for (const auto &AT : Proto->param_types()) {
@@ -300,8 +297,9 @@ void MangleContext::mangleBlock(const DeclContext *DC, const BlockDecl *BD,
   } else {
     assert((isa<NamedDecl>(DC) || isa<BlockDecl>(DC)) &&
            "expected a NamedDecl or BlockDecl");
-    for (; isa_and_nonnull<BlockDecl>(DC); DC = DC->getParent())
-      (void)getBlockId(cast<BlockDecl>(DC), true);
+    if (isa<BlockDecl>(DC))
+      for (; DC && isa<BlockDecl>(DC); DC = DC->getParent())
+        (void) getBlockId(cast<BlockDecl>(DC), true);
     assert((isa<TranslationUnitDecl>(DC) || isa<NamedDecl>(DC)) &&
            "expected a TranslationUnitDecl or a NamedDecl");
     if (const auto *CD = dyn_cast<CXXConstructorDecl>(DC))
@@ -462,7 +460,7 @@ public:
       SmallString<40> Mangled;
       auto Prefix = getClassSymbolPrefix(Kind, OCD->getASTContext());
       llvm::Mangler::getNameWithPrefix(Mangled, Prefix + ClassName, DL);
-      return std::string(Mangled);
+      return std::string(Mangled.str());
     };
 
     return {
@@ -512,20 +510,10 @@ public:
       }
     } else if (const auto *MD = dyn_cast_or_null<CXXMethodDecl>(ND)) {
       Manglings.emplace_back(getName(ND));
-      if (MD->isVirtual()) {
-        if (const auto *TIV = Ctx.getVTableContext()->getThunkInfo(MD)) {
-          for (const auto &T : *TIV) {
-            std::string ThunkName;
-            std::string ContextualizedName =
-                getMangledThunk(MD, T, /* ElideOverrideInfo */ false);
-            if (Ctx.useAbbreviatedThunkName(MD, ContextualizedName))
-              ThunkName = getMangledThunk(MD, T, /* ElideOverrideInfo */ true);
-            else
-              ThunkName = ContextualizedName;
-            Manglings.emplace_back(ThunkName);
-          }
-        }
-      }
+      if (MD->isVirtual())
+        if (const auto *TIV = Ctx.getVTableContext()->getThunkInfo(MD))
+          for (const auto &T : *TIV)
+            Manglings.emplace_back(getMangledThunk(MD, T));
     }
 
     return Manglings;
@@ -573,24 +561,23 @@ private:
     std::string BackendBuf;
     llvm::raw_string_ostream BOS(BackendBuf);
 
-    llvm::Mangler::getNameWithPrefix(BOS, FrontendBuf, DL);
+    llvm::Mangler::getNameWithPrefix(BOS, FOS.str(), DL);
 
-    return BackendBuf;
+    return BOS.str();
   }
 
-  std::string getMangledThunk(const CXXMethodDecl *MD, const ThunkInfo &T,
-                              bool ElideOverrideInfo) {
+  std::string getMangledThunk(const CXXMethodDecl *MD, const ThunkInfo &T) {
     std::string FrontendBuf;
     llvm::raw_string_ostream FOS(FrontendBuf);
 
-    MC->mangleThunk(MD, T, ElideOverrideInfo, FOS);
+    MC->mangleThunk(MD, T, FOS);
 
     std::string BackendBuf;
     llvm::raw_string_ostream BOS(BackendBuf);
 
-    llvm::Mangler::getNameWithPrefix(BOS, FrontendBuf, DL);
+    llvm::Mangler::getNameWithPrefix(BOS, FOS.str(), DL);
 
-    return BackendBuf;
+    return BOS.str();
   }
 };
 

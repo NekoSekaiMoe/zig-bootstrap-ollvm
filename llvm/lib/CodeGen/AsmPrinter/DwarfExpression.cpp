@@ -18,7 +18,6 @@
 #include "llvm/CodeGen/Register.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
 
@@ -40,7 +39,7 @@ void DwarfExpression::emitConstu(uint64_t Value) {
   }
 }
 
-void DwarfExpression::addReg(int64_t DwarfReg, const char *Comment) {
+void DwarfExpression::addReg(int DwarfReg, const char *Comment) {
   assert(DwarfReg >= 0 && "invalid negative dwarf register number");
   assert((isUnknownLocation() || isRegisterLocation()) &&
          "location description already locked down");
@@ -53,7 +52,7 @@ void DwarfExpression::addReg(int64_t DwarfReg, const char *Comment) {
   }
 }
 
-void DwarfExpression::addBReg(int64_t DwarfReg, int64_t Offset) {
+void DwarfExpression::addBReg(int DwarfReg, int Offset) {
   assert(DwarfReg >= 0 && "invalid negative dwarf register number");
   assert(!isRegisterLocation() && "location description already locked down");
   if (DwarfReg < 32) {
@@ -65,7 +64,7 @@ void DwarfExpression::addBReg(int64_t DwarfReg, int64_t Offset) {
   emitSigned(Offset);
 }
 
-void DwarfExpression::addFBReg(int64_t Offset) {
+void DwarfExpression::addFBReg(int Offset) {
   emitOp(dwarf::DW_OP_fbreg);
   emitSigned(Offset);
 }
@@ -105,16 +104,10 @@ bool DwarfExpression::addMachineReg(const TargetRegisterInfo &TRI,
       DwarfRegs.push_back(Register::createRegister(-1, nullptr));
       return true;
     }
-    // Try getting dwarf register for virtual register anyway, eg. for NVPTX.
-    int64_t Reg = TRI.getDwarfRegNum(MachineReg, false);
-    if (Reg > 0) {
-      DwarfRegs.push_back(Register::createRegister(Reg, nullptr));
-      return true;
-    }
     return false;
   }
 
-  int64_t Reg = TRI.getDwarfRegNum(MachineReg, false);
+  int Reg = TRI.getDwarfRegNum(MachineReg, false);
 
   // If this is a valid register number, emit it.
   if (Reg >= 0) {
@@ -421,7 +414,6 @@ void DwarfExpression::beginEntryValueExpression(
 
   SavedLocationKind = LocationKind;
   LocationKind = Register;
-  LocationFlags |= EntryValue;
   IsEmittingEntryValue = true;
   enableTemporaryBuffer();
 }
@@ -552,41 +544,6 @@ bool DwarfExpression::addExpression(
       // Reset the location description kind.
       LocationKind = Unknown;
       return true;
-    }
-    case dwarf::DW_OP_LLVM_extract_bits_sext:
-    case dwarf::DW_OP_LLVM_extract_bits_zext: {
-      unsigned SizeInBits = Op->getArg(1);
-      unsigned BitOffset = Op->getArg(0);
-
-      // If we have a memory location then dereference to get the value, though
-      // we have to make sure we don't dereference any bytes past the end of the
-      // object.
-      if (isMemoryLocation()) {
-        emitOp(dwarf::DW_OP_deref_size);
-        emitUnsigned(alignTo(BitOffset + SizeInBits, 8) / 8);
-      }
-
-      // Extract the bits by a shift left (to shift out the bits after what we
-      // want to extract) followed by shift right (to shift the bits to position
-      // 0 and also sign/zero extend). These operations are done in the DWARF
-      // "generic type" whose size is the size of a pointer.
-      unsigned PtrSizeInBytes = CU.getAsmPrinter()->MAI->getCodePointerSize();
-      unsigned LeftShift = PtrSizeInBytes * 8 - (SizeInBits + BitOffset);
-      unsigned RightShift = LeftShift + BitOffset;
-      if (LeftShift) {
-        emitOp(dwarf::DW_OP_constu);
-        emitUnsigned(LeftShift);
-        emitOp(dwarf::DW_OP_shl);
-      }
-      emitOp(dwarf::DW_OP_constu);
-      emitUnsigned(RightShift);
-      emitOp(OpNum == dwarf::DW_OP_LLVM_extract_bits_sext ? dwarf::DW_OP_shra
-                                                          : dwarf::DW_OP_shr);
-
-      // The value is now at the top of the stack, so set the location to
-      // implicit so that we get a stack_value at the end.
-      LocationKind = Implicit;
-      break;
     }
     case dwarf::DW_OP_plus_uconst:
       assert(!isRegisterLocation());

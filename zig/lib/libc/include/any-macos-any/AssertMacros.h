@@ -133,9 +133,6 @@
  *
  *  If you do not define DEBUG_ASSERT_PRODUCTION_CODE, the default value 1 will be used
  *  (production code = no assertion code and no messages).
- *
- *  If you are building with modules modules this must be defined via a commandline
- *  flag (i.e. -DDEBUG_ASSERT_PRODUCTION_CODE=1) in order to work correctly.
  */
 #ifndef DEBUG_ASSERT_PRODUCTION_CODE
    #define DEBUG_ASSERT_PRODUCTION_CODE !DEBUG
@@ -221,30 +218,16 @@
    #ifdef KERNEL
       #include <libkern/libkern.h>
       #define DEBUG_ASSERT_MESSAGE(name, assertion, label, message, file, line, value) \
-                                  printf( "AssertMacros: %s, %s file: %s, line: %d, value: %lld\n", assertion, (message!=0) ? message : "", file, line, (long long) (value));
+                                  printf( "AssertMacros: %s, %s file: %s, line: %d, value: %ld\n", assertion, (message!=0) ? message : "", file, line, (long) (value));
    #elif TARGET_OS_DRIVERKIT
       #include <os/log.h>
       #define DEBUG_ASSERT_MESSAGE(name, assertion, label, message, file, line, value) \
-                                  os_log(OS_LOG_DEFAULT, "AssertMacros: %s, %s file: %s, line: %d, value: %lld\n", assertion, (message!=0) ? message : "", file, line, (long long) (value));
+                                  os_log(OS_LOG_DEFAULT, "AssertMacros: %s, %s file: %s, line: %d, value: %ld\n", assertion, (message!=0) ? message : "", file, line, (long) (value));
    #else
       #include <stdio.h>
       #define DEBUG_ASSERT_MESSAGE(name, assertion, label, message, file, line, value) \
-                                  fprintf(stderr, "AssertMacros: %s, %s file: %s, line: %d, value: %lld\n", assertion, (message!=0) ? message : "", file, line, (long long) (value));
+                                  fprintf(stderr, "AssertMacros: %s, %s file: %s, line: %d, value: %ld\n", assertion, (message!=0) ? message : "", file, line, (long) (value));
    #endif
-#endif
-
-/*
- *  DEBUG_ASSERT_FORCE_64_BIT_ERROR_CODE
- *
- *  Summary:
- *    By default the errorCode passed to DEBUG_ASSERT_MESSAGE will be the system word
- *    length. If DEBUG_ASSERT_FORCE_64_BIT_ERROR_CODE is set then it will be changed
- *    to a 64 bit integer, even on 32 bit platforms.
- */
-#ifndef DEBUG_ASSERT_FORCE_64_BIT_ERROR_CODE
-  #define DEBUG_ASSERT_ERROR_TYPE long
-#else
-  #define DEBUG_ASSERT_ERROR_TYPE long long
 #endif
 
 
@@ -378,7 +361,7 @@
 	   #define __Check_noErr(errorCode)                                           \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -414,7 +397,7 @@
 	   #define __Check_noErr_String(errorCode, message)                           \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -540,7 +523,7 @@
 	   #define __Verify_noErr(errorCode)                                          \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -582,7 +565,7 @@
 	   #define __Verify_noErr_String(errorCode, message)                          \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -622,7 +605,7 @@
 	#else
 	   #define __Verify_noErr_Action(errorCode, action)                          \
                do {                                                                   \
-		  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                                  \
+		  long evalOnceErrorCode = (errorCode);                                  \
 		  if ( __builtin_expect(0 != evalOnceErrorCode, 0) ) {                   \
 			  DEBUG_ASSERT_MESSAGE(                                              \
 				  DEBUG_ASSERT_COMPONENT_NAME_STRING,                            \
@@ -987,7 +970,7 @@
 	   #define __Require_noErr(errorCode, exceptionLabel)                         \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -1039,7 +1022,7 @@
 	   #define __Require_noErr_Action(errorCode, exceptionLabel, action)          \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -1148,7 +1131,7 @@
 	   #define __Require_noErr_String(errorCode, exceptionLabel, message)         \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \
@@ -1203,7 +1186,7 @@
 	   #define __Require_noErr_Action_String(errorCode, exceptionLabel, action, message) \
 		  do                                                                      \
 		  {                                                                       \
-			  DEBUG_ASSERT_ERROR_TYPE evalOnceErrorCode = (errorCode);                               \
+			  long evalOnceErrorCode = (errorCode);                               \
 			  if ( __builtin_expect(0 != evalOnceErrorCode, 0) )                  \
 			  {                                                                   \
 				  DEBUG_ASSERT_MESSAGE(                                           \

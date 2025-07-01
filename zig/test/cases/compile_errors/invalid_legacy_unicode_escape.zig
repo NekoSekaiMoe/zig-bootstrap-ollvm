@@ -6,4 +6,5 @@ export fn entry() void {
 // backend=stage2
 // target=native
 //
-// :2:17: error: invalid escape character: 'U'
+// :2:15: error: expected expression, found 'invalid bytes'
+// :2:18: note: invalid byte: '1'

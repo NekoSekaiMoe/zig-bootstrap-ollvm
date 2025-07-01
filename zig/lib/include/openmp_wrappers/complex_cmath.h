@@ -64,13 +64,8 @@ template <class _Tp> __DEVICE__ _Tp norm(const std::complex<_Tp> &__c) {
 }
 
 // conj
-#ifdef _GLIBCXX20_CONSTEXPR
-#define CXX20_CONSTEXPR_DEVICE __DEVICE__
-#else
-#define CXX20_CONSTEXPR_DEVICE
-#endif
-template <class _Tp>
-CXX20_CONSTEXPR_DEVICE std::complex<_Tp> conj(const std::complex<_Tp> &__c) {
+
+template <class _Tp> std::complex<_Tp> conj(const std::complex<_Tp> &__c) {
   return std::complex<_Tp>(__c.real(), -__c.imag());
 }
 

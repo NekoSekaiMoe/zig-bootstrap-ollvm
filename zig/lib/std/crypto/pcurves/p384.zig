@@ -393,7 +393,7 @@ pub const P384 = struct {
     }
 
     const basePointPc = pc: {
-        @setEvalBranchQuota(70000);
+        @setEvalBranchQuota(50000);
         break :pc precompute(P384.basePoint, 15);
     };
 
@@ -470,10 +470,6 @@ pub const AffineCoordinates = struct {
 
     /// Identity element in affine coordinates.
     pub const identityElement = AffineCoordinates{ .x = P384.identityElement.x, .y = P384.identityElement.y };
-
-    pub fn neg(p: AffineCoordinates) AffineCoordinates {
-        return .{ .x = p.x, .y = p.y.neg() };
-    }
 
     fn cMov(p: *AffineCoordinates, a: AffineCoordinates, c: u1) void {
         p.x.cMov(a.x, c);

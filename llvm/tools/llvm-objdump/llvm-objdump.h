@@ -15,8 +15,9 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/Support/Compiler.h"
+#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/FormattedStream.h"
-#include <functional>
 #include <memory>
 
 namespace llvm {
@@ -48,7 +49,6 @@ extern DebugVarsFormat DbgVariables;
 extern bool Demangle;
 extern bool Disassemble;
 extern bool DisassembleAll;
-extern std::vector<std::string> DisassemblerOptions;
 extern DIDumpType DwarfDumpType;
 extern std::vector<std::string> FilterSections;
 extern bool LeadingAddr;
@@ -76,17 +76,14 @@ class Dumper {
   const object::ObjectFile &O;
   StringSet<> Warnings;
 
-protected:
-  std::function<Error(const Twine &Msg)> WarningHandler;
-
 public:
-  Dumper(const object::ObjectFile &O);
+  Dumper(const object::ObjectFile &O) : O(O) {}
   virtual ~Dumper() {}
 
   void reportUniqueWarning(Error Err);
   void reportUniqueWarning(const Twine &Msg);
 
-  virtual void printPrivateHeaders();
+  virtual void printPrivateHeaders(bool MachOOnlyFirst);
   virtual void printDynamicRelocations() {}
   void printSymbolTable(StringRef ArchiveName,
                         StringRef ArchitectureName = StringRef(),
@@ -136,8 +133,7 @@ void invalidArgValue(const opt::Arg *A);
 std::string getFileNameForError(const object::Archive::Child &C,
                                 unsigned Index);
 SymbolInfoTy createSymbolInfo(const object::ObjectFile &Obj,
-                              const object::SymbolRef &Symbol,
-                              bool IsMappingSymbol = false);
+                              const object::SymbolRef &Symbol);
 unsigned getInstStartColumn(const MCSubtargetInfo &STI);
 void printRawData(llvm::ArrayRef<uint8_t> Bytes, uint64_t Address,
                   llvm::formatted_raw_ostream &OS,

@@ -28,9 +28,7 @@ fn testLowLevelScanner(s: []const u8) !void {
     }
 }
 fn testHighLevelDynamicParser(s: []const u8) !void {
-    var parsed = try parseFromSlice(Value, testing.allocator, s, .{
-        .duplicate_field_behavior = .use_first,
-    });
+    var parsed = try parseFromSlice(Value, testing.allocator, s, .{});
     defer parsed.deinit();
 }
 

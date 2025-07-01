@@ -26,7 +26,6 @@
 #include "llvm/Support/BinaryItemStream.h"
 #include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/Parallel.h"
-#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/xxhash.h"
 #include <algorithm>
 #include <vector>
@@ -394,7 +393,7 @@ static Error writePublics(BinaryStreamWriter &Writer,
 
 static Error writeRecords(BinaryStreamWriter &Writer,
                           ArrayRef<CVSymbol> Records) {
-  BinaryItemStream<CVSymbol> ItemStream(llvm::endianness::little);
+  BinaryItemStream<CVSymbol> ItemStream(support::endianness::little);
   ItemStream.setItems(Records);
   BinaryStreamRef RecordsRef(ItemStream);
   return Writer.writeStreamRef(RecordsRef);
@@ -479,7 +478,6 @@ Error GSIStreamBuilder::commitGlobalsHashStream(
 
 Error GSIStreamBuilder::commit(const msf::MSFLayout &Layout,
                                WritableBinaryStreamRef Buffer) {
-  llvm::TimeTraceScope timeScope("Commit GSI stream");
   auto GS = WritableMappedBlockStream::createIndexedStream(
       Layout, Buffer, getGlobalsStreamIndex(), Msf.getAllocator());
   auto PS = WritableMappedBlockStream::createIndexedStream(

@@ -70,21 +70,11 @@ def : WriteRes<WriteIMul32, [RocketUnitIMul]>;
 // Worst case latency is used.
 def : WriteRes<WriteIDiv32, [RocketUnitIDiv]> {
   let Latency = 34;
-  let ReleaseAtCycles = [34];
+  let ResourceCycles = [34];
 }
 def : WriteRes<WriteIDiv, [RocketUnitIDiv]> {
   let Latency = 33;
-  let ReleaseAtCycles = [33];
-}
-
-// Integer remainder
-def : WriteRes<WriteIRem32, [RocketUnitIDiv]> {
-  let Latency = 34;
-  let ReleaseAtCycles = [34];
-}
-def : WriteRes<WriteIRem, [RocketUnitIDiv]> {
-  let Latency = 33;
-  let ReleaseAtCycles = [33];
+  let ResourceCycles = [33];
 }
 
 // Memory
@@ -167,16 +157,16 @@ def : WriteRes<WriteFMA64, [RocketUnitFPALU]>;
 
 // FP division
 // FP division unit on Rocket is not pipelined, so set resource cycles to latency.
-let Latency = 20, ReleaseAtCycles = [20] in {
+let Latency = 20, ResourceCycles = [20] in {
 def : WriteRes<WriteFDiv32, [RocketUnitFPDivSqrt]>;
 def : WriteRes<WriteFDiv64, [RocketUnitFPDivSqrt]>;
 }
 
 // FP square root unit on Rocket is not pipelined, so set resource cycles to latency.
 def : WriteRes<WriteFSqrt32, [RocketUnitFPDivSqrt]> { let Latency = 20;
-                                                      let ReleaseAtCycles = [20]; }
+                                                      let ResourceCycles = [20]; }
 def : WriteRes<WriteFSqrt64, [RocketUnitFPDivSqrt]> { let Latency = 25;
-                                                      let ReleaseAtCycles = [25]; }
+                                                      let ResourceCycles = [25]; }
 
 // Others
 def : WriteRes<WriteCSR, []>;
@@ -199,8 +189,6 @@ def : ReadAdvance<ReadShiftReg, 0>;
 def : ReadAdvance<ReadShiftReg32, 0>;
 def : ReadAdvance<ReadIDiv, 0>;
 def : ReadAdvance<ReadIDiv32, 0>;
-def : ReadAdvance<ReadIRem, 0>;
-def : ReadAdvance<ReadIRem32, 0>;
 def : ReadAdvance<ReadIMul, 0>;
 def : ReadAdvance<ReadIMul32, 0>;
 def : ReadAdvance<ReadAtomicWA, 0>;
@@ -218,9 +206,7 @@ def : ReadAdvance<ReadFAdd64, 0>;
 def : ReadAdvance<ReadFMul32, 0>;
 def : ReadAdvance<ReadFMul64, 0>;
 def : ReadAdvance<ReadFMA32, 0>;
-def : ReadAdvance<ReadFMA32Addend, 0>;
 def : ReadAdvance<ReadFMA64, 0>;
-def : ReadAdvance<ReadFMA64Addend, 0>;
 def : ReadAdvance<ReadFDiv32, 0>;
 def : ReadAdvance<ReadFDiv64, 0>;
 def : ReadAdvance<ReadFSqrt32, 0>;
@@ -251,7 +237,6 @@ def : ReadAdvance<ReadFClass64, 0>;
 //===----------------------------------------------------------------------===//
 // Unsupported extensions
 defm : UnsupportedSchedV;
-defm : UnsupportedSchedZabha;
 defm : UnsupportedSchedZba;
 defm : UnsupportedSchedZbb;
 defm : UnsupportedSchedZbc;
@@ -259,8 +244,6 @@ defm : UnsupportedSchedZbs;
 defm : UnsupportedSchedZbkb;
 defm : UnsupportedSchedZbkx;
 defm : UnsupportedSchedZfa;
-defm : UnsupportedSchedZfhmin;
+defm : UnsupportedSchedZfh;
 defm : UnsupportedSchedSFB;
-defm : UnsupportedSchedXsfvcp;
-defm : UnsupportedSchedZvk;
 }

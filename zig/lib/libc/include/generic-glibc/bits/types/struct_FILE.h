@@ -1,5 +1,4 @@
-/* Copyright (C) 1991-2025 Free Software Foundation, Inc.
-   Copyright The GNU Toolchain Authors.
+/* Copyright (C) 1991-2023 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -71,9 +70,7 @@ struct _IO_FILE
   struct _IO_FILE *_chain;
 
   int _fileno;
-  int _flags2:24;
-  /* Fallback buffer to use when malloc fails to allocate one.  */
-  char _short_backupbuf[1];
+  int _flags2;
   __off_t _old_offset; /* This used to be _offset but it's too small.  */
 
   /* 1+column number of pbase(); 0 is unknown. */
@@ -95,10 +92,10 @@ struct _IO_FILE_complete
   struct _IO_wide_data *_wide_data;
   struct _IO_FILE *_freeres_list;
   void *_freeres_buf;
-  struct _IO_FILE **_prevchain;
+  size_t __pad5;
   int _mode;
   /* Make sure we don't get into trouble again.  */
-  char _unused2[15 * sizeof (int) - 5 * sizeof (void *)];
+  char _unused2[15 * sizeof (int) - 4 * sizeof (void *) - sizeof (size_t)];
 };
 
 /* These macros are used by bits/stdio.h and internal headers.  */

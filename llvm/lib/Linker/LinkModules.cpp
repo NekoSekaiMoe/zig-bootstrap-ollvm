@@ -291,7 +291,7 @@ bool ModuleLinker::shouldLinkFromSource(bool &LinkFromSrc,
       return false;
     }
 
-    const DataLayout &DL = Dest.getDataLayout();
+    const DataLayout &DL = Dest.getParent()->getDataLayout();
     uint64_t DestSize = DL.getTypeAllocSize(Dest.getValueType());
     uint64_t SrcSize = DL.getTypeAllocSize(Src.getValueType());
     LinkFromSrc = SrcSize > DestSize;
@@ -462,7 +462,6 @@ void ModuleLinker::dropReplacedComdat(
 bool ModuleLinker::run() {
   Module &DstM = Mover.getModule();
   DenseSet<const Comdat *> ReplacedDstComdats;
-  DenseSet<const Comdat *> NonPrevailingComdats;
 
   for (const auto &SMEC : SrcM->getComdatSymbolTable()) {
     const Comdat &C = SMEC.getValue();
@@ -473,9 +472,6 @@ bool ModuleLinker::run() {
     if (getComdatResult(&C, SK, From))
       return true;
     ComdatsChosen[&C] = std::make_pair(SK, From);
-
-    if (From == LinkFrom::Dst)
-      NonPrevailingComdats.insert(&C);
 
     if (From != LinkFrom::Src)
       continue;
@@ -500,23 +496,6 @@ bool ModuleLinker::run() {
 
   for (Function &GV : llvm::make_early_inc_range(DstM))
     dropReplacedComdat(GV, ReplacedDstComdats);
-
-  if (!NonPrevailingComdats.empty()) {
-    DenseSet<GlobalObject *> AliasedGlobals;
-    for (auto &GA : SrcM->aliases())
-      if (GlobalObject *GO = GA.getAliaseeObject(); GO && GO->getComdat())
-        AliasedGlobals.insert(GO);
-    for (const Comdat *C : NonPrevailingComdats) {
-      SmallVector<GlobalObject *> ToUpdate;
-      for (GlobalObject *GO : C->getUsers())
-        if (GO->hasPrivateLinkage() && !AliasedGlobals.contains(GO))
-          ToUpdate.push_back(GO);
-      for (GlobalObject *GO : ToUpdate) {
-        GO->setLinkage(GlobalValue::AvailableExternallyLinkage);
-        GO->setComdat(nullptr);
-      }
-    }
-  }
 
   for (GlobalVariable &GV : SrcM->globals())
     if (GV.hasLinkOnceLinkage())

@@ -25,25 +25,6 @@ let Class = PointerType in {
   def : Creator<[{ return ctx.getPointerType(pointeeType); }]>;
 }
 
-let Class = CountAttributedType in {
-  def : Property<"WrappedTy", QualType> {
-    let Read = [{ node->desugar() }];
-  }
-  def : Property<"CountExpr", ExprRef> {
-    let Read = [{ node->getCountExpr() }];
-  }
-  def : Property<"CountInBytes", Bool> {
-    let Read = [{ node->isCountInBytes() }];
-  }
-  def : Property<"OrNull", Bool> {
-    let Read = [{ node->isOrNull() }];
-  }
-  def : Property<"CoupledDecls", Array<TypeCoupledDeclRefInfo>> {
-    let Read = [{ node->getCoupledDecls() }];
-  }
-  def : Creator<[{ return ctx.getCountAttributedType(WrappedTy, CountExpr, CountInBytes, OrNull, CoupledDecls); }]>;
-}
-
 let Class = AdjustedType in {
   def : Property<"originalType", QualType> {
     let Read = [{ node->getOriginalType() }];
@@ -134,13 +115,6 @@ let Class = ConstantArrayType in {
                                     sizeModifier,
                                     indexQualifiers.getCVRQualifiers());
   }]>;
-}
-
-let Class = ArrayParameterType in {
-  def : Creator<[{ return ctx.getAdjustedParameterType(
-                              ctx.getConstantArrayType(elementType,sizeValue,
-                                    size,sizeModifier,
-                                    indexQualifiers.getCVRQualifiers())); }]>;
 }
 
 let Class = IncompleteArrayType in {
@@ -349,15 +323,6 @@ let Class = FunctionProtoType in {
                     ? node->getExtParameterInfos()
                     : llvm::ArrayRef<FunctionProtoType::ExtParameterInfo>() }];
   }
-  def : Property<"AArch64SMEAttributes", UInt32> {
-    let Read = [{ node->getAArch64SMEAttributes() }];
-  }
-  def : Property<"functionEffects", Array<FunctionEffect>> {
-    let Read = [{ node->getFunctionEffectsWithoutConditions() }];
-  }
-  def : Property<"functionEffectConds", Array<EffectConditionExpr>> {
-    let Read = [{ node->getFunctionEffectConditions() }];
-  }
 
   def : Creator<[{
     auto extInfo = FunctionType::ExtInfo(noReturn, hasRegParm, regParm,
@@ -373,8 +338,6 @@ let Class = FunctionProtoType in {
     epi.ExceptionSpec = exceptionSpecifier;
     epi.ExtParameterInfos =
       extParameterInfo.empty() ? nullptr : extParameterInfo.data();
-    epi.AArch64SMEAttributes = AArch64SMEAttributes;
-    epi.FunctionEffects = FunctionEffectsRef::create(functionEffects, functionEffectConds);
     return ctx.getFunctionType(returnType, parameters, epi);
   }]>;
 }
@@ -465,23 +428,6 @@ let Class = DecltypeType in {
     return ctx.getDecltypeType(expression, underlyingType);
   }]>;
 }
-
-let Class = PackIndexingType in {
-  def : Property<"pattern", QualType> {
-    let Read = [{ node->getPattern() }];
-  }
-  def : Property<"indexExpression", ExprRef> {
-    let Read = [{ node->getIndexExpr() }];
-  }
-  def : Property<"isFullySubstituted", Bool> {
-    let Read = [{ node->isFullySubstituted() }];
-  }
-
-  def : Creator<[{
-    return ctx.getPackIndexingType(pattern, indexExpression, isFullySubstituted);
-  }]>;
-}
-
 
 let Class = UnaryTransformType in {
   def : Property<"baseType", QualType> {
@@ -668,16 +614,12 @@ let Class = AttributedType in {
   def : Property<"equivalentType", QualType> {
     let Read = [{ node->getEquivalentType() }];
   }
-  def : Property<"attrKind", AttrKind> {
+  def : Property<"attribute", AttrKind> {
     let Read = [{ node->getAttrKind() }];
-  }
-  def : Property<"attribute", Attr> {
-    let Read = [{ node->getAttr() }];
   }
 
   def : Creator<[{
-    return ctx.getAttributedType(attrKind, modifiedType,
-                                 equivalentType, attribute);
+    return ctx.getAttributedType(attribute, modifiedType, equivalentType);
   }]>;
 }
 
@@ -691,28 +633,6 @@ let Class = BTFTagAttributedType in {
 
   def : Creator<[{
     return ctx.getBTFTagAttributedType(attr, wrappedType);
-  }]>;
-}
-
-let Class = HLSLAttributedResourceType in {
-  def : Property<"resClass", UInt32> {
-    let Read = [{ static_cast<uint32_t>(node->getAttrs().ResourceClass) }];
-  }
-  def : Property<"isROV", Bool> {
-    let Read = [{ node->getAttrs().IsROV }];
-  }
-  def : Property<"rawBuffer", Bool> {
-    let Read = [{ node->getAttrs().RawBuffer }];
-  }
-  def : Property<"wrappedTy", QualType> {
-    let Read = [{ node->getWrappedType() }];
-  }
-  def : Property<"containedTy", QualType> {
-    let Read = [{ node->getContainedType() }];
-  }
-  def : Creator<[{
-    HLSLAttributedResourceType::Attributes attrs(static_cast<llvm::dxil::ResourceClass>(resClass), isROV, rawBuffer);
-    return ctx.getHLSLAttributedResourceType(wrappedTy, containedTy, attrs);
   }]>;
 }
 
@@ -824,14 +744,11 @@ let Class = SubstTemplateTypeParmType in {
   def : Property<"PackIndex", Optional<UInt32>> {
     let Read = [{ node->getPackIndex() }];
   }
-  def : Property<"SubstitutionFlag", SubstTemplateTypeParmTypeFlag> {
-    let Read = [{ node->getSubstitutionFlag() }];
-  }
 
   // The call to getCanonicalType here existed in ASTReader.cpp, too.
   def : Creator<[{
     return ctx.getSubstTemplateTypeParmType(
-        replacementType, associatedDecl, Index, PackIndex, SubstitutionFlag);
+        replacementType, associatedDecl, Index, PackIndex);
   }]>;
 }
 
@@ -899,14 +816,6 @@ let Class = BuiltinType in {
 #define WASM_TYPE(NAME, ID, SINGLETON_ID) \
       case BuiltinType::ID: return ctx.SINGLETON_ID;
 #include "clang/Basic/WebAssemblyReferenceTypes.def"
-
-#define AMDGPU_TYPE(NAME, ID, SINGLETON_ID, WIDTH, ALIGN) \
-      case BuiltinType::ID: return ctx.SINGLETON_ID;
-#include "clang/Basic/AMDGPUTypes.def"
-
-#define HLSL_INTANGIBLE_TYPE(NAME, ID, SINGLETON_ID) \
-      case BuiltinType::ID: return ctx.SINGLETON_ID;
-#include "clang/Basic/HLSLIntangibleTypes.def"
 
 #define BUILTIN_TYPE(ID, SINGLETON_ID) \
       case BuiltinType::ID: return ctx.SINGLETON_ID;

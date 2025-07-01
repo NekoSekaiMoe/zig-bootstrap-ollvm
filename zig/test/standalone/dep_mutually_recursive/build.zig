@@ -6,26 +6,22 @@ pub fn build(b: *std.Build) void {
 
     const optimize: std.builtin.OptimizeMode = .Debug;
 
-    const main_mod = b.createModule(.{
-        .root_source_file = b.path("test.zig"),
-        .target = b.graph.host,
-        .optimize = optimize,
-    });
-    const foo_mod = b.createModule(.{
+    const foo = b.createModule(.{
         .root_source_file = b.path("foo.zig"),
     });
-    const bar_mod = b.createModule(.{
+    const bar = b.createModule(.{
         .root_source_file = b.path("bar.zig"),
     });
-
-    main_mod.addImport("foo", foo_mod);
-    foo_mod.addImport("bar", bar_mod);
-    bar_mod.addImport("foo", foo_mod);
+    foo.addImport("bar", bar);
+    bar.addImport("foo", foo);
 
     const exe = b.addExecutable(.{
         .name = "test",
-        .root_module = main_mod,
+        .root_source_file = b.path("test.zig"),
+        .target = b.host,
+        .optimize = optimize,
     });
+    exe.root_module.addImport("foo", foo);
 
     const run = b.addRunArtifact(exe);
     test_step.dependOn(&run.step);

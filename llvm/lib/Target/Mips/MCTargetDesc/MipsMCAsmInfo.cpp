@@ -16,10 +16,10 @@
 
 using namespace llvm;
 
-void MipsELFMCAsmInfo::anchor() {}
+void MipsMCAsmInfo::anchor() { }
 
-MipsELFMCAsmInfo::MipsELFMCAsmInfo(const Triple &TheTriple,
-                                   const MCTargetOptions &Options) {
+MipsMCAsmInfo::MipsMCAsmInfo(const Triple &TheTriple,
+                             const MCTargetOptions &Options) {
   IsLittleEndian = TheTriple.isLittleEndian();
 
   MipsABIInfo ABI = MipsABIInfo::computeTargetABI(TheTriple, "", Options);
@@ -50,15 +50,4 @@ MipsELFMCAsmInfo::MipsELFMCAsmInfo(const Triple &TheTriple,
   ExceptionsType = ExceptionHandling::DwarfCFI;
   DwarfRegNumForCFI = true;
   HasMipsExpressions = true;
-}
-
-void MipsCOFFMCAsmInfo::anchor() {}
-
-MipsCOFFMCAsmInfo::MipsCOFFMCAsmInfo() {
-  HasSingleParameterDotFile = true;
-  WinEHEncodingType = WinEH::EncodingType::Itanium;
-
-  ExceptionsType = ExceptionHandling::WinEH;
-
-  AllowAtInName = true;
 }

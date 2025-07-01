@@ -23,6 +23,7 @@
 #include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -41,11 +42,13 @@ class WebAssemblyDAGToDAGISel final : public SelectionDAGISel {
   const WebAssemblySubtarget *Subtarget;
 
 public:
+  static char ID;
+
   WebAssemblyDAGToDAGISel() = delete;
 
   WebAssemblyDAGToDAGISel(WebAssemblyTargetMachine &TM,
-                          CodeGenOptLevel OptLevel)
-      : SelectionDAGISel(TM, OptLevel), Subtarget(nullptr) {}
+                          CodeGenOpt::Level OptLevel)
+      : SelectionDAGISel(ID, TM, OptLevel), Subtarget(nullptr) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     LLVM_DEBUG(dbgs() << "********** ISelDAGToDAG **********\n"
@@ -61,8 +64,7 @@ public:
 
   void Select(SDNode *Node) override;
 
-  bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                    InlineAsm::ConstraintCode ConstraintID,
+  bool SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
 
   bool SelectAddrOperands32(SDValue Op, SDValue &Offset, SDValue &Addr);
@@ -79,21 +81,11 @@ private:
   bool SelectAddrAddOperands(MVT OffsetType, SDValue N, SDValue &Offset,
                              SDValue &Addr);
 };
-
-class WebAssemblyDAGToDAGISelLegacy : public SelectionDAGISelLegacy {
-public:
-  static char ID;
-  explicit WebAssemblyDAGToDAGISelLegacy(WebAssemblyTargetMachine &TM,
-                                         CodeGenOptLevel OptLevel)
-      : SelectionDAGISelLegacy(
-            ID, std::make_unique<WebAssemblyDAGToDAGISel>(TM, OptLevel)) {}
-};
 } // end anonymous namespace
 
-char WebAssemblyDAGToDAGISelLegacy::ID;
+char WebAssemblyDAGToDAGISel::ID;
 
-INITIALIZE_PASS(WebAssemblyDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false,
-                false)
+INITIALIZE_PASS(WebAssemblyDAGToDAGISel, DEBUG_TYPE, PASS_NAME, false, false)
 
 void WebAssemblyDAGToDAGISel::PreprocessISelDAG() {
   // Stack objects that should be allocated to locals are hoisted to WebAssembly
@@ -210,11 +202,8 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
     case Intrinsic::wasm_catch: {
       int Tag = Node->getConstantOperandVal(2);
       SDValue SymNode = getTagSymNode(Tag, CurDAG);
-      unsigned CatchOpcode = WebAssembly::WasmUseLegacyEH
-                                 ? WebAssembly::CATCH_LEGACY
-                                 : WebAssembly::CATCH;
       MachineSDNode *Catch =
-          CurDAG->getMachineNode(CatchOpcode, DL,
+          CurDAG->getMachineNode(WebAssembly::CATCH, DL,
                                  {
                                      PtrVT,     // exception pointer
                                      MVT::Other // outchain type
@@ -245,19 +234,6 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
                                      Node->getOperand(0)  // inchain
                                  });
       ReplaceNode(Node, Throw);
-      return;
-    }
-    case Intrinsic::wasm_rethrow: {
-      // RETHROW's BB argument will be populated in LateEHPrepare. Just use a
-      // '0' as a placeholder for now.
-      MachineSDNode *Rethrow = CurDAG->getMachineNode(
-          WebAssembly::RETHROW, DL,
-          MVT::Other, // outchain type
-          {
-              CurDAG->getConstant(0, DL, MVT::i32), // placeholder
-              Node->getOperand(0)                   // inchain
-          });
-      ReplaceNode(Node, Rethrow);
       return;
     }
     }
@@ -317,10 +293,9 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
 }
 
 bool WebAssemblyDAGToDAGISel::SelectInlineAsmMemoryOperand(
-    const SDValue &Op, InlineAsm::ConstraintCode ConstraintID,
-    std::vector<SDValue> &OutOps) {
+    const SDValue &Op, unsigned ConstraintID, std::vector<SDValue> &OutOps) {
   switch (ConstraintID) {
-  case InlineAsm::ConstraintCode::m:
+  case InlineAsm::Constraint_m:
     // We just support simple memory operands that just have a single address
     // operand and need no special handling.
     OutOps.push_back(Op);
@@ -431,6 +406,6 @@ bool WebAssemblyDAGToDAGISel::SelectAddrOperands64(SDValue Op, SDValue &Offset,
 /// This pass converts a legalized DAG into a WebAssembly-specific DAG, ready
 /// for instruction scheduling.
 FunctionPass *llvm::createWebAssemblyISelDag(WebAssemblyTargetMachine &TM,
-                                             CodeGenOptLevel OptLevel) {
-  return new WebAssemblyDAGToDAGISelLegacy(TM, OptLevel);
+                                             CodeGenOpt::Level OptLevel) {
+  return new WebAssemblyDAGToDAGISel(TM, OptLevel);
 }

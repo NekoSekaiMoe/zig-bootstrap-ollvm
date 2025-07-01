@@ -18,13 +18,11 @@ const Variant = union(enum) {
 };
 
 test "union method" {
-    var v1: Variant = .{ .int = 1 };
-    var v2: Variant = .{ .boolean = false };
-    var v3: Variant = .none;
+    var v1 = Variant{ .int = 1 };
+    var v2 = Variant{ .boolean = false };
 
     try expect(v1.truthy());
     try expect(!v2.truthy());
-    try expect(!v3.truthy());
 }
 
 // test

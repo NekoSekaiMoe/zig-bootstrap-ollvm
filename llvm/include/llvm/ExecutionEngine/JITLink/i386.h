@@ -39,8 +39,12 @@ enum EdgeKind_i386 : Edge::Kind {
   /// Represents a data/control flow instruction using PC-relative addressing
   /// to a target.
   ///
+  /// The fixup expression for this kind includes an implicit offset to account
+  /// for the PC (unlike the Delta edges) so that a PCRel32 with a target
+  /// T and addend zero is a call/branch to the start (offset zero) of T.
+  ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - (Fixup + 4) + Addend : int32
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
@@ -64,8 +68,12 @@ enum EdgeKind_i386 : Edge::Kind {
   /// Represents a data/control flow instruction using PC-relative addressing
   /// to a target.
   ///
+  /// The fixup expression for this kind includes an implicit offset to account
+  /// for the PC (unlike the Delta edges) so that a PCRel16 with a target
+  /// T and addend zero is a call/branch to the start (offset zero) of T.
+  ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int16
+  ///   Fixup <- Target - (Fixup + 4) + Addend : int16
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int16, otherwise
@@ -78,7 +86,7 @@ enum EdgeKind_i386 : Edge::Kind {
   /// Delta from the fixup to the target.
   ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - Fixup + Addend : int64
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
@@ -122,8 +130,12 @@ enum EdgeKind_i386 : Edge::Kind {
   /// Represents a PC-relative call or branch to a target. This can be used to
   /// identify, record, and/or patch call sites.
   ///
+  /// The fixup expression for this kind includes an implicit offset to account
+  /// for the PC (unlike the Delta edges) so that a Branch32PCRel with a target
+  /// T and addend zero is a call/branch to the start (offset zero) of T.
+  ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - (Fixup + 4) + Addend : int32
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
@@ -152,7 +164,7 @@ enum EdgeKind_i386 : Edge::Kind {
   /// target may be recorded to allow manipulation at runtime.
   ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - Fixup + Addend - 4 : int32
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
@@ -168,7 +180,7 @@ enum EdgeKind_i386 : Edge::Kind {
   /// is within range of the fixup location.
   ///
   /// Fixup expression:
-  ///   Fixup <- Target - Fixup + Addend : int32
+  ///   Fixup <- Target - Fixup + Addend - 4: int32
   ///
   /// Errors:
   ///   - The result of the fixup expression must fit into an int32, otherwise
@@ -203,7 +215,8 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E,
   }
 
   case i386::PCRel32: {
-    int32_t Value = E.getTarget().getAddress() - FixupAddress + E.getAddend();
+    int32_t Value =
+        E.getTarget().getAddress() - (FixupAddress + 4) + E.getAddend();
     *(little32_t *)FixupPtr = Value;
     break;
   }
@@ -218,7 +231,8 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E,
   }
 
   case i386::PCRel16: {
-    int32_t Value = E.getTarget().getAddress() - FixupAddress + E.getAddend();
+    int32_t Value =
+        E.getTarget().getAddress() - (FixupAddress + 4) + E.getAddend();
     if (LLVM_LIKELY(isInt<16>(Value)))
       *(little16_t *)FixupPtr = Value;
     else
@@ -243,7 +257,8 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E,
   case i386::BranchPCRel32:
   case i386::BranchPCRel32ToPtrJumpStub:
   case i386::BranchPCRel32ToPtrJumpStubBypassable: {
-    int32_t Value = E.getTarget().getAddress() - FixupAddress + E.getAddend();
+    int32_t Value =
+        E.getTarget().getAddress() - (FixupAddress + 4) + E.getAddend();
     *(little32_t *)FixupPtr = Value;
     break;
   }

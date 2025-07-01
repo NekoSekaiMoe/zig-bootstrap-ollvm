@@ -24,7 +24,7 @@ static void diagnosticHandler(LLVMDiagnosticInfoRef DI, void *C) {
   exit(1);
 }
 
-LLVMModuleRef llvm_load_module(LLVMContextRef C, bool Lazy, bool New) {
+LLVMModuleRef llvm_load_module(bool Lazy, bool New) {
   LLVMMemoryBufferRef MB;
   LLVMModuleRef M;
   char *msg = NULL;
@@ -36,16 +36,17 @@ LLVMModuleRef llvm_load_module(LLVMContextRef C, bool Lazy, bool New) {
 
   LLVMBool Ret;
   if (New) {
+    LLVMContextRef C = LLVMGetGlobalContext();
     LLVMContextSetDiagnosticHandler(C, diagnosticHandler, NULL);
     if (Lazy)
-      Ret = LLVMGetBitcodeModuleInContext2(C, MB, &M);
+      Ret = LLVMGetBitcodeModule2(MB, &M);
     else
-      Ret = LLVMParseBitcodeInContext2(C, MB, &M);
+      Ret = LLVMParseBitcode2(MB, &M);
   } else {
     if (Lazy)
-      Ret = LLVMGetBitcodeModuleInContext(C, MB, &M, &msg);
+      Ret = LLVMGetBitcodeModule(MB, &M, &msg);
     else
-      Ret = LLVMParseBitcodeInContext(C, MB, &M, &msg);
+      Ret = LLVMParseBitcode(MB, &M, &msg);
   }
 
   if (Ret) {
@@ -61,7 +62,7 @@ LLVMModuleRef llvm_load_module(LLVMContextRef C, bool Lazy, bool New) {
 }
 
 int llvm_module_dump(bool Lazy, bool New) {
-  LLVMModuleRef M = llvm_load_module(LLVMGetGlobalContext(), Lazy, New);
+  LLVMModuleRef M = llvm_load_module(Lazy, New);
 
   char *irstr = LLVMPrintModuleToString(M);
   puts(irstr);
@@ -73,7 +74,7 @@ int llvm_module_dump(bool Lazy, bool New) {
 }
 
 int llvm_module_list_functions(void) {
-  LLVMModuleRef M = llvm_load_module(LLVMGetGlobalContext(), false, false);
+  LLVMModuleRef M = llvm_load_module(false, false);
   LLVMValueRef f;
 
   f = LLVMGetFirstFunction(M);
@@ -114,7 +115,7 @@ int llvm_module_list_functions(void) {
 }
 
 int llvm_module_list_globals(void) {
-  LLVMModuleRef M = llvm_load_module(LLVMGetGlobalContext(), false, false);
+  LLVMModuleRef M = llvm_load_module(false, false);
   LLVMValueRef g;
 
   g = LLVMGetFirstGlobal(M);

@@ -88,12 +88,6 @@ static cl::opt<bool>
                               "always print a module IR"),
                      cl::init(false), cl::Hidden);
 
-static cl::opt<bool> LoopPrintFuncScope(
-    "print-loop-func-scope",
-    cl::desc("When printing IR for print-[before|after]{-all} "
-             "for a loop pass, always print function IR"),
-    cl::init(false), cl::Hidden);
-
 // See the description for -print-changed for an explanation of the use
 // of this option.
 static cl::list<std::string> FilterPasses(
@@ -146,8 +140,6 @@ std::vector<std::string> llvm::printAfterPasses() {
 }
 
 bool llvm::forcePrintModuleIR() { return PrintModuleScope; }
-
-bool llvm::forcePrintFuncIR() { return LoopPrintFuncScope; }
 
 bool llvm::isPassInPrintList(StringRef PassName) {
   static std::unordered_set<std::string> Set(FilterPasses.begin(),
@@ -220,7 +212,7 @@ std::string llvm::doSystemDiff(StringRef Before, StringRef After,
   static SmallVector<int> FD{-1, -1, -1};
   SmallVector<StringRef> SR{Before, After};
   static SmallVector<std::string> FileName{"", "", ""};
-  if (prepareTempFiles(FD, SR, FileName))
+  if (auto Err = prepareTempFiles(FD, SR, FileName))
     return "Unable to create temporary file.";
 
   static ErrorOr<std::string> DiffExe = sys::findProgramByName(DiffBinary);
@@ -246,7 +238,7 @@ std::string llvm::doSystemDiff(StringRef Before, StringRef After,
   else
     return "Unable to read result.";
 
-  if (cleanUpTempFiles(FileName))
+  if (auto Err = cleanUpTempFiles(FileName))
     return "Unable to remove temporary file.";
 
   return Diff;

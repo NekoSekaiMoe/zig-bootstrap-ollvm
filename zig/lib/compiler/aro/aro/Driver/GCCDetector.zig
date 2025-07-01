@@ -183,7 +183,7 @@ fn collectLibDirsAndTriples(
         // TODO
         return;
     }
-    if (target.abi.isAndroid()) {
+    if (target.isAndroid()) {
         const AArch64AndroidTriples: [1][]const u8 = .{"aarch64-linux-android"};
         const ARMAndroidTriples: [1][]const u8 = .{"arm-linux-androideabi"};
         const MIPSELAndroidTriples: [1][]const u8 = .{"mipsel-linux-android"};
@@ -284,11 +284,15 @@ fn collectLibDirsAndTriples(
         },
         .x86 => {
             lib_dirs.appendSliceAssumeCapacity(&X86LibDirs);
-            triple_aliases.appendSliceAssumeCapacity(&X86Triples);
-            biarch_libdirs.appendSliceAssumeCapacity(&X86_64LibDirs);
-            biarch_triple_aliases.appendSliceAssumeCapacity(&X86_64Triples);
-            biarch_libdirs.appendSliceAssumeCapacity(&X32LibDirs);
-            biarch_triple_aliases.appendSliceAssumeCapacity(&X32Triples);
+            // MCU toolchain is 32 bit only and its triple alias is TargetTriple
+            // itself, which will be appended below.
+            if (target.os.tag != .elfiamcu) {
+                triple_aliases.appendSliceAssumeCapacity(&X86Triples);
+                biarch_libdirs.appendSliceAssumeCapacity(&X86_64LibDirs);
+                biarch_triple_aliases.appendSliceAssumeCapacity(&X86_64Triples);
+                biarch_libdirs.appendSliceAssumeCapacity(&X32LibDirs);
+                biarch_triple_aliases.appendSliceAssumeCapacity(&X32Triples);
+            }
         },
         .loongarch64 => {
             lib_dirs.appendSliceAssumeCapacity(&LoongArch64LibDirs);
@@ -372,7 +376,7 @@ fn collectLibDirsAndTriples(
             biarch_libdirs.appendSliceAssumeCapacity(&RISCV32LibDirs);
             biarch_triple_aliases.appendSliceAssumeCapacity(&RISCV32Triples);
         },
-        .sparc => {
+        .sparc, .sparcel => {
             lib_dirs.appendSliceAssumeCapacity(&SPARCv8LibDirs);
             triple_aliases.appendSliceAssumeCapacity(&SPARCv8Triples);
             biarch_libdirs.appendSliceAssumeCapacity(&SPARCv9LibDirs);
@@ -393,7 +397,7 @@ fn collectLibDirsAndTriples(
 }
 
 pub fn discover(self: *GCCDetector, tc: *Toolchain) !void {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var fib = std.heap.FixedBufferAllocator.init(&path_buf);
 
     const target = tc.getTarget();
@@ -507,7 +511,7 @@ fn findBiarchMultilibs(
 
     const multilib_filter = Multilib.Filter{
         .base = path,
-        .file = "crtbegin.o",
+        .file = if (target.os.tag == .elfiamcu) "libgcc.a" else "crtbegin.o",
     };
 
     const Want = enum {
@@ -585,7 +589,7 @@ fn scanLibDirForGCCTriple(
     gcc_dir_exists: bool,
     gcc_cross_dir_exists: bool,
 ) !void {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var fib = std.heap.FixedBufferAllocator.init(&path_buf);
     for (0..2) |i| {
         if (i == 0 and !gcc_dir_exists) continue;

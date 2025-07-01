@@ -4,7 +4,7 @@ comptime {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :2:15: error: exact division produced remainder

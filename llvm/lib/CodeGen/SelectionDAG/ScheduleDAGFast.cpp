@@ -118,7 +118,7 @@ void ScheduleDAGFast::Schedule() {
   LiveRegCycles.resize(TRI->getNumRegs(), 0);
 
   // Build the scheduling graph.
-  BuildSchedGraph();
+  BuildSchedGraph(nullptr);
 
   LLVM_DEBUG(dump());
 
@@ -296,24 +296,28 @@ SUnit *ScheduleDAGFast::CopyAndMoveSuccessors(SUnit *SU) {
       if (isNewLoad)
         AddPred(LoadSU, ChainPred);
     }
-    for (const SDep &Pred : LoadPreds) {
+    for (unsigned i = 0, e = LoadPreds.size(); i != e; ++i) {
+      const SDep &Pred = LoadPreds[i];
       RemovePred(SU, Pred);
       if (isNewLoad) {
         AddPred(LoadSU, Pred);
       }
     }
-    for (const SDep &Pred : NodePreds) {
+    for (unsigned i = 0, e = NodePreds.size(); i != e; ++i) {
+      const SDep &Pred = NodePreds[i];
       RemovePred(SU, Pred);
       AddPred(NewSU, Pred);
     }
-    for (SDep D : NodeSuccs) {
+    for (unsigned i = 0, e = NodeSuccs.size(); i != e; ++i) {
+      SDep D = NodeSuccs[i];
       SUnit *SuccDep = D.getSUnit();
       D.setSUnit(SU);
       RemovePred(SuccDep, D);
       D.setSUnit(NewSU);
       AddPred(SuccDep, D);
     }
-    for (SDep D : ChainSuccs) {
+    for (unsigned i = 0, e = ChainSuccs.size(); i != e; ++i) {
+      SDep D = ChainSuccs[i];
       SUnit *SuccDep = D.getSUnit();
       D.setSUnit(SU);
       RemovePred(SuccDep, D);
@@ -492,13 +496,14 @@ bool ScheduleDAGFast::DelayForLiveRegsBottomUp(SUnit *SU,
         --NumOps;  // Ignore the glue operand.
 
       for (unsigned i = InlineAsm::Op_FirstOperand; i != NumOps;) {
-        unsigned Flags = Node->getConstantOperandVal(i);
-        const InlineAsm::Flag F(Flags);
-        unsigned NumVals = F.getNumOperandRegisters();
+        unsigned Flags =
+          cast<ConstantSDNode>(Node->getOperand(i))->getZExtValue();
+        unsigned NumVals = InlineAsm::getNumOperandRegisters(Flags);
 
         ++i; // Skip the ID value.
-        if (F.isRegDefKind() || F.isRegDefEarlyClobberKind() ||
-            F.isClobberKind()) {
+        if (InlineAsm::isRegDefKind(Flags) ||
+            InlineAsm::isRegDefEarlyClobberKind(Flags) ||
+            InlineAsm::isClobberKind(Flags)) {
           // Check for def of register or earlyclobber register.
           for (; NumVals; --NumVals, ++i) {
             unsigned Reg = cast<RegisterSDNode>(Node->getOperand(i))->getReg();
@@ -622,11 +627,11 @@ void ScheduleDAGFast::ListScheduleBottomUp() {
     }
 
     // Add the nodes that aren't ready back onto the available list.
-    for (SUnit *SU : NotReady) {
-      SU->isPending = false;
+    for (unsigned i = 0, e = NotReady.size(); i != e; ++i) {
+      NotReady[i]->isPending = false;
       // May no longer be available due to backtracking.
-      if (SU->isAvailable)
-        AvailableQueue.push(SU);
+      if (NotReady[i]->isAvailable)
+        AvailableQueue.push(NotReady[i]);
     }
     NotReady.clear();
 
@@ -748,7 +753,8 @@ void ScheduleDAGLinearize::Schedule() {
       ++DAGSize;
   }
 
-  for (SDNode *Glue : Glues) {
+  for (unsigned i = 0, e = Glues.size(); i != e; ++i) {
+    SDNode *Glue = Glues[i];
     SDNode *GUser = GluedMap[Glue];
     unsigned Degree = Glue->getNodeId();
     unsigned UDegree = GUser->getNodeId();
@@ -756,7 +762,7 @@ void ScheduleDAGLinearize::Schedule() {
     // Glue user must be scheduled together with the glue operand. So other
     // users of the glue operand must be treated as its users.
     SDNode *ImmGUser = Glue->getGluedUser();
-    for (const SDNode *U : Glue->users())
+    for (const SDNode *U : Glue->uses())
       if (U == ImmGUser)
         --Degree;
     GUser->setNodeId(UDegree + Degree);
@@ -770,7 +776,7 @@ void ScheduleDAGLinearize::Schedule() {
 MachineBasicBlock*
 ScheduleDAGLinearize::EmitSchedule(MachineBasicBlock::iterator &InsertPos) {
   InstrEmitter Emitter(DAG->getTarget(), BB, InsertPos);
-  InstrEmitter::VRBaseMapType VRBaseMap;
+  DenseMap<SDValue, Register> VRBaseMap;
 
   LLVM_DEBUG({ dbgs() << "\n*** Final schedule ***\n"; });
 
@@ -802,12 +808,12 @@ ScheduleDAGLinearize::EmitSchedule(MachineBasicBlock::iterator &InsertPos) {
 //                         Public Constructor Functions
 //===----------------------------------------------------------------------===//
 
-llvm::ScheduleDAGSDNodes *llvm::createFastDAGScheduler(SelectionDAGISel *IS,
-                                                       CodeGenOptLevel) {
+llvm::ScheduleDAGSDNodes *
+llvm::createFastDAGScheduler(SelectionDAGISel *IS, CodeGenOpt::Level) {
   return new ScheduleDAGFast(*IS->MF);
 }
 
-llvm::ScheduleDAGSDNodes *llvm::createDAGLinearizer(SelectionDAGISel *IS,
-                                                    CodeGenOptLevel) {
+llvm::ScheduleDAGSDNodes *
+llvm::createDAGLinearizer(SelectionDAGISel *IS, CodeGenOpt::Level) {
   return new ScheduleDAGLinearize(*IS->MF);
 }

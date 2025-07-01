@@ -15,7 +15,6 @@
 #include <basetyps.h>
 
 #include <credentialprovider.h>
-#include <functiondiscoverykeys.h>
 #include <textstor.h>
 #include <shobjidl.h>
 #include <propkey.h>

@@ -12,8 +12,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
-#include <map>
-#include <utility>
 
 namespace llvm {
 

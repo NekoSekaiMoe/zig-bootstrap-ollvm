@@ -15,36 +15,22 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPUCOMBINERHELPER_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUCOMBINERHELPER_H
 
-#include "GCNSubtarget.h"
 #include "llvm/CodeGen/GlobalISel/Combiner.h"
 #include "llvm/CodeGen/GlobalISel/CombinerHelper.h"
 
-namespace llvm {
-class AMDGPUCombinerHelper : public CombinerHelper {
-protected:
-  const GCNSubtarget &STI;
-  const SIInstrInfo &TII;
+using namespace llvm;
 
+class AMDGPUCombinerHelper : public CombinerHelper {
 public:
   using CombinerHelper::CombinerHelper;
-  AMDGPUCombinerHelper(GISelChangeObserver &Observer, MachineIRBuilder &B,
-                       bool IsPreLegalize, GISelKnownBits *KB,
-                       MachineDominatorTree *MDT, const LegalizerInfo *LI,
-                       const GCNSubtarget &STI);
 
-  bool matchFoldableFneg(MachineInstr &MI, MachineInstr *&MatchInfo) const;
-  void applyFoldableFneg(MachineInstr &MI, MachineInstr *&MatchInfo) const;
+  bool matchFoldableFneg(MachineInstr &MI, MachineInstr *&MatchInfo);
+  void applyFoldableFneg(MachineInstr &MI, MachineInstr *&MatchInfo);
 
   bool matchExpandPromotedF16FMed3(MachineInstr &MI, Register Src0,
-                                   Register Src1, Register Src2) const;
+                                   Register Src1, Register Src2);
   void applyExpandPromotedF16FMed3(MachineInstr &MI, Register Src0,
-                                   Register Src1, Register Src2) const;
-
-  bool matchCombineFmulWithSelectToFldexp(
-      MachineInstr &MI, MachineInstr &Sel,
-      std::function<void(MachineIRBuilder &)> &MatchInfo) const;
+                                   Register Src1, Register Src2);
 };
-
-} // namespace llvm
 
 #endif // LLVM_LIB_TARGET_AMDGPU_AMDGPUCOMBINERHELPER_H

@@ -67,7 +67,6 @@ enum {
 	FRA_IP_PROTO,	/* ip proto */
 	FRA_SPORT_RANGE, /* sport */
 	FRA_DPORT_RANGE, /* dport */
-	FRA_DSCP,	/* dscp */
 	__FRA_MAX
 };
 

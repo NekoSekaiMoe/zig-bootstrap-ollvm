@@ -19,7 +19,6 @@ add_llvm_target(WebAssemblyCodeGen
   WebAssemblyArgumentMove.cpp
   WebAssemblyAsmPrinter.cpp
   WebAssemblyCFGStackify.cpp
-  WebAssemblyCleanCodeAfterTrap.cpp
   WebAssemblyCFGSort.cpp
   WebAssemblyDebugFixup.cpp
   WebAssemblyDebugValueManager.cpp
@@ -44,7 +43,6 @@ add_llvm_target(WebAssemblyCodeGen
   WebAssemblyOptimizeLiveIntervals.cpp
   WebAssemblyOptimizeReturned.cpp
   WebAssemblyPeephole.cpp
-  WebAssemblyRefTypeMem2Local.cpp
   WebAssemblyRegisterInfo.cpp
   WebAssemblyRegColoring.cpp
   WebAssemblyRegNumbering.cpp
@@ -59,7 +57,6 @@ add_llvm_target(WebAssemblyCodeGen
   WebAssemblyTargetMachine.cpp
   WebAssemblyTargetObjectFile.cpp
   WebAssemblyTargetTransformInfo.cpp
-  WebAssemblyUtilities.cpp
 
   DEPENDS
   intrinsics_gen

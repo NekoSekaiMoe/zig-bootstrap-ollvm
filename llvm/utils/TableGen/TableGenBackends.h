@@ -46,6 +46,7 @@
 // backends, this means that the EmitFoo function is the only thing not in
 // the anonymous namespace.
 
+
 // FIXME: Reorganize TableGen so that build dependencies can be more
 // accurately expressed. Currently, touching any of the emitters (or
 // anything that they transitively depend on) causes everything dependent
@@ -56,16 +57,17 @@
 // TableGen binary with as few dependencies as possible on the rest of
 // LLVM.
 
+
 namespace llvm {
 
 class raw_ostream;
 class RecordKeeper;
 
-void EmitMapTable(const RecordKeeper &RK, raw_ostream &OS);
+void EmitMapTable(RecordKeeper &RK, raw_ostream &OS);
 
 // Defined in DecoderEmitter.cpp
-void EmitDecoder(const RecordKeeper &RK, raw_ostream &OS,
-                 StringRef PredicateNamespace);
+void EmitDecoder(RecordKeeper &RK, raw_ostream &OS,
+                 const std::string &PredicateNamespace);
 
 } // namespace llvm
 

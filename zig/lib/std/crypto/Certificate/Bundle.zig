@@ -6,8 +6,8 @@
 //! certificate within `bytes`.
 
 /// The key is the contents slice of the subject.
-map: std.HashMapUnmanaged(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage) = .empty,
-bytes: std.ArrayListUnmanaged(u8) = .empty,
+map: std.HashMapUnmanaged(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage) = .{},
+bytes: std.ArrayListUnmanaged(u8) = .{},
 
 pub const VerifyError = Certificate.Parsed.VerifyError || error{
     CertificateIssuerNotFound,
@@ -50,7 +50,7 @@ pub fn deinit(cb: *Bundle, gpa: Allocator) void {
     cb.* = undefined;
 }
 
-pub const RescanError = RescanLinuxError || RescanMacError || RescanWithPathError || RescanWindowsError;
+pub const RescanError = RescanLinuxError || RescanMacError || RescanBSDError || RescanWindowsError;
 
 /// Clears the set of certificates and then scans the host operating system
 /// file system standard locations for certificates.
@@ -60,12 +60,10 @@ pub fn rescan(cb: *Bundle, gpa: Allocator) RescanError!void {
     switch (builtin.os.tag) {
         .linux => return rescanLinux(cb, gpa),
         .macos => return rescanMac(cb, gpa),
-        .freebsd, .openbsd => return rescanWithPath(cb, gpa, "/etc/ssl/cert.pem"),
-        .netbsd => return rescanWithPath(cb, gpa, "/etc/openssl/certs/ca-certificates.crt"),
-        .dragonfly => return rescanWithPath(cb, gpa, "/usr/local/etc/ssl/cert.pem"),
-        .solaris, .illumos => return rescanWithPath(cb, gpa, "/etc/ssl/cacert.pem"),
-        // https://github.com/SerenityOS/serenity/blob/222acc9d389bc6b490d4c39539761b043a4bfcb0/Ports/ca-certificates/package.sh#L19
-        .serenity => return rescanWithPath(cb, gpa, "/etc/ssl/certs/ca-certificates.crt"),
+        .freebsd, .openbsd => return rescanBSD(cb, gpa, "/etc/ssl/cert.pem"),
+        .netbsd => return rescanBSD(cb, gpa, "/etc/openssl/certs/ca-certificates.crt"),
+        .dragonfly => return rescanBSD(cb, gpa, "/usr/local/etc/ssl/cert.pem"),
+        .solaris, .illumos => return rescanBSD(cb, gpa, "/etc/ssl/cacert.pem"),
         .windows => return rescanWindows(cb, gpa),
         else => {},
     }
@@ -118,9 +116,9 @@ fn rescanLinux(cb: *Bundle, gpa: Allocator) RescanLinuxError!void {
     cb.bytes.shrinkAndFree(gpa, cb.bytes.items.len);
 }
 
-const RescanWithPathError = AddCertsFromFilePathError;
+const RescanBSDError = AddCertsFromFilePathError;
 
-fn rescanWithPath(cb: *Bundle, gpa: Allocator, cert_file_path: []const u8) RescanWithPathError!void {
+fn rescanBSD(cb: *Bundle, gpa: Allocator, cert_file_path: []const u8) RescanBSDError!void {
     cb.bytes.clearRetainingCapacity();
     cb.map.clearRetainingCapacity();
     try addCertsFromFilePathAbsolute(cb, gpa, cert_file_path);
@@ -134,7 +132,7 @@ fn rescanWindows(cb: *Bundle, gpa: Allocator) RescanWindowsError!void {
     cb.map.clearRetainingCapacity();
 
     const w = std.os.windows;
-    const GetLastError = w.GetLastError;
+    const GetLastError = w.kernel32.GetLastError;
     const root = [4:0]u16{ 'R', 'O', 'O', 'T' };
     const store = w.crypt32.CertOpenSystemStoreW(null, &root) orelse switch (GetLastError()) {
         .FILE_NOT_FOUND => return error.FileNotFound,

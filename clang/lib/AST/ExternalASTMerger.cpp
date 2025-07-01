@@ -276,8 +276,8 @@ bool ExternalASTMerger::HasImporterForOrigin(ASTContext &OriginContext) {
 template <typename CallbackType>
 void ExternalASTMerger::ForEachMatchingDC(const DeclContext *DC,
                                           CallbackType Callback) {
-  if (auto It = Origins.find(DC); It != Origins.end()) {
-    ExternalASTMerger::DCOrigin Origin = It->second;
+  if (Origins.count(DC)) {
+    ExternalASTMerger::DCOrigin Origin = Origins[DC];
     LazyASTImporter &Importer = LazyImporterForOrigin(*this, *Origin.AST);
     Callback(Importer, Importer.GetReverse(), Origin.DC);
   } else {
@@ -471,9 +471,8 @@ static bool importSpecializationsIfNeeded(Decl *D, ASTImporter *Importer) {
   return false;
 }
 
-bool ExternalASTMerger::FindExternalVisibleDeclsByName(
-    const DeclContext *DC, DeclarationName Name,
-    const DeclContext *OriginalDC) {
+bool ExternalASTMerger::FindExternalVisibleDeclsByName(const DeclContext *DC,
+                                                       DeclarationName Name) {
   llvm::SmallVector<NamedDecl *, 1> Decls;
   llvm::SmallVector<Candidate, 4> Candidates;
 

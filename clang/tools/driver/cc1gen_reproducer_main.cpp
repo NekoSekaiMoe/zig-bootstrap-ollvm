@@ -105,8 +105,8 @@ static std::string generateReproducerMetaInfo(const ClangInvocationInfo &Info) {
   OS << '}';
   // FIXME: Compare unsaved file hashes and report mismatch in the reproducer.
   if (Info.Dump)
-    llvm::outs() << "REPRODUCER METAINFO: " << Result << "\n";
-  return Result;
+    llvm::outs() << "REPRODUCER METAINFO: " << OS.str() << "\n";
+  return std::move(OS.str());
 }
 
 /// Generates a reproducer for a set of arguments from a specific invocation.
@@ -121,10 +121,9 @@ generateReproducerForInvocationArguments(ArrayRef<const char *> Argv,
 
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
   DiagnosticsEngine Diags(DiagID, &*DiagOpts, new IgnoringDiagConsumer());
-  auto VFS = llvm::vfs::getRealFileSystem();
-  ProcessWarningOptions(Diags, *DiagOpts, *VFS, /*ReportDiags=*/false);
-  Driver TheDriver(ToolContext.Path, llvm::sys::getDefaultTargetTriple(), Diags,
-                   /*Title=*/"clang LLVM compiler", VFS);
+  ProcessWarningOptions(Diags, *DiagOpts, /*ReportDiags=*/false);
+  Driver TheDriver(ToolContext.Path, llvm::sys::getDefaultTargetTriple(),
+                   Diags);
   TheDriver.setTargetAndMode(TargetAndMode);
   if (ToolContext.NeedsPrependArg)
     TheDriver.setPrependArg(ToolContext.PrependArg);

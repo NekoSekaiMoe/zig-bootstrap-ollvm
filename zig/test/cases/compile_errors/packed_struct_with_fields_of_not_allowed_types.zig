@@ -78,7 +78,7 @@ export fn entry14() void {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
 // :3:12: error: packed structs cannot contain fields of type 'anyerror'

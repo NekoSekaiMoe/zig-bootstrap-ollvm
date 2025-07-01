@@ -22,6 +22,8 @@
 #include "llvm/CodeGen/ScheduleDAG.h"
 #include <set>
 
+using namespace llvm;
+
 namespace llvm {
 
 /// A MachineSchedStrategy implementation for SystemZ post RA scheduling.

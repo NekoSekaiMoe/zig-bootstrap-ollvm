@@ -64,7 +64,8 @@ struct OptionalOperandTraits : public FixedNumOperandTraits<SubClass, ARITY> {
 /// when it is a prefix to the User object, and the number of Use objects is
 /// only known at allocation time.
 
-template <typename SubClass> struct VariadicOperandTraits {
+template <typename SubClass, unsigned MINARITY = 0>
+struct VariadicOperandTraits {
   static Use *op_begin(SubClass* U) {
     static_assert(
         !std::is_polymorphic<SubClass>::value,
@@ -90,12 +91,13 @@ template <typename SubClass> struct VariadicOperandTraits {
 /// This is the traits class that is needed when the Use array must be
 /// resizable.
 
+template <unsigned MINARITY = 1>
 struct HungoffOperandTraits {
   static Use *op_begin(User* U) {
-    return U->getHungOffOperands();
+    return U->getOperandList();
   }
   static Use *op_end(User* U) {
-    return U->getHungOffOperands() + U->getNumOperands();
+    return U->getOperandList() + U->getNumOperands();
   }
   static unsigned operands(const User *U) {
     return U->getNumOperands();

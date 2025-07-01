@@ -18,9 +18,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Common/CodeGenDAGPatterns.h"
-#include "Common/CodeGenInstruction.h"
-#include "Common/CodeGenTarget.h"
+#include "CodeGenDAGPatterns.h"
+#include "CodeGenInstruction.h"
+#include "CodeGenTarget.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <string>
@@ -44,26 +44,19 @@ static std::string escapeForRST(StringRef Str) {
   for (char C : Str) {
     switch (C) {
     // We want special characters to be shown as their C escape codes.
-    case '\n':
-      Result += "\\n";
-      break;
-    case '\t':
-      Result += "\\t";
-      break;
+    case '\n': Result += "\\n"; break;
+    case '\t': Result += "\\t"; break;
     // Underscore at the end of a line has a special meaning in rst.
-    case '_':
-      Result += "\\_";
-      break;
-    default:
-      Result += C;
+    case '_': Result += "\\_"; break;
+    default: Result += C;
     }
   }
   return Result;
 }
 
-static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
-  const CodeGenDAGPatterns CDP(RK);
-  const CodeGenTarget &Target = CDP.getTargetInfo();
+static void EmitInstrDocs(RecordKeeper &RK, raw_ostream &OS) {
+  CodeGenDAGPatterns CDP(RK);
+  CodeGenTarget &Target = CDP.getTargetInfo();
   unsigned VariantCount = Target.getAsmParserVariantCount();
 
   // Page title.
@@ -73,7 +66,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
   OS << "\n";
 
   for (const CodeGenInstruction *II : Target.getInstructionsByEnumValue()) {
-    const Record *Inst = II->TheDef;
+    Record *Inst = II->TheDef;
 
     // Don't print the target-independent instructions.
     if (II->Namespace == "TargetOpcode")
@@ -86,7 +79,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     // Assembly string(s).
     if (!II->AsmString.empty()) {
       for (unsigned VarNum = 0; VarNum < VariantCount; ++VarNum) {
-        const Record *AsmVariant = Target.getAsmParserVariant(VarNum);
+        Record *AsmVariant = Target.getAsmParserVariant(VarNum);
         OS << "Assembly string";
         if (VariantCount != 1)
           OS << " (" << AsmVariant->getValueAsString("Name") << ")";
@@ -103,10 +96,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     std::vector<const char *> FlagStrings;
 #define xstr(s) str(s)
 #define str(s) #s
-#define FLAG(f)                                                                \
-  if (II->f) {                                                                 \
-    FlagStrings.push_back(str(f));                                             \
-  }
+#define FLAG(f) if (II->f) { FlagStrings.push_back(str(f)); }
     FLAG(isReturn)
     FLAG(isEHScopeReturn)
     FLAG(isBranch)
@@ -121,9 +111,9 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     FLAG(isTrap)
     FLAG(canFoldAsLoad)
     FLAG(mayLoad)
-    // FLAG(mayLoad_Unset) // Deliberately omitted.
+    //FLAG(mayLoad_Unset) // Deliberately omitted.
     FLAG(mayStore)
-    // FLAG(mayStore_Unset) // Deliberately omitted.
+    //FLAG(mayStore_Unset) // Deliberately omitted.
     FLAG(isPredicable)
     FLAG(isConvertibleToThreeAddress)
     FLAG(isCommutable)
@@ -135,7 +125,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     FLAG(hasCtrlDep)
     FLAG(isNotDuplicable)
     FLAG(hasSideEffects)
-    // FLAG(hasSideEffects_Unset) // Deliberately omitted.
+    //FLAG(hasSideEffects_Unset) // Deliberately omitted.
     FLAG(isAsCheapAsAMove)
     FLAG(hasExtraSrcRegAllocReq)
     FLAG(hasExtraDefRegAllocReq)
@@ -159,7 +149,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     // Operands.
     for (unsigned i = 0; i < II->Operands.size(); ++i) {
       bool IsDef = i < II->Operands.NumDefs;
-      const auto &Op = II->Operands[i];
+      auto Op = II->Operands[i];
 
       if (Op.MINumOperands > 1) {
         // This operand corresponds to multiple operands on the
@@ -167,7 +157,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
         // names of both the compound operand and the basic operands it
         // contains.
         for (unsigned SubOpIdx = 0; SubOpIdx < Op.MINumOperands; ++SubOpIdx) {
-          const Record *SubRec =
+          Record *SubRec =
               cast<DefInit>(Op.MIOperandInfo->getArg(SubOpIdx))->getDef();
           StringRef SubOpName = Op.MIOperandInfo->getArgNameStr(SubOpIdx);
           StringRef SubOpTypeName = SubRec->getName();
@@ -198,7 +188,7 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     if (!II->ImplicitDefs.empty()) {
       OS << "Implicit defs: ";
       ListSeparator LS;
-      for (const Record *Def : II->ImplicitDefs)
+      for (Record *Def : II->ImplicitDefs)
         OS << LS << "``" << Def->getName() << "``";
       OS << "\n\n";
     }
@@ -207,18 +197,18 @@ static void EmitInstrDocs(const RecordKeeper &RK, raw_ostream &OS) {
     if (!II->ImplicitUses.empty()) {
       OS << "Implicit uses: ";
       ListSeparator LS;
-      for (const Record *Use : II->ImplicitUses)
+      for (Record *Use : II->ImplicitUses)
         OS << LS << "``" << Use->getName() << "``";
       OS << "\n\n";
     }
 
     // Predicates.
-    std::vector<const Record *> Predicates =
+    std::vector<Record *> Predicates =
         II->TheDef->getValueAsListOfDefs("Predicates");
     if (!Predicates.empty()) {
       OS << "Predicates: ";
       ListSeparator LS;
-      for (const Record *P : Predicates)
+      for (Record *P : Predicates)
         OS << LS << "``" << P->getName() << "``";
       OS << "\n\n";
     }

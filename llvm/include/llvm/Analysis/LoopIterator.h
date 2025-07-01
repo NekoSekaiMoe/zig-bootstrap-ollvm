@@ -120,7 +120,7 @@ public:
   Loop *getLoop() const { return L; }
 
   /// Traverse the loop blocks and store the DFS result.
-  void perform(const LoopInfo *LI);
+  void perform(LoopInfo *LI);
 
   /// Return true if postorder numbers are assigned to all loop blocks.
   bool isComplete() const { return PostBlocks.size() == L->getNumBlocks(); }
@@ -177,7 +177,7 @@ public:
   LoopBlocksRPO(Loop *Container) : DFS(Container) {}
 
   /// Traverse the loop blocks and store the DFS result.
-  void perform(const LoopInfo *LI) {
+  void perform(LoopInfo *LI) {
     DFS.perform(LI);
   }
 
@@ -204,10 +204,10 @@ public:
 
 private:
   LoopBlocksDFS &DFS;
-  const LoopInfo *LI;
+  LoopInfo *LI;
 
 public:
-  LoopBlocksTraversal(LoopBlocksDFS &Storage, const LoopInfo *LInfo) :
+  LoopBlocksTraversal(LoopBlocksDFS &Storage, LoopInfo *LInfo) :
     DFS(Storage), LI(LInfo) {}
 
   /// Postorder traversal over the graph. This only needs to be done once.

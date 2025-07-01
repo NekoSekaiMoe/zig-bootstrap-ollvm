@@ -29,4 +29,3 @@
 #define _CADDR_T
 typedef char *          caddr_t;
 #endif /* _CADDR_T */
-

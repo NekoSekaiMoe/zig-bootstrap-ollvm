@@ -20,7 +20,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
-#include "llvm/Analysis/CtxProfAnalysis.h"
 #include "llvm/Analysis/InlineAdvisor.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/InlineOrder.h"
@@ -48,13 +47,6 @@ using namespace llvm;
 
 STATISTIC(NumInlined, "Number of functions inlined");
 STATISTIC(NumDeleted, "Number of functions deleted because all callers found");
-
-cl::opt<bool> CtxProfPromoteAlwaysInline(
-    "ctx-prof-promote-alwaysinline", cl::init(false), cl::Hidden,
-    cl::desc("If using a contextual profile in this module, and an indirect "
-             "call target is marked as alwaysinline, perform indirect call "
-             "promotion for that target. If multiple targets for an indirect "
-             "call site fit this description, they are all promoted."));
 
 /// Return true if the specified inline history ID
 /// indicates an inline history that includes the specified function.
@@ -121,8 +113,6 @@ PreservedAnalyses ModuleInlinerPass::run(Module &M,
     return PreservedAnalyses::all();
   }
 
-  auto &CtxProf = MAM.getResult<CtxProfAnalysis>(M);
-
   bool Changed = false;
 
   ProfileSummaryInfo *PSI = MAM.getCachedResult<ProfileSummaryAnalysis>(M);
@@ -152,11 +142,10 @@ PreservedAnalyses ModuleInlinerPass::run(Module &M,
   assert(Calls != nullptr && "Expected an initialized InlineOrder");
 
   // Populate the initial list of calls in this module.
-  SetVector<std::pair<CallBase *, Function *>> ICPCandidates;
   for (Function &F : M) {
     auto &ORE = FAM.getResult<OptimizationRemarkEmitterAnalysis>(F);
-    for (Instruction &I : instructions(F)) {
-      if (auto *CB = dyn_cast<CallBase>(&I)) {
+    for (Instruction &I : instructions(F))
+      if (auto *CB = dyn_cast<CallBase>(&I))
         if (Function *Callee = CB->getCalledFunction()) {
           if (!Callee->isDeclaration())
             Calls->push({CB, -1});
@@ -171,17 +160,7 @@ PreservedAnalyses ModuleInlinerPass::run(Module &M,
                      << setIsVerbose();
             });
           }
-        } else if (CtxProfPromoteAlwaysInline && CtxProf &&
-                   CB->isIndirectCall()) {
-          CtxProfAnalysis::collectIndirectCallPromotionList(*CB, CtxProf,
-                                                            ICPCandidates);
         }
-      }
-    }
-  }
-  for (auto &[CB, Target] : ICPCandidates) {
-    if (auto *DirectCB = promoteCallWithIfThenElse(*CB, *Target, CtxProf))
-      Calls->push({DirectCB, -1});
   }
   if (Calls->empty())
     return PreservedAnalyses::all();
@@ -234,7 +213,7 @@ PreservedAnalyses ModuleInlinerPass::run(Module &M,
         &FAM.getResult<BlockFrequencyAnalysis>(Callee));
 
     InlineResult IR =
-        InlineFunction(*CB, IFI, CtxProf, /*MergeAttributes=*/true,
+        InlineFunction(*CB, IFI, /*MergeAttributes=*/true,
                        &FAM.getResult<AAManager>(*CB->getCaller()));
     if (!IR.isSuccess()) {
       Advice->recordUnsuccessfulInlining(IR);
@@ -259,10 +238,8 @@ PreservedAnalyses ModuleInlinerPass::run(Module &M,
           // the post-inline cleanup and the next DevirtSCCRepeatedPass
           // iteration because the next iteration may not happen and we may
           // miss inlining it.
-          // FIXME: enable for ctxprof.
-          if (!CtxProf)
-            if (tryPromoteCall(*ICB))
-              NewCallee = ICB->getCalledFunction();
+          if (tryPromoteCall(*ICB))
+            NewCallee = ICB->getCalledFunction();
         }
         if (NewCallee)
           if (!NewCallee->isDeclaration())

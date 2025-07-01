@@ -33,6 +33,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "ve-lower"
@@ -65,8 +66,7 @@ CCAssignFn *getParamCC(CallingConv::ID CallConv, bool IsVarArg) {
 
 bool VETargetLowering::CanLowerReturn(
     CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
-    const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
-    const Type *RetTy) const {
+    const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context) const {
   CCAssignFn *RetCC = getReturnCC(CallConv);
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, RVLocs, Context);
@@ -459,7 +459,8 @@ SDValue VETargetLowering::LowerFormalArguments(
   // by CC_VE would be correct now.
   CCInfo.AnalyzeFormalArguments(Ins, getParamCC(CallConv, false));
 
-  for (const CCValAssign &VA : ArgLocs) {
+  for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+    CCValAssign &VA = ArgLocs[i];
     assert(!VA.needsCustom() && "Unexpected custom lowering");
     if (VA.isRegLoc()) {
       // This argument is passed in a register.
@@ -647,11 +648,12 @@ SDValue VETargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // PC-relative references to external symbols should go through $stub.
   // If so, we need to prepare GlobalBaseReg first.
   const TargetMachine &TM = DAG.getTarget();
+  const Module *Mod = DAG.getMachineFunction().getFunction().getParent();
   const GlobalValue *GV = nullptr;
   auto *CalleeG = dyn_cast<GlobalAddressSDNode>(Callee);
   if (CalleeG)
     GV = CalleeG->getGlobal();
-  bool Local = TM.shouldAssumeDSOLocal(GV);
+  bool Local = TM.shouldAssumeDSOLocal(*Mod, GV);
   bool UsePlt = !Local;
   MachineFunction &MF = DAG.getMachineFunction();
 
@@ -1099,10 +1101,10 @@ Instruction *VETargetLowering::emitTrailingFence(IRBuilderBase &Builder,
 SDValue VETargetLowering::lowerATOMIC_FENCE(SDValue Op,
                                             SelectionDAG &DAG) const {
   SDLoc DL(Op);
-  AtomicOrdering FenceOrdering =
-      static_cast<AtomicOrdering>(Op.getConstantOperandVal(1));
-  SyncScope::ID FenceSSID =
-      static_cast<SyncScope::ID>(Op.getConstantOperandVal(2));
+  AtomicOrdering FenceOrdering = static_cast<AtomicOrdering>(
+      cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue());
+  SyncScope::ID FenceSSID = static_cast<SyncScope::ID>(
+      cast<ConstantSDNode>(Op.getOperand(2))->getZExtValue());
 
   // VE uses Release consistency, so need a fence instruction if it is a
   // cross-thread fence.
@@ -1128,7 +1130,7 @@ SDValue VETargetLowering::lowerATOMIC_FENCE(SDValue Op,
     case AtomicOrdering::AcquireRelease:
     case AtomicOrdering::SequentiallyConsistent:
       // Generate "fencem 3" as acq_rel and seq_cst fence.
-      // FIXME: "fencem 3" doesn't wait for PCIe deveices accesses,
+      // FIXME: "fencem 3" doesn't wait for for PCIe deveices accesses,
       //        so  seq_cst may require more instruction for them.
       return SDValue(DAG.getMachineNode(VE::FENCEM, DL, MVT::Other,
                                         DAG.getTargetConstant(3, DL, MVT::i32),
@@ -1426,10 +1428,11 @@ static SDValue lowerLoadI1(SDValue Op, SelectionDAG &DAG) {
 
 SDValue VETargetLowering::lowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   LoadSDNode *LdNode = cast<LoadSDNode>(Op.getNode());
+
   EVT MemVT = LdNode->getMemoryVT();
 
-  // If VPU is enabled, always expand non-mask vector loads to VVP
-  if (Subtarget->enableVPU() && MemVT.isVector() && !isMaskType(MemVT))
+  // Dispatch to vector isel.
+  if (MemVT.isVector() && !isMaskType(MemVT))
     return lowerToVVP(Op, DAG);
 
   SDValue BasePtr = LdNode->getBasePtr();
@@ -1539,10 +1542,10 @@ static SDValue lowerStoreI1(SDValue Op, SelectionDAG &DAG) {
 SDValue VETargetLowering::lowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   StoreSDNode *StNode = cast<StoreSDNode>(Op.getNode());
   assert(StNode && StNode->getOffset().isUndef() && "Unexpected node type");
-  EVT MemVT = StNode->getMemoryVT();
 
-  // If VPU is enabled, always expand non-mask vector stores to VVP
-  if (Subtarget->enableVPU() && MemVT.isVector() && !isMaskType(MemVT))
+  // always expand non-mask vector loads to VVP
+  EVT MemVT = StNode->getMemoryVT();
+  if (MemVT.isVector() && !isMaskType(MemVT))
     return lowerToVVP(Op, DAG);
 
   SDValue BasePtr = StNode->getBasePtr();
@@ -1764,7 +1767,7 @@ static SDValue lowerRETURNADDR(SDValue Op, SelectionDAG &DAG,
 SDValue VETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
                                                   SelectionDAG &DAG) const {
   SDLoc DL(Op);
-  unsigned IntNo = Op.getConstantOperandVal(0);
+  unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   switch (IntNo) {
   default: // Don't custom lower most intrinsics.
     return SDValue();
@@ -1868,7 +1871,7 @@ VETargetLowering::getCustomOperationAction(SDNode &Op) const {
 }
 
 SDValue VETargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
-  LLVM_DEBUG(dbgs() << "::LowerOperation "; Op.dump(&DAG));
+  LLVM_DEBUG(dbgs() << "::LowerOperation"; Op->print(dbgs()););
   unsigned Opcode = Op.getOpcode();
 
   /// Scalar isel.
@@ -1919,6 +1922,7 @@ SDValue VETargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   }
 
   /// Vector isel.
+  LLVM_DEBUG(dbgs() << "::LowerOperation_VVP"; Op->print(dbgs()););
   if (ISD::isVPOpcode(Opcode))
     return lowerToVVP(Op, DAG);
 
@@ -2184,7 +2188,8 @@ VETargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
   MachineFunction::iterator I = ++MBB->getIterator();
 
   // Memory Reference.
-  SmallVector<MachineMemOperand *, 2> MMOs(MI.memoperands());
+  SmallVector<MachineMemOperand *, 2> MMOs(MI.memoperands_begin(),
+                                           MI.memoperands_end());
   Register BufReg = MI.getOperand(1).getReg();
 
   Register DstReg;
@@ -2310,7 +2315,8 @@ VETargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
   MachineRegisterInfo &MRI = MF->getRegInfo();
 
   // Memory Reference.
-  SmallVector<MachineMemOperand *, 2> MMOs(MI.memoperands());
+  SmallVector<MachineMemOperand *, 2> MMOs(MI.memoperands_begin(),
+                                           MI.memoperands_end());
   Register BufReg = MI.getOperand(0).getReg();
 
   Register Tmp = MRI.createVirtualRegister(&VE::I64RegClass);
@@ -2933,8 +2939,8 @@ static bool isI32Insn(const SDNode *User, const SDNode *N) {
     if (User->getOperand(1).getNode() != N &&
         User->getOperand(2).getNode() != N &&
         isa<ConstantSDNode>(User->getOperand(3))) {
-      VECC::CondCode VECCVal =
-          static_cast<VECC::CondCode>(User->getConstantOperandVal(3));
+      VECC::CondCode VECCVal = static_cast<VECC::CondCode>(
+          cast<ConstantSDNode>(User->getOperand(3))->getZExtValue());
       return isIntVECondCode(VECCVal);
     }
     [[fallthrough]];
@@ -2952,7 +2958,7 @@ static bool isI32Insn(const SDNode *User, const SDNode *N) {
 static bool isI32InsnAllUses(const SDNode *User, const SDNode *N) {
   // Check all use of User node.  If all of them are safe, optimize
   // truncate to extract_subreg.
-  for (const SDNode *U : User->users()) {
+  for (const SDNode *U : User->uses()) {
     switch (U->getOpcode()) {
     default:
       // If the use is an instruction which treats the source operand as i32,
@@ -3003,7 +3009,7 @@ SDValue VETargetLowering::combineTRUNCATE(SDNode *N,
     return SDValue();
 
   // Check all use of this TRUNCATE.
-  for (const SDNode *User : N->users()) {
+  for (const SDNode *User : N->uses()) {
     // Make sure that we're not going to replace TRUNCATE for non i32
     // instructions.
     //

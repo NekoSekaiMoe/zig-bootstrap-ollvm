@@ -16,9 +16,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/StackSafetyAnalysis.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/Alignment.h"
 
 namespace llvm {
@@ -54,8 +52,6 @@ struct AllocaInfo {
   SmallVector<IntrinsicInst *, 2> LifetimeStart;
   SmallVector<IntrinsicInst *, 2> LifetimeEnd;
   SmallVector<DbgVariableIntrinsic *, 2> DbgVariableIntrinsics;
-  // Non-intrinsic records of variable locations.
-  SmallVector<DbgVariableRecord *, 2> DbgVariableRecords;
 };
 
 struct StackInfo {
@@ -65,42 +61,21 @@ struct StackInfo {
   bool CallsReturnTwice = false;
 };
 
-enum class AllocaInterestingness {
-  // Uninteresting because of the nature of the alloca.
-  kUninteresting,
-  // Uninteresting because proven safe.
-  kSafe,
-  // Interesting.
-  kInteresting
-};
-
 class StackInfoBuilder {
 public:
-  StackInfoBuilder(const StackSafetyGlobalInfo *SSI, const char *DebugType)
-      : SSI(SSI), DebugType(DebugType) {}
+  StackInfoBuilder(const StackSafetyGlobalInfo *SSI) : SSI(SSI) {}
 
-  void visit(OptimizationRemarkEmitter &ORE, Instruction &Inst);
-  AllocaInterestingness getAllocaInterestingness(const AllocaInst &AI);
+  void visit(Instruction &Inst);
+  bool isInterestingAlloca(const AllocaInst &AI);
   StackInfo &get() { return Info; };
 
 private:
   StackInfo Info;
   const StackSafetyGlobalInfo *SSI;
-  const char *DebugType;
 };
 
 uint64_t getAllocaSizeInBytes(const AllocaInst &AI);
 void alignAndPadAlloca(memtag::AllocaInfo &Info, llvm::Align Align);
-bool isLifetimeIntrinsic(Value *V);
-
-Value *readRegister(IRBuilder<> &IRB, StringRef Name);
-Value *getFP(IRBuilder<> &IRB);
-Value *getPC(const Triple &TargetTriple, IRBuilder<> &IRB);
-Value *getAndroidSlotPtr(IRBuilder<> &IRB, int Slot);
-
-void annotateDebugRecords(AllocaInfo &Info, unsigned int Tag);
-Value *incrementThreadLong(IRBuilder<> &IRB, Value *ThreadLong,
-                           unsigned int Inc);
 
 } // namespace memtag
 } // namespace llvm

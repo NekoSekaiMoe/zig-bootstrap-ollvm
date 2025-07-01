@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "SectionPriorities.h"
-#include "BPSectionOrderer.h"
 #include "Config.h"
 #include "InputFiles.h"
 #include "Symbols.h"
@@ -38,6 +37,9 @@ using namespace lld::macho;
 PriorityBuilder macho::priorityBuilder;
 
 namespace {
+
+size_t highestAvailablePriority = std::numeric_limits<size_t>::max();
+
 struct Edge {
   int from;
   uint64_t weight;
@@ -64,7 +66,7 @@ class CallGraphSort {
 public:
   CallGraphSort(const MapVector<SectionPair, uint64_t> &profile);
 
-  DenseMap<const InputSection *, int> run();
+  DenseMap<const InputSection *, size_t> run();
 
 private:
   std::vector<Cluster> clusters;
@@ -154,7 +156,7 @@ static void mergeClusters(std::vector<Cluster> &cs, Cluster &into, int intoIdx,
 
 // Group InputSections into clusters using the Call-Chain Clustering heuristic
 // then sort the clusters by density.
-DenseMap<const InputSection *, int> CallGraphSort::run() {
+DenseMap<const InputSection *, size_t> CallGraphSort::run() {
   const uint64_t maxClusterSize = target->getPageSize();
 
   // Cluster indices sorted by density.
@@ -202,14 +204,16 @@ DenseMap<const InputSection *, int> CallGraphSort::run() {
     return clusters[a].getDensity() > clusters[b].getDensity();
   });
 
-  DenseMap<const InputSection *, int> orderMap;
+  DenseMap<const InputSection *, size_t> orderMap;
 
   // Sections will be sorted by decreasing order. Absent sections will have
   // priority 0 and be placed at the end of sections.
-  int curOrder = -clusters.size();
+  // NB: This is opposite from COFF/ELF to be compatible with the existing
+  // order-file code.
+  int curOrder = highestAvailablePriority;
   for (int leader : sorted) {
     for (int i = leader;;) {
-      orderMap[sections[i]] = curOrder++;
+      orderMap[sections[i]] = curOrder--;
       i = clusters[i].next;
       if (i == leader)
         break;
@@ -232,7 +236,7 @@ DenseMap<const InputSection *, int> CallGraphSort::run() {
         // section.
         for (Symbol *sym : isec->getFile()->symbols) {
           if (auto *d = dyn_cast_or_null<Defined>(sym)) {
-            if (d->isec() == isec)
+            if (d->isec == isec)
               os << sym->getName() << "\n";
           }
         }
@@ -245,7 +249,7 @@ DenseMap<const InputSection *, int> CallGraphSort::run() {
   return orderMap;
 }
 
-std::optional<int>
+std::optional<size_t>
 macho::PriorityBuilder::getSymbolPriority(const Defined *sym) {
   if (sym->isAbsolute())
     return std::nullopt;
@@ -254,7 +258,7 @@ macho::PriorityBuilder::getSymbolPriority(const Defined *sym) {
   if (it == priorities.end())
     return std::nullopt;
   const SymbolPriorityEntry &entry = it->second;
-  const InputFile *f = sym->isec()->getFile();
+  const InputFile *f = sym->isec->getFile();
   if (!f)
     return entry.anyObjectFile;
   // We don't use toString(InputFile *) here because it returns the full path
@@ -265,7 +269,7 @@ macho::PriorityBuilder::getSymbolPriority(const Defined *sym) {
   else
     filename = saver().save(path::filename(f->archiveName) + "(" +
                             path::filename(f->getName()) + ")");
-  return std::min(entry.objectFiles.lookup(filename), entry.anyObjectFile);
+  return std::max(entry.objectFiles.lookup(filename), entry.anyObjectFile);
 }
 
 void macho::PriorityBuilder::extractCallGraphProfile() {
@@ -283,7 +287,7 @@ void macho::PriorityBuilder::extractCallGraphProfile() {
       if (fromSym && toSym &&
           (!hasOrderFile ||
            (!getSymbolPriority(fromSym) && !getSymbolPriority(toSym))))
-        callGraphProfile[{fromSym->isec(), toSym->isec()}] += entry.count;
+        callGraphProfile[{fromSym->isec, toSym->isec}] += entry.count;
     }
   }
 }
@@ -297,7 +301,6 @@ void macho::PriorityBuilder::parseOrderFile(StringRef path) {
     return;
   }
 
-  int prio = std::numeric_limits<int>::min();
   MemoryBufferRef mbref = *buffer;
   for (StringRef line : args::getLines(mbref)) {
     StringRef objectFile, symbol;
@@ -335,28 +338,21 @@ void macho::PriorityBuilder::parseOrderFile(StringRef path) {
     if (!symbol.empty()) {
       SymbolPriorityEntry &entry = priorities[symbol];
       if (!objectFile.empty())
-        entry.objectFiles.insert(std::make_pair(objectFile, prio));
+        entry.objectFiles.insert(
+            std::make_pair(objectFile, highestAvailablePriority));
       else
-        entry.anyObjectFile = std::min(entry.anyObjectFile, prio);
+        entry.anyObjectFile =
+            std::max(entry.anyObjectFile, highestAvailablePriority);
     }
 
-    ++prio;
+    --highestAvailablePriority;
   }
 }
 
-DenseMap<const InputSection *, int>
+DenseMap<const InputSection *, size_t>
 macho::PriorityBuilder::buildInputSectionPriorities() {
-  DenseMap<const InputSection *, int> sectionPriorities;
-  if (config->bpStartupFunctionSort || config->bpFunctionOrderForCompression ||
-      config->bpDataOrderForCompression) {
-    TimeTraceScope timeScope("Balanced Partitioning Section Orderer");
-    sectionPriorities = runBalancedPartitioning(
-        config->bpStartupFunctionSort ? config->irpgoProfilePath : "",
-        config->bpFunctionOrderForCompression,
-        config->bpDataOrderForCompression,
-        config->bpCompressionSortStartupFunctions,
-        config->bpVerboseSectionOrderer);
-  } else if (config->callGraphProfileSort) {
+  DenseMap<const InputSection *, size_t> sectionPriorities;
+  if (config->callGraphProfileSort) {
     // Sort sections by the profile data provided by __LLVM,__cg_profile
     // sections.
     //
@@ -371,11 +367,11 @@ macho::PriorityBuilder::buildInputSectionPriorities() {
     return sectionPriorities;
 
   auto addSym = [&](const Defined *sym) {
-    std::optional<int> symbolPriority = getSymbolPriority(sym);
+    std::optional<size_t> symbolPriority = getSymbolPriority(sym);
     if (!symbolPriority)
       return;
-    int &priority = sectionPriorities[sym->isec()];
-    priority = std::min(priority, *symbolPriority);
+    size_t &priority = sectionPriorities[sym->isec];
+    priority = std::max(priority, *symbolPriority);
   };
 
   // TODO: Make sure this handles weak symbols correctly.

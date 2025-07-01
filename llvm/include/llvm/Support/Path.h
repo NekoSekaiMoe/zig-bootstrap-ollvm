@@ -119,24 +119,22 @@ public:
 /// Get begin iterator over \a path.
 /// @param path Input path.
 /// @returns Iterator initialized with the first component of \a path.
-const_iterator begin(StringRef path LLVM_LIFETIME_BOUND,
-                     Style style = Style::native);
+const_iterator begin(StringRef path, Style style = Style::native);
 
 /// Get end iterator over \a path.
 /// @param path Input path.
 /// @returns Iterator initialized to the end of \a path.
-const_iterator end(StringRef path LLVM_LIFETIME_BOUND);
+const_iterator end(StringRef path);
 
 /// Get reverse begin iterator over \a path.
 /// @param path Input path.
 /// @returns Iterator initialized with the first reverse component of \a path.
-reverse_iterator rbegin(StringRef path LLVM_LIFETIME_BOUND,
-                        Style style = Style::native);
+reverse_iterator rbegin(StringRef path, Style style = Style::native);
 
 /// Get reverse end iterator over \a path.
 /// @param path Input path.
 /// @returns Iterator initialized to the reverse end of \a path.
-reverse_iterator rend(StringRef path LLVM_LIFETIME_BOUND);
+reverse_iterator rend(StringRef path);
 
 /// @}
 /// @name Lexical Modifiers
@@ -201,8 +199,7 @@ bool replace_path_prefix(SmallVectorImpl<char> &Path, StringRef OldPrefix,
 ///
 /// @param path Input path.
 /// @result The cleaned-up \a path.
-StringRef remove_leading_dotslash(StringRef path LLVM_LIFETIME_BOUND,
-                                  Style style = Style::native);
+StringRef remove_leading_dotslash(StringRef path, Style style = Style::native);
 
 /// In-place remove any './' and optionally '../' components from a path.
 ///
@@ -298,8 +295,7 @@ std::string convert_to_slash(StringRef path, Style style = Style::native);
 ///
 /// @param path Input path.
 /// @result The root name of \a path if it has one, otherwise "".
-StringRef root_name(StringRef path LLVM_LIFETIME_BOUND,
-                    Style style = Style::native);
+StringRef root_name(StringRef path, Style style = Style::native);
 
 /// Get root directory.
 ///
@@ -312,8 +308,7 @@ StringRef root_name(StringRef path LLVM_LIFETIME_BOUND,
 /// @param path Input path.
 /// @result The root directory of \a path if it has one, otherwise
 ///               "".
-StringRef root_directory(StringRef path LLVM_LIFETIME_BOUND,
-                         Style style = Style::native);
+StringRef root_directory(StringRef path, Style style = Style::native);
 
 /// Get root path.
 ///
@@ -321,8 +316,7 @@ StringRef root_directory(StringRef path LLVM_LIFETIME_BOUND,
 ///
 /// @param path Input path.
 /// @result The root path of \a path if it has one, otherwise "".
-StringRef root_path(StringRef path LLVM_LIFETIME_BOUND,
-                    Style style = Style::native);
+StringRef root_path(StringRef path, Style style = Style::native);
 
 /// Get relative path.
 ///
@@ -334,8 +328,7 @@ StringRef root_path(StringRef path LLVM_LIFETIME_BOUND,
 ///
 /// @param path Input path.
 /// @result The path starting after root_path if one exists, otherwise "".
-StringRef relative_path(StringRef path LLVM_LIFETIME_BOUND,
-                        Style style = Style::native);
+StringRef relative_path(StringRef path, Style style = Style::native);
 
 /// Get parent path.
 ///
@@ -347,8 +340,7 @@ StringRef relative_path(StringRef path LLVM_LIFETIME_BOUND,
 ///
 /// @param path Input path.
 /// @result The parent path of \a path if one exists, otherwise "".
-StringRef parent_path(StringRef path LLVM_LIFETIME_BOUND,
-                      Style style = Style::native);
+StringRef parent_path(StringRef path, Style style = Style::native);
 
 /// Get filename.
 ///
@@ -362,8 +354,7 @@ StringRef parent_path(StringRef path LLVM_LIFETIME_BOUND,
 /// @param path Input path.
 /// @result The filename part of \a path. This is defined as the last component
 ///         of \a path. Similar to the POSIX "basename" utility.
-StringRef filename(StringRef path LLVM_LIFETIME_BOUND,
-                   Style style = Style::native);
+StringRef filename(StringRef path, Style style = Style::native);
 
 /// Get stem.
 ///
@@ -381,7 +372,7 @@ StringRef filename(StringRef path LLVM_LIFETIME_BOUND,
 ///
 /// @param path Input path.
 /// @result The stem of \a path.
-StringRef stem(StringRef path LLVM_LIFETIME_BOUND, Style style = Style::native);
+StringRef stem(StringRef path, Style style = Style::native);
 
 /// Get extension.
 ///
@@ -397,8 +388,7 @@ StringRef stem(StringRef path LLVM_LIFETIME_BOUND, Style style = Style::native);
 ///
 /// @param path Input path.
 /// @result The extension of \a path.
-StringRef extension(StringRef path LLVM_LIFETIME_BOUND,
-                    Style style = Style::native);
+StringRef extension(StringRef path, Style style = Style::native);
 
 /// Check whether the given char is a path separator on the host OS.
 ///

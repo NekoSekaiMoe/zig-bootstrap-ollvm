@@ -15,12 +15,12 @@ __clone:
 	mov %rcx,(%rsi)
 	syscall
 	test %eax,%eax
-	jz 1f
-	ret
-1:	xor %ebp,%ebp
+	jnz 1f
+	xor %ebp,%ebp
 	pop %rdi
 	call *%r9
 	mov %eax,%edi
 	movl $0x4000003c,%eax /* SYS_exit */
 	syscall
 	hlt
+1:	ret

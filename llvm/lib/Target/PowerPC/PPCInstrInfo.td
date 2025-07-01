@@ -166,17 +166,17 @@ def PPCany_fcfidus : PatFrags<(ops node:$op),
 
 def PPCstore_scal_int_from_vsr:
    SDNode<"PPCISD::ST_VSR_SCAL_INT", SDT_PPCstore_scal_int_from_vsr,
-           [SDNPHasChain, SDNPMayStore, SDNPMemOperand]>;
+           [SDNPHasChain, SDNPMayStore]>;
 def PPCstfiwx : SDNode<"PPCISD::STFIWX", SDT_PPCstfiwx,
-                       [SDNPHasChain, SDNPMayStore, SDNPMemOperand]>;
+                       [SDNPHasChain, SDNPMayStore]>;
 def PPClfiwax : SDNode<"PPCISD::LFIWAX", SDT_PPClfiwx,
                        [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 def PPClfiwzx : SDNode<"PPCISD::LFIWZX", SDT_PPClfiwx,
                        [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 def PPClxsizx : SDNode<"PPCISD::LXSIZX", SDT_PPCLxsizx,
-                       [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+                       [SDNPHasChain, SDNPMayLoad]>;
 def PPCstxsix : SDNode<"PPCISD::STXSIX", SDT_PPCstxsix,
-                       [SDNPHasChain, SDNPMayStore, SDNPMemOperand]>;
+                       [SDNPHasChain, SDNPMayStore]>;
 def PPCVexts  : SDNode<"PPCISD::VEXTS", SDT_PPCVexts, []>;
 
 // Extract FPSCR (not modeled at the DAG level).
@@ -213,14 +213,12 @@ def PPCaddTls     : SDNode<"PPCISD::ADD_TLS", SDTIntBinOp, []>;
 def PPCaddisTlsgdHA : SDNode<"PPCISD::ADDIS_TLSGD_HA", SDTIntBinOp>;
 def PPCaddiTlsgdL   : SDNode<"PPCISD::ADDI_TLSGD_L", SDTIntBinOp>;
 def PPCgetTlsAddr   : SDNode<"PPCISD::GET_TLS_ADDR", SDTIntBinOp>;
-def PPCgetTlsMod   : SDNode<"PPCISD::GET_TLS_MOD_AIX", SDTIntUnaryOp>;
 def PPCgetTpointer : SDNode<"PPCISD::GET_TPOINTER", SDTIntLeaf, []>;
 def PPCaddiTlsgdLAddr : SDNode<"PPCISD::ADDI_TLSGD_L_ADDR",
                                SDTypeProfile<1, 3, [
                                  SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>,
                                  SDTCisSameAs<0, 3>, SDTCisInt<0> ]>>;
 def PPCTlsgdAIX     : SDNode<"PPCISD::TLSGD_AIX", SDTIntBinOp>;
-def PPCTlsldAIX     : SDNode<"PPCISD::TLSLD_AIX", SDTIntUnaryOp>;
 def PPCaddisTlsldHA : SDNode<"PPCISD::ADDIS_TLSLD_HA", SDTIntBinOp>;
 def PPCaddiTlsldL   : SDNode<"PPCISD::ADDI_TLSLD_L", SDTIntBinOp>;
 def PPCgetTlsldAddr : SDNode<"PPCISD::GET_TLSLD_ADDR", SDTIntBinOp>;
@@ -336,7 +334,7 @@ def PPCbctrl_load_toc_rm : SDNode<"PPCISD::BCTRL_LOAD_TOC_RM",
                                   [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
                                    SDNPVariadic]>;
 
-def PPCretglue   : SDNode<"PPCISD::RET_GLUE", SDTNone,
+def retglue       : SDNode<"PPCISD::RET_GLUE", SDTNone,
                            [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
 def PPCtc_return : SDNode<"PPCISD::TC_RETURN", SDT_PPCTC_ret,
@@ -376,7 +374,7 @@ def PPCatomicCmpSwap_16 :
 def PPClbrx       : SDNode<"PPCISD::LBRX", SDT_PPClbrx,
                            [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 def PPCstbrx      : SDNode<"PPCISD::STBRX", SDT_PPCstbrx,
-                           [SDNPHasChain, SDNPMayStore, SDNPMemOperand]>;
+                           [SDNPHasChain, SDNPMayStore]>;
 def PPCStoreCond  : SDNode<"PPCISD::STORE_COND", SDT_StoreCond,
                            [SDNPHasChain, SDNPMayStore,
                             SDNPMemOperand, SDNPOutGlue]>;
@@ -686,15 +684,13 @@ def addr   : ComplexPattern<iPTR, 1, "SelectAddr",[], []>;
 def iaddroff : ComplexPattern<iPTR, 1, "SelectAddrImmOffs", [], []>;
 
 // Load and Store Instruction Selection addressing modes.
-let WantsParent = true in {
-  def DForm  : ComplexPattern<iPTR, 2, "SelectDForm">;
-  def DSForm : ComplexPattern<iPTR, 2, "SelectDSForm">;
-  def DQForm : ComplexPattern<iPTR, 2, "SelectDQForm">;
-  def XForm  : ComplexPattern<iPTR, 2, "SelectXForm">;
-  def ForceXForm : ComplexPattern<iPTR, 2, "SelectForceXForm">;
-  def PCRelForm : ComplexPattern<iPTR, 2, "SelectPCRelForm">;
-  def PDForm : ComplexPattern<iPTR, 2, "SelectPDForm">;
-}
+def DForm  : ComplexPattern<iPTR, 2, "SelectDForm",    [], [SDNPWantParent]>;
+def DSForm : ComplexPattern<iPTR, 2, "SelectDSForm",   [], [SDNPWantParent]>;
+def DQForm : ComplexPattern<iPTR, 2, "SelectDQForm",   [], [SDNPWantParent]>;
+def XForm  : ComplexPattern<iPTR, 2, "SelectXForm",    [], [SDNPWantParent]>;
+def ForceXForm : ComplexPattern<iPTR, 2, "SelectForceXForm", [], [SDNPWantParent]>;
+def PCRelForm : ComplexPattern<iPTR, 2, "SelectPCRelForm", [], [SDNPWantParent]>;
+def PDForm : ComplexPattern<iPTR, 2, "SelectPDForm",   [], [SDNPWantParent]>;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Instruction Predicate Definitions.
@@ -725,7 +721,7 @@ def PCRelativeMemops : Predicate<"Subtarget->hasPCRelativeMemops()">;
 def IsNotISA3_1 : Predicate<"!Subtarget->isISA3_1()">;
 
 // AIX assembler may not be modern enough to support some extended mne.
-def ModernAs: Predicate<"!Subtarget->isAIXABI() || Subtarget->HasModernAIXAs">,
+def ModernAs: Predicate<"!Subtarget->isAIXABI() || Subtarget->HasModernAIXAs">, 
                  AssemblerPredicate<(any_of (not AIXOS), FeatureModernAIXAs)>;
 def IsAIX : Predicate<"Subtarget->isAIXABI()">;
 def NotAIX : Predicate<"!Subtarget->isAIXABI()">;
@@ -1301,7 +1297,7 @@ def RESTORE_CRBIT : PPCEmitTimePseudo<(outs crbitrc:$cond), (ins memri:$F),
 let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7, hasSideEffects = 0 in {
   let isPredicable = 1, isReturn = 1, Uses = [LR, RM] in
     def BLR : XLForm_2_ext<19, 16, 20, 0, 0, (outs), (ins), "blr", IIC_BrB,
-                           [(PPCretglue)]>, Requires<[In32BitMode]>;
+                           [(retglue)]>, Requires<[In32BitMode]>;
   let isBranch = 1, isIndirectBranch = 1, Uses = [CTR] in {
     let isPredicable = 1 in
       def BCTR : XLForm_2_ext<19, 528, 20, 0, 0, (outs), (ins), "bctr", IIC_BrB,
@@ -1331,9 +1327,6 @@ def SETRND : PPCCustomInserterPseudo<(outs f8rc:$FRT), (ins gprc:$in),
 def SETFLM : PPCCustomInserterPseudo<(outs f8rc:$FRT), (ins f8rc:$FLM),
                     "#SETFLM", [(set f64:$FRT, (int_ppc_setflm f8rc:$FLM))]>;
 }
-
-let isBarrier = 1, hasSideEffects = 1, Defs = [RM] in
-def FENCE : PPCEmitTimePseudo<(outs), (ins), "#FENCE", []>;
 
 let Defs = [LR] in
   def MovePCtoLR : PPCEmitTimePseudo<(outs), (ins), "#MovePCtoLR", []>,
@@ -1648,16 +1641,8 @@ let isBranch = 1, isTerminator = 1, Size = 0 in {
 
 // System call.
 let PPC970_Unit = 7 in {
-  def SC     : SCForm<17, 1, 0, (outs), (ins i32imm:$LEV),
+  def SC     : SCForm<17, 1, (outs), (ins i32imm:$LEV),
                       "sc $LEV", IIC_BrB, [(PPCsc (i32 imm:$LEV))]>;
-}
-
-// We mark SCV as having no scheduling model since it is only meant to be used
-// as inline assembly. If we implement a builtin pattern for it we will need to
-// add it to the P9 and P10 scheduling models.
-let Predicates = [IsISA3_0], hasNoSchedulingInfo = 1 in {
-  def SCV : SCForm<17, 0, 1, (outs), (ins i32imm:$LEV),
-                   "scv $LEV", IIC_BrB, []>;
 }
 
 // Branch history rolling buffer.
@@ -1728,11 +1713,11 @@ def : Pat<(int_ppc_dcbf xoaddr:$dst),
 def : Pat<(int_ppc_icbt xoaddr:$dst),
           (ICBT 0, xoaddr:$dst)>;
 
-def : Pat<(prefetch xoaddr:$dst, (i32 0), timm, (i32 1)),
+def : Pat<(prefetch xoaddr:$dst, (i32 0), imm, (i32 1)),
           (DCBT 0, xoaddr:$dst)>;   // data prefetch for loads
-def : Pat<(prefetch xoaddr:$dst, (i32 1), timm, (i32 1)),
+def : Pat<(prefetch xoaddr:$dst, (i32 1), imm, (i32 1)),
           (DCBTST 0, xoaddr:$dst)>; // data prefetch for stores
-def : Pat<(prefetch xoaddr:$dst, (i32 0), timm, (i32 0)),
+def : Pat<(prefetch xoaddr:$dst, (i32 0), imm, (i32 0)),
           (ICBT 0, xoaddr:$dst)>, Requires<[HasICBT]>; // inst prefetch (for read)
 
 def : Pat<(int_ppc_dcbt_with_hint xoaddr:$dst, i32:$TH),
@@ -1749,114 +1734,114 @@ def : Pat<(int_ppc_dcbtst_with_hint xoaddr:$dst, i32:$TH),
 let Defs = [CR0] in {
   def ATOMIC_LOAD_ADD_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_ADD_I8",
-    [(set i32:$dst, (atomic_load_add_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_add_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_SUB_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_SUB_I8",
-    [(set i32:$dst, (atomic_load_sub_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_sub_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_AND_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_AND_I8",
-    [(set i32:$dst, (atomic_load_and_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_and_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_OR_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_OR_I8",
-    [(set i32:$dst, (atomic_load_or_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_or_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_XOR_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "ATOMIC_LOAD_XOR_I8",
-    [(set i32:$dst, (atomic_load_xor_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_xor_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_NAND_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_NAND_I8",
-    [(set i32:$dst, (atomic_load_nand_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_nand_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MIN_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MIN_I8",
-    [(set i32:$dst, (atomic_load_min_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_min_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MAX_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MAX_I8",
-    [(set i32:$dst, (atomic_load_max_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_max_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMIN_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMIN_I8",
-    [(set i32:$dst, (atomic_load_umin_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umin_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMAX_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMAX_I8",
-    [(set i32:$dst, (atomic_load_umax_i8 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umax_8 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_ADD_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_ADD_I16",
-    [(set i32:$dst, (atomic_load_add_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_add_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_SUB_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_SUB_I16",
-    [(set i32:$dst, (atomic_load_sub_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_sub_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_AND_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_AND_I16",
-    [(set i32:$dst, (atomic_load_and_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_and_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_OR_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_OR_I16",
-    [(set i32:$dst, (atomic_load_or_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_or_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_XOR_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_XOR_I16",
-    [(set i32:$dst, (atomic_load_xor_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_xor_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_NAND_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_NAND_I16",
-    [(set i32:$dst, (atomic_load_nand_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_nand_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MIN_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MIN_I16",
-    [(set i32:$dst, (atomic_load_min_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_min_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MAX_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MAX_I16",
-    [(set i32:$dst, (atomic_load_max_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_max_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMIN_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMIN_I16",
-    [(set i32:$dst, (atomic_load_umin_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umin_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMAX_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMAX_I16",
-    [(set i32:$dst, (atomic_load_umax_i16 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umax_16 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_ADD_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_ADD_I32",
-    [(set i32:$dst, (atomic_load_add_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_add_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_SUB_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_SUB_I32",
-    [(set i32:$dst, (atomic_load_sub_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_sub_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_AND_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_AND_I32",
-    [(set i32:$dst, (atomic_load_and_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_and_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_OR_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_OR_I32",
-    [(set i32:$dst, (atomic_load_or_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_or_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_XOR_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_XOR_I32",
-    [(set i32:$dst, (atomic_load_xor_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_xor_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_NAND_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_NAND_I32",
-    [(set i32:$dst, (atomic_load_nand_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_nand_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MIN_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MIN_I32",
-    [(set i32:$dst, (atomic_load_min_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_min_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_MAX_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_MAX_I32",
-    [(set i32:$dst, (atomic_load_max_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_max_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMIN_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMIN_I32",
-    [(set i32:$dst, (atomic_load_umin_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umin_32 ForceXForm:$ptr, i32:$incr))]>;
   def ATOMIC_LOAD_UMAX_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$incr), "#ATOMIC_LOAD_UMAX_I32",
-    [(set i32:$dst, (atomic_load_umax_i32 ForceXForm:$ptr, i32:$incr))]>;
+    [(set i32:$dst, (atomic_load_umax_32 ForceXForm:$ptr, i32:$incr))]>;
 
   def ATOMIC_CMP_SWAP_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$old, gprc:$new), "#ATOMIC_CMP_SWAP_I8",
-    [(set i32:$dst, (atomic_cmp_swap_i8 ForceXForm:$ptr, i32:$old, i32:$new))]>;
+    [(set i32:$dst, (atomic_cmp_swap_8 ForceXForm:$ptr, i32:$old, i32:$new))]>;
   def ATOMIC_CMP_SWAP_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$old, gprc:$new), "#ATOMIC_CMP_SWAP_I16 $dst $ptr $old $new",
-    [(set i32:$dst, (atomic_cmp_swap_i16 ForceXForm:$ptr, i32:$old, i32:$new))]>;
+    [(set i32:$dst, (atomic_cmp_swap_16 ForceXForm:$ptr, i32:$old, i32:$new))]>;
   def ATOMIC_CMP_SWAP_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$old, gprc:$new), "#ATOMIC_CMP_SWAP_I32 $dst $ptr $old $new",
-    [(set i32:$dst, (atomic_cmp_swap_i32 ForceXForm:$ptr, i32:$old, i32:$new))]>;
+    [(set i32:$dst, (atomic_cmp_swap_32 ForceXForm:$ptr, i32:$old, i32:$new))]>;
 
   def ATOMIC_SWAP_I8 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$new), "#ATOMIC_SWAP_i8",
-    [(set i32:$dst, (atomic_swap_i8 ForceXForm:$ptr, i32:$new))]>;
+    [(set i32:$dst, (atomic_swap_8 ForceXForm:$ptr, i32:$new))]>;
   def ATOMIC_SWAP_I16 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$new), "#ATOMIC_SWAP_I16",
-    [(set i32:$dst, (atomic_swap_i16 ForceXForm:$ptr, i32:$new))]>;
+    [(set i32:$dst, (atomic_swap_16 ForceXForm:$ptr, i32:$new))]>;
   def ATOMIC_SWAP_I32 : PPCCustomInserterPseudo<
     (outs gprc:$dst), (ins memrr:$ptr, gprc:$new), "#ATOMIC_SWAP_I32",
-    [(set i32:$dst, (atomic_swap_i32 ForceXForm:$ptr, i32:$new))]>;
+    [(set i32:$dst, (atomic_swap_32 ForceXForm:$ptr, i32:$new))]>;
 }
 
 def : Pat<(PPCatomicCmpSwap_8 ForceXForm:$ptr, i32:$old, i32:$new),
@@ -1916,7 +1901,7 @@ def STWAT : X_RD5_RS5_IM5<31, 710, (outs), (ins gprc:$RST, gprc:$RA, u5imm:$RB),
                           "stwat $RST, $RA, $RB", IIC_LdStStore>,
             Requires<[IsISA3_0]>;
 
-let isTrap = 1, hasCtrlDep = 1 in
+let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1 in
 def TRAP  : XForm_24<31, 4, (outs), (ins), "trap", IIC_LdStLoad, [(trap)]>;
 
 def TWI : DForm_base<3, (outs), (ins u5imm:$RST, gprc:$RA, s16imm:$D, variable_ops),
@@ -1933,14 +1918,12 @@ def POPCNTB : XForm_11<31, 122, (outs gprc:$RA), (ins gprc:$RST),
                        [(set i32:$RA, (int_ppc_popcntb i32:$RST))]>;
 
 def CDTBCD : XForm_11<31, 282, (outs gprc:$RA), (ins gprc:$RST),
-                      "cdtbcd $RA, $RST", IIC_IntGeneral,
-                       [(set i32:$RA, (int_ppc_cdtbcd i32:$RST))]>;
+                      "cdtbcd $RA, $RST", IIC_IntGeneral, []>;
 def CBCDTD : XForm_11<31, 314, (outs gprc:$RA), (ins gprc:$RST),
-                      "cbcdtd $RA, $RST", IIC_IntGeneral,
-                       [(set i32:$RA, (int_ppc_cbcdtd i32:$RST))]>;
+                      "cbcdtd $RA, $RST", IIC_IntGeneral, []>;
+
 def ADDG6S : XOForm_1<31, 74, 0, (outs gprc:$RT), (ins gprc:$RA, gprc:$RB),
-                      "addg6s $RT, $RA, $RB", IIC_IntGeneral,
-                       [(set i32:$RT, (int_ppc_addg6s i32:$RA, i32:$RB))]>;
+                      "addg6s $RT, $RA, $RB", IIC_IntGeneral, []>;
 
 //===----------------------------------------------------------------------===//
 // PPC32 Load Instructions.
@@ -2305,7 +2288,7 @@ let isCodeGenOnly = 1 in
 def LA     : DForm_2<14, (outs gprc:$RST), (ins gprc_nor0:$RA, s16imm:$D),
                      "la $RST, $D($RA)", IIC_IntGeneral,
                      [(set i32:$RST, (add i32:$RA,
-                                          (PPClo tglobaladdr:$D, 0)))]>, MemriOp;
+                                          (PPClo tglobaladdr:$D, 0)))]>;
 def MULLI  : DForm_2< 7, (outs gprc:$RST), (ins gprc:$RA, s16imm:$D),
                      "mulli $RST, $RA, $D", IIC_IntMulLI,
                      [(set i32:$RST, (mul i32:$RA, imm32SExt16:$D))]>;
@@ -3196,9 +3179,7 @@ def : Pat<(PPCtc_return (i32 texternalsym:$dst), imm:$imm),
 def : Pat<(PPCtc_return CTRRC:$dst, imm:$imm),
           (TCRETURNri CTRRC:$dst, imm:$imm)>;
 
-def : Pat<(int_ppc_fence), (FENCE)>;
 def : Pat<(int_ppc_readflm), (MFFS)>;
-def : Pat<(int_ppc_mffsl), (MFFSL)>;
 
 // Hi and Lo for Darwin Global Addresses.
 def : Pat<(PPChi tglobaladdr:$in, 0), (LIS tglobaladdr:$in)>;
@@ -3255,16 +3236,11 @@ def GETtlsADDR32 : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$reg, tlsgd32:$s
 // The rest of the Defs are the exact set of registers that will be clobbered by
 // the call.
 let hasExtraSrcRegAllocReq = 1, hasExtraDefRegAllocReq = 1,
-    Defs = [R0,R4,R5,R11,LR,CR0] in {
+    Defs = [R0,R4,R5,R11,LR,CR0] in
 def GETtlsADDR32AIX : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$offset, gprc:$handle),
                           "GETtlsADDR32AIX",
                           [(set i32:$rD,
                             (PPCgetTlsAddr i32:$offset, i32:$handle))]>;
-def GETtlsMOD32AIX : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$handle),
-                          "GETtlsMOD32AIX",
-                          [(set i32:$rD,
-                            (PPCgetTlsMod i32:$handle))]>;
-}
 
 // For local-exec accesses on 32-bit AIX, a call to .__get_tpointer is
 // generated to retrieve the thread pointer. GETtlsTpointer32AIX clobbers both
@@ -3275,8 +3251,8 @@ def GETtlsTpointer32AIX : PPCEmitTimePseudo<(outs gprc:$rD), (ins),
                           "GETtlsTpointer32AIX",
                           [(set i32:$rD, (PPCgetTpointer))]>;
 
-// The following pattern matches local- and initial-exec TLS accesses on 32-bit AIX.
-// PPCaddTls is used in local- and initial-exec accesses in order to:
+// The following pattern matches local-exec TLS accesses on 32-bit AIX.
+// PPCaddTls is used in local-exec accesses in order to:
 //   - Get the address of a variable (add the variable offset to the thread
 //     pointer, retrieved by calling .__get_tpointer).
 //   - Create an opportunity to optimize the user of the loaded address.
@@ -3304,9 +3280,6 @@ def TLSGDAIX : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$offset, gprc:$handl
                           "#TLSGDAIX",
                           [(set i32:$rD,
                             (PPCTlsgdAIX i32:$offset, i32:$handle))]>;
-// This pseudo is expanded to the call to GETtlsMOD32AIX.
-def TLSLDAIX : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$handle),
-                          "#TLSLDAIX", [(set i32:$rD, (PPCTlsldAIX i32:$handle))]>;
 // LR is a true define, while the rest of the Defs are clobbers.  R3 is
 // explicitly defined when this op is created, so not mentioned here.
 let hasExtraSrcRegAllocReq = 1, hasExtraDefRegAllocReq = 1,
@@ -3347,12 +3320,14 @@ def LWZtocL : PPCEmitTimePseudo<(outs gprc:$rD), (ins tocentry32:$disp, gprc_nor
                     [(set i32:$rD,
                       (PPCtoc_entry tglobaladdr:$disp, i32:$reg))]>;
 def ADDIStocHA : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc_nor0:$reg, tocentry32:$disp),
-                       "#ADDIStocHA", []>;
-// TOC Data Transform on AIX
-def ADDItoc : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc:$reg, tocentry32:$disp),
-                   "#ADDItoc", []>;
-def ADDItocL : PPCEmitTimePseudo<(outs gprc:$rD), (ins gprc_nor0:$reg, tocentry32:$disp),
-                   "#ADDItocL", []>;
+                       "#ADDIStocHA",
+                       [(set i32:$rD,
+                         (PPCtoc_entry i32:$reg, tglobaladdr:$disp))]>;
+// Local Data Transform
+def ADDItoc : PPCEmitTimePseudo<(outs gprc:$rD), (ins tocentry32:$disp, gprc:$reg),
+                   "#ADDItoc",
+                   [(set i32:$rD,
+                     (PPCtoc_entry tglobaladdr:$disp, i32:$reg))]>;
 
 // Get Global (GOT) Base Register offset, from the word immediately preceding
 // the function label.
@@ -3452,27 +3427,6 @@ def crnot : OutPatFrag<(ops node:$in),
                        (CRNOT $in)>;
 def       : Pat<(not i1:$in),
                 (crnot $in)>;
-
-// Pseudo-instructions for alternate assembly syntax (never used by codegen).
-// These are aliases that require C++ handling to convert to the target
-// instruction, while InstAliases can be handled directly by tblgen.
-class PPCAsmPseudo<string asm, dag iops>
-  : Instruction {
-  let Namespace = "PPC";
-  bit PPC64 = 0;  // Default value, override with isPPC64
-
-  let OutOperandList = (outs);
-  let InOperandList = iops;
-  let Pattern = [];
-  let AsmString = asm;
-  let isAsmParserOnly = 1;
-  let isPseudo = 1;
-  let hasNoSchedulingInfo = 1;
-
-  // Indicate that this instruction takes a register+immediate memory operand.
-  bits<1> MemriOp = 0;
-  let TSFlags{10} = MemriOp;
-}
 
 // Prefixed instructions may require access to the above defs at a later
 // time so we include this after the def.
@@ -4195,7 +4149,6 @@ def : Pat<(v4i32 (selectcc i1:$lhs, i1:$rhs, v4i32:$tval, v4i32:$fval, SETUGT)),
 def : Pat<(v4i32 (selectcc i1:$lhs, i1:$rhs, v4i32:$tval, v4i32:$fval, SETNE)),
           (SELECT_VRRC (CRXOR $lhs, $rhs), $tval, $fval)>;
 
-let Defs = [CR0] in {
 def ANDI_rec_1_EQ_BIT : PPCCustomInserterPseudo<(outs crbitrc:$dst), (ins gprc:$in),
                              "#ANDI_rec_1_EQ_BIT",
                              [(set i1:$dst, (trunc (not i32:$in)))]>;
@@ -4209,7 +4162,6 @@ def ANDI_rec_1_EQ_BIT8 : PPCCustomInserterPseudo<(outs crbitrc:$dst), (ins g8rc:
 def ANDI_rec_1_GT_BIT8 : PPCCustomInserterPseudo<(outs crbitrc:$dst), (ins g8rc:$in),
                               "#ANDI_rec_1_GT_BIT8",
                               [(set i1:$dst, (trunc i64:$in))]>;
-}
 
 def : Pat<(i1 (not (trunc i32:$in))),
            (ANDI_rec_1_EQ_BIT $in)>;
@@ -4497,6 +4449,23 @@ def ICBIEP  : XForm_1a<31, 991, (outs), (ins (memrr $RA, $RB):$addr), "icbiep $a
 // PowerPC Assembler Instruction Aliases
 //
 
+// Pseudo-instructions for alternate assembly syntax (never used by codegen).
+// These are aliases that require C++ handling to convert to the target
+// instruction, while InstAliases can be handled directly by tblgen.
+class PPCAsmPseudo<string asm, dag iops>
+  : Instruction {
+  let Namespace = "PPC";
+  bit PPC64 = 0;  // Default value, override with isPPC64
+
+  let OutOperandList = (outs);
+  let InOperandList = iops;
+  let Pattern = [];
+  let AsmString = asm;
+  let isAsmParserOnly = 1;
+  let isPseudo = 1;
+  let hasNoSchedulingInfo = 1;
+}
+
 def : InstAlias<"sc", (SC 0)>;
 
 def : InstAlias<"sync", (SYNC 0)>, Requires<[HasSYNC]>;
@@ -4720,7 +4689,7 @@ def : InstAlias<"tlbilxva $RA, $RB", (TLBILX 3, gprc:$RA, gprc:$RB)>,
                 Requires<[IsBookE]>;
 def : InstAlias<"tlbilxva $RB", (TLBILX 3, R0, gprc:$RB)>, Requires<[IsBookE]>;
 
-def LAx : PPCAsmPseudo<"la $rA, $addr", (ins gprc:$rA, memri:$addr)>, MemriOp;
+def LAx : PPCAsmPseudo<"la $rA, $addr", (ins gprc:$rA, memri:$addr)>;
 
 def SUBI : PPCAsmPseudo<"subi $rA, $rB, $imm",
                         (ins gprc:$rA, gprc:$rB, s16imm:$imm)>;
@@ -4848,9 +4817,6 @@ def RLWNMbm : PPCAsmPseudo<"rlwnm $rA, $rS, $n, $b",
                           (ins g8rc:$rA, g8rc:$rS, u5imm:$n, i32imm:$b)>;
 def RLWNMbm_rec : PPCAsmPseudo<"rlwnm. $rA, $rS, $n, $b",
                            (ins g8rc:$rA, g8rc:$rS, u5imm:$n, i32imm:$b)>;
-def PPCLdFixedAddr :
-  PPCPostRAExpPseudo<(outs gprc:$rT), (ins i32imm:$imm), "#FA_LOAD",
-                     [(set i32:$rT, (int_ppc_fixed_addr_ld timm:$imm))]>;
 
 // These generic branch instruction forms are used for the assembler parser only.
 // Defs and Uses are conservative, since we don't know the BO value.
@@ -5053,20 +5019,20 @@ defm : TrapExtendedMnemonic<"lng", 6>;
 defm : TrapExtendedMnemonic<"u", 31>;
 
 // Atomic loads
-def : Pat<(i32 (atomic_load_8  DForm:$src)), (LBZ  memri:$src)>;
-def : Pat<(i32 (atomic_load_16 DForm:$src)), (LHZ  memri:$src)>;
-def : Pat<(i32 (atomic_load_32 DForm:$src)), (LWZ  memri:$src)>;
-def : Pat<(i32 (atomic_load_8  XForm:$src)), (LBZX memrr:$src)>;
-def : Pat<(i32 (atomic_load_16 XForm:$src)), (LHZX memrr:$src)>;
-def : Pat<(i32 (atomic_load_32 XForm:$src)), (LWZX memrr:$src)>;
+def : Pat<(atomic_load_8  DForm:$src), (LBZ  memri:$src)>;
+def : Pat<(atomic_load_16 DForm:$src), (LHZ  memri:$src)>;
+def : Pat<(atomic_load_32 DForm:$src), (LWZ  memri:$src)>;
+def : Pat<(atomic_load_8  XForm:$src), (LBZX memrr:$src)>;
+def : Pat<(atomic_load_16 XForm:$src), (LHZX memrr:$src)>;
+def : Pat<(atomic_load_32 XForm:$src), (LWZX memrr:$src)>;
 
 // Atomic stores
-def : Pat<(atomic_store_8  i32:$val, DForm:$ptr), (STB  gprc:$val, memri:$ptr)>;
-def : Pat<(atomic_store_16 i32:$val, DForm:$ptr), (STH  gprc:$val, memri:$ptr)>;
-def : Pat<(atomic_store_32 i32:$val, DForm:$ptr), (STW  gprc:$val, memri:$ptr)>;
-def : Pat<(atomic_store_8  i32:$val, XForm:$ptr), (STBX gprc:$val, memrr:$ptr)>;
-def : Pat<(atomic_store_16 i32:$val, XForm:$ptr), (STHX gprc:$val, memrr:$ptr)>;
-def : Pat<(atomic_store_32 i32:$val, XForm:$ptr), (STWX gprc:$val, memrr:$ptr)>;
+def : Pat<(atomic_store_8  DForm:$ptr, i32:$val), (STB  gprc:$val, memri:$ptr)>;
+def : Pat<(atomic_store_16 DForm:$ptr, i32:$val), (STH  gprc:$val, memri:$ptr)>;
+def : Pat<(atomic_store_32 DForm:$ptr, i32:$val), (STW  gprc:$val, memri:$ptr)>;
+def : Pat<(atomic_store_8  XForm:$ptr, i32:$val), (STBX gprc:$val, memrr:$ptr)>;
+def : Pat<(atomic_store_16 XForm:$ptr, i32:$val), (STHX gprc:$val, memrr:$ptr)>;
+def : Pat<(atomic_store_32 XForm:$ptr, i32:$val), (STWX gprc:$val, memrr:$ptr)>;
 
 let Predicates = [IsISA3_0] in {
 
@@ -5285,22 +5251,19 @@ def HASHCHKP : XForm_XD6_RA5_RB5<31, 690, (outs),
                                  "hashchkp $RB, $addr", IIC_IntGeneral, []>;
 }
 
-let Defs = [CR7], Itinerary = IIC_LdStSync in
-def CFENCE : PPCPostRAExpPseudo<(outs), (ins gprc:$cr), "#CFENCE", []>;
-
 // Now both high word and low word are reversed, next
 // swap the high word and low word.
 def : Pat<(i64 (bitreverse i64:$A)),
   (OR8 (RLDICR DWBytes7654.DWord, 32, 31), DWBytes3210.DWord)>;
 
 def : Pat<(int_ppc_stwcx ForceXForm:$dst, gprc:$A),
-          (RLWINM (STWCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+          (STWCX gprc:$A, ForceXForm:$dst)>;
 def : Pat<(PPCStoreCond ForceXForm:$dst, gprc:$A, 4),
-          (RLWINM (STWCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+          (STWCX gprc:$A, ForceXForm:$dst)>;
 def : Pat<(int_ppc_stbcx ForceXForm:$dst, gprc:$A),
-          (RLWINM (STBCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+          (STBCX gprc:$A, ForceXForm:$dst)>;
 def : Pat<(PPCStoreCond ForceXForm:$dst, gprc:$A, 1),
-          (RLWINM (STBCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+          (STBCX gprc:$A, ForceXForm:$dst)>;
 
 def : Pat<(int_ppc_fcfid f64:$A),
         (XSCVSXDDP $A)>;
@@ -5330,9 +5293,9 @@ def : Pat<(int_ppc_mtmsr gprc:$RS),
 
 let Predicates = [IsISA2_07] in {
   def : Pat<(int_ppc_sthcx ForceXForm:$dst, gprc:$A),
-            (RLWINM (STHCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+            (STHCX gprc:$A, ForceXForm:$dst)>;
   def : Pat<(PPCStoreCond ForceXForm:$dst, gprc:$A, 2),
-            (RLWINM (STHCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
+            (STHCX gprc:$A, ForceXForm:$dst)>;
 }
 def : Pat<(int_ppc_dcbtstt ForceXForm:$dst),
           (DCBTST 16, ForceXForm:$dst)>;

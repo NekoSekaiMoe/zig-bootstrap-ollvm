@@ -461,10 +461,8 @@ bool ODRDiagsEmitter::diagnoseSubMismatchObjCMethod(
   }
   if (FirstMethod->getImplementationControl() !=
       SecondMethod->getImplementationControl()) {
-    DiagError(ControlLevel)
-        << llvm::to_underlying(FirstMethod->getImplementationControl());
-    DiagNote(ControlLevel) << llvm::to_underlying(
-        SecondMethod->getImplementationControl());
+    DiagError(ControlLevel) << FirstMethod->getImplementationControl();
+    DiagNote(ControlLevel) << SecondMethod->getImplementationControl();
     return true;
   }
   if (FirstMethod->isThisDeclarationADesignatedInitializer() !=
@@ -1102,8 +1100,8 @@ bool ODRDiagsEmitter::diagnoseMismatch(
 
     const bool FirstVirtual = FirstMethod->isVirtualAsWritten();
     const bool SecondVirtual = SecondMethod->isVirtualAsWritten();
-    const bool FirstPure = FirstMethod->isPureVirtual();
-    const bool SecondPure = SecondMethod->isPureVirtual();
+    const bool FirstPure = FirstMethod->isPure();
+    const bool SecondPure = SecondMethod->isPure();
     if ((FirstVirtual || SecondVirtual) &&
         (FirstVirtual != SecondVirtual || FirstPure != SecondPure)) {
       DiagMethodError(MethodVirtual) << FirstPure << FirstVirtual;
@@ -1409,15 +1407,13 @@ bool ODRDiagsEmitter::diagnoseMismatch(
         }
 
         if (HasFirstDefaultArgument && HasSecondDefaultArgument) {
-          TemplateArgument FirstTA =
-              FirstTTPD->getDefaultArgument().getArgument();
-          TemplateArgument SecondTA =
-              SecondTTPD->getDefaultArgument().getArgument();
-          if (computeODRHash(FirstTA) != computeODRHash(SecondTA)) {
+          QualType FirstType = FirstTTPD->getDefaultArgument();
+          QualType SecondType = SecondTTPD->getDefaultArgument();
+          if (computeODRHash(FirstType) != computeODRHash(SecondType)) {
             DiagTemplateError(FunctionTemplateParameterDifferentDefaultArgument)
-                << (i + 1) << FirstTA;
+                << (i + 1) << FirstType;
             DiagTemplateNote(FunctionTemplateParameterDifferentDefaultArgument)
-                << (i + 1) << SecondTA;
+                << (i + 1) << SecondType;
             return true;
           }
         }
@@ -1523,11 +1519,8 @@ bool ODRDiagsEmitter::diagnoseMismatch(
         }
 
         if (HasFirstDefaultArgument && HasSecondDefaultArgument) {
-          TemplateArgument FirstDefaultArgument =
-              FirstNTTPD->getDefaultArgument().getArgument();
-          TemplateArgument SecondDefaultArgument =
-              SecondNTTPD->getDefaultArgument().getArgument();
-
+          Expr *FirstDefaultArgument = FirstNTTPD->getDefaultArgument();
+          Expr *SecondDefaultArgument = SecondNTTPD->getDefaultArgument();
           if (computeODRHash(FirstDefaultArgument) !=
               computeODRHash(SecondDefaultArgument)) {
             DiagTemplateError(FunctionTemplateParameterDifferentDefaultArgument)

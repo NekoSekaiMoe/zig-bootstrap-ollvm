@@ -83,11 +83,10 @@
   
 */
 
+#include <AvailabilityVersions.h>
+
 #ifndef __AVAILABILITYMACROS__
 #define __AVAILABILITYMACROS__
-
-#include <AvailabilityVersions.h>
-#include <TargetConditionals.h>
 
 /* 
  * If min OS not specified, assume 10.4 for intel

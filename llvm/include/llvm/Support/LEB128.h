@@ -125,30 +125,29 @@ inline unsigned encodeULEB128(uint64_t Value, uint8_t *p,
 }
 
 /// Utility function to decode a ULEB128 value.
-///
-/// If \p error is non-null, it will point to a static error message,
-/// if an error occured. It will not be modified on success.
 inline uint64_t decodeULEB128(const uint8_t *p, unsigned *n = nullptr,
                               const uint8_t *end = nullptr,
                               const char **error = nullptr) {
   const uint8_t *orig_p = p;
   uint64_t Value = 0;
   unsigned Shift = 0;
+  if (error)
+    *error = nullptr;
   do {
-    if (LLVM_UNLIKELY(p == end)) {
+    if (p == end) {
       if (error)
         *error = "malformed uleb128, extends past end";
-      Value = 0;
-      break;
+      if (n)
+        *n = (unsigned)(p - orig_p);
+      return 0;
     }
     uint64_t Slice = *p & 0x7f;
-    if (LLVM_UNLIKELY(Shift >= 63) &&
-        ((Shift == 63 && (Slice << Shift >> Shift) != Slice) ||
-         (Shift > 63 && Slice != 0))) {
+    if ((Shift >= 64 && Slice != 0) || Slice << Shift >> Shift != Slice) {
       if (error)
         *error = "uleb128 too big for uint64";
-      Value = 0;
-      break;
+      if (n)
+        *n = (unsigned)(p - orig_p);
+      return 0;
     }
     Value += Slice << Shift;
     Shift += 7;
@@ -159,9 +158,6 @@ inline uint64_t decodeULEB128(const uint8_t *p, unsigned *n = nullptr,
 }
 
 /// Utility function to decode a SLEB128 value.
-///
-/// If \p error is non-null, it will point to a static error message,
-/// if an error occured. It will not be modified on success.
 inline int64_t decodeSLEB128(const uint8_t *p, unsigned *n = nullptr,
                              const uint8_t *end = nullptr,
                              const char **error = nullptr) {
@@ -169,8 +165,10 @@ inline int64_t decodeSLEB128(const uint8_t *p, unsigned *n = nullptr,
   int64_t Value = 0;
   unsigned Shift = 0;
   uint8_t Byte;
+  if (error)
+    *error = nullptr;
   do {
-    if (LLVM_UNLIKELY(p == end)) {
+    if (p == end) {
       if (error)
         *error = "malformed sleb128, extends past end";
       if (n)
@@ -179,9 +177,8 @@ inline int64_t decodeSLEB128(const uint8_t *p, unsigned *n = nullptr,
     }
     Byte = *p;
     uint64_t Slice = Byte & 0x7f;
-    if (LLVM_UNLIKELY(Shift >= 63) &&
-        ((Shift == 63 && Slice != 0 && Slice != 0x7f) ||
-         (Shift > 63 && Slice != (Value < 0 ? 0x7f : 0x00)))) {
+    if ((Shift >= 64 && Slice != (Value < 0 ? 0x7f : 0x00)) ||
+        (Shift == 63 && Slice != 0 && Slice != 0x7f)) {
       if (error)
         *error = "sleb128 too big for int64";
       if (n)
@@ -198,26 +195,6 @@ inline int64_t decodeSLEB128(const uint8_t *p, unsigned *n = nullptr,
   if (n)
     *n = (unsigned)(p - orig_p);
   return Value;
-}
-
-inline uint64_t decodeULEB128AndInc(const uint8_t *&p, const uint8_t *end,
-                                    const char **error = nullptr) {
-  unsigned n;
-  auto ret = decodeULEB128(p, &n, end, error);
-  p += n;
-  return ret;
-}
-
-inline int64_t decodeSLEB128AndInc(const uint8_t *&p, const uint8_t *end,
-                                   const char **error = nullptr) {
-  unsigned n;
-  auto ret = decodeSLEB128(p, &n, end, error);
-  p += n;
-  return ret;
-}
-
-inline uint64_t decodeULEB128AndIncUnsafe(const uint8_t *&p) {
-  return decodeULEB128AndInc(p, nullptr);
 }
 
 /// Utility function to get the size of the ULEB128-encoded value.

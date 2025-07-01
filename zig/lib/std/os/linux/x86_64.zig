@@ -1,4 +1,3 @@
-const builtin = @import("builtin");
 const std = @import("../../std.zig");
 const maxInt = std.math.maxInt;
 const linux = std.os.linux;
@@ -101,43 +100,14 @@ pub fn syscall6(
     );
 }
 
-pub fn clone() callconv(.naked) usize {
-    asm volatile (
-        \\      movl $56,%%eax // SYS_clone
-        \\      movq %%rdi,%%r11
-        \\      movq %%rdx,%%rdi
-        \\      movq %%r8,%%rdx
-        \\      movq %%r9,%%r8
-        \\      movq 8(%%rsp),%%r10
-        \\      movq %%r11,%%r9
-        \\      andq $-16,%%rsi
-        \\      subq $8,%%rsi
-        \\      movq %%rcx,(%%rsi)
-        \\      syscall
-        \\      testq %%rax,%%rax
-        \\      jz 1f
-        \\      retq
-        \\
-        \\1:
-    );
-    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\      .cfi_undefined %%rip
-    );
-    asm volatile (
-        \\      xorl %%ebp,%%ebp
-        \\
-        \\      popq %%rdi
-        \\      callq *%%r9
-        \\      movl %%eax,%%edi
-        \\      movl $60,%%eax // SYS_exit
-        \\      syscall
-        \\
-    );
-}
+const CloneFn = *const fn (arg: usize) callconv(.C) u8;
+
+/// This matches the libc clone function.
+pub extern fn clone(func: CloneFn, stack: usize, flags: usize, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
 
 pub const restore = restore_rt;
 
-pub fn restore_rt() callconv(.naked) noreturn {
+pub fn restore_rt() callconv(.Naked) noreturn {
     switch (@import("builtin").zig_backend) {
         .stage2_c => asm volatile (
             \\ movl %[number], %%eax
@@ -225,6 +195,13 @@ pub const REG = struct {
     pub const CR2 = 22;
 };
 
+pub const LOCK = struct {
+    pub const SH = 1;
+    pub const EX = 2;
+    pub const NB = 4;
+    pub const UN = 8;
+};
+
 pub const Flock = extern struct {
     type: i16,
     whence: i16,
@@ -295,13 +272,13 @@ pub const Stat = extern struct {
 };
 
 pub const timeval = extern struct {
-    sec: isize,
-    usec: isize,
+    tv_sec: isize,
+    tv_usec: isize,
 };
 
 pub const timezone = extern struct {
-    minuteswest: i32,
-    dsttime: i32,
+    tz_minuteswest: i32,
+    tz_dsttime: i32,
 };
 
 pub const Elf_Symndx = u32;
@@ -369,28 +346,20 @@ pub const mcontext_t = extern struct {
     reserved1: [8]usize = undefined,
 };
 
-/// ucontext_t is part of the state pushed on the stack by the kernel for
-/// a signal handler.  And also a subset of the state returned from the
-/// makecontext/getcontext/swapcontext POSIX APIs.
-///
-/// Currently this structure matches the glibc/musl layout.  It contains a
-/// 1024-bit signal mask, and `fpregs_mem`.  This structure should be
-/// split into one for the kernel ABI and c.zig should define a glibc/musl
-/// compatible structure.
 pub const ucontext_t = extern struct {
     flags: usize,
     link: ?*ucontext_t,
     stack: stack_t,
     mcontext: mcontext_t,
-    sigmask: [1024 / @bitSizeOf(c_ulong)]c_ulong, // Currently a glibc-compatible (1024-bit) sigmask.
-    fpregs_mem: [64]usize, // Not part of kernel ABI, only part of glibc ucontext_t
+    sigmask: sigset_t,
+    fpregs_mem: [64]usize,
 };
 
 fn gpRegisterOffset(comptime reg_index: comptime_int) usize {
     return @offsetOf(ucontext_t, "mcontext") + @offsetOf(mcontext_t, "gregs") + @sizeOf(usize) * reg_index;
 }
 
-fn getContextInternal() callconv(.naked) usize {
+fn getContextInternal() callconv(.Naked) usize {
     // TODO: Read GS/FS registers?
     asm volatile (
         \\ movq $0, %[flags_offset:c](%%rdi)
@@ -463,7 +432,7 @@ fn getContextInternal() callconv(.naked) usize {
           [stack_offset] "i" (@offsetOf(ucontext_t, "stack")),
           [sigprocmask] "i" (@intFromEnum(linux.SYS.rt_sigprocmask)),
           [sigmask_offset] "i" (@offsetOf(ucontext_t, "sigmask")),
-          [sigset_size] "i" (@sizeOf(sigset_t)),
+          [sigset_size] "i" (linux.NSIG / 8),
         : "cc", "memory", "rax", "rcx", "rdx", "rdi", "rsi", "r8", "r10", "r11"
     );
 }

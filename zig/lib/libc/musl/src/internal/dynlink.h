@@ -73,10 +73,6 @@ struct fdpic_dummy_loadmap {
 #define DL_NOMMU_SUPPORT 0
 #endif
 
-#ifndef TLSDESC_BACKWARDS
-#define TLSDESC_BACKWARDS 0
-#endif
-
 #if !DL_FDPIC
 #define IS_RELATIVE(x,s) ( \
 	(R_TYPE(x) == REL_RELATIVE) || \

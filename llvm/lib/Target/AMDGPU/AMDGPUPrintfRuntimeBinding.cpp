@@ -25,7 +25,6 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/TargetParser/Triple.h"
@@ -34,7 +33,7 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "printfToRuntime"
-enum { DWORD_ALIGN = 4 };
+#define DWORD_ALIGN 4
 
 namespace {
 class AMDGPUPrintfRuntimeBinding final : public ModulePass {
@@ -50,7 +49,7 @@ private:
 
 class AMDGPUPrintfRuntimeBindingImpl {
 public:
-  AMDGPUPrintfRuntimeBindingImpl() = default;
+  AMDGPUPrintfRuntimeBindingImpl() {}
   bool run(Module &M);
 
 private:
@@ -103,7 +102,7 @@ void AMDGPUPrintfRuntimeBindingImpl::getConversionSpecifiers(
     bool ArgDump = false;
     StringRef CurFmt = Fmt.substr(PrevFmtSpecifierIdx,
                                   CurFmtSpecifierIdx - PrevFmtSpecifierIdx);
-    size_t pTag = CurFmt.find_last_of('%');
+    size_t pTag = CurFmt.find_last_of("%");
     if (pTag != StringRef::npos) {
       ArgDump = true;
       while (pTag && CurFmt[--pTag] == '%') {
@@ -277,7 +276,7 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
 
     Type *Tys_alloc[1] = {SizetTy};
     Type *I8Ty = Type::getInt8Ty(Ctx);
-    Type *I8Ptr = PointerType::get(Ctx, 1);
+    Type *I8Ptr = PointerType::get(I8Ty, 1);
     FunctionType *FTy_alloc = FunctionType::get(I8Ptr, Tys_alloc, false);
     FunctionCallee PrintfAllocFn =
         M.getOrInsertFunction(StringRef("__printf_alloc"), FTy_alloc, Attr);
@@ -291,8 +290,8 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
     Value *sumC = ConstantInt::get(SizetTy, Sum, false);
     SmallVector<Value *, 1> alloc_args;
     alloc_args.push_back(sumC);
-    CallInst *pcall = CallInst::Create(PrintfAllocFn, alloc_args,
-                                       "printf_alloc_fn", CI->getIterator());
+    CallInst *pcall =
+        CallInst::Create(PrintfAllocFn, alloc_args, "printf_alloc_fn", CI);
 
     //
     // Insert code to split basicblock with a
@@ -300,7 +299,7 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
     // basicblock splits after buffer overflow check
     //
     ConstantPointerNull *zeroIntPtr =
-        ConstantPointerNull::get(PointerType::get(Ctx, 1));
+        ConstantPointerNull::get(PointerType::get(I8Ty, 1));
     auto *cmp = cast<ICmpInst>(Builder.CreateICmpNE(pcall, zeroIntPtr, ""));
     if (!CI->use_empty()) {
       Value *result =
@@ -310,27 +309,25 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
     SplitBlock(CI->getParent(), cmp);
     Instruction *Brnch =
         SplitBlockAndInsertIfThen(cmp, cmp->getNextNode(), false);
-    BasicBlock::iterator BrnchPoint = Brnch->getIterator();
 
     Builder.SetInsertPoint(Brnch);
 
     // store unique printf id in the buffer
     //
     GetElementPtrInst *BufferIdx = GetElementPtrInst::Create(
-        I8Ty, pcall, ConstantInt::get(Ctx, APInt(32, 0)), "PrintBuffID",
-        BrnchPoint);
+        I8Ty, pcall, ConstantInt::get(Ctx, APInt(32, 0)), "PrintBuffID", Brnch);
 
-    Type *idPointer = PointerType::get(Ctx, AMDGPUAS::GLOBAL_ADDRESS);
+    Type *idPointer = PointerType::get(I32Ty, AMDGPUAS::GLOBAL_ADDRESS);
     Value *id_gep_cast =
-        new BitCastInst(BufferIdx, idPointer, "PrintBuffIdCast", BrnchPoint);
+        new BitCastInst(BufferIdx, idPointer, "PrintBuffIdCast", Brnch);
 
-    new StoreInst(ConstantInt::get(I32Ty, UniqID), id_gep_cast, BrnchPoint);
+    new StoreInst(ConstantInt::get(I32Ty, UniqID), id_gep_cast, Brnch);
 
     // 1st 4 bytes hold the printf_id
     // the following GEP is the buffer pointer
     BufferIdx = GetElementPtrInst::Create(I8Ty, pcall,
                                           ConstantInt::get(Ctx, APInt(32, 4)),
-                                          "PrintBuffGep", BrnchPoint);
+                                          "PrintBuffGep", Brnch);
 
     Type *Int32Ty = Type::getInt32Ty(Ctx);
     for (unsigned ArgCount = 1;
@@ -408,7 +405,7 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
       for (unsigned I = 0, E = WhatToStore.size(); I != E; ++I) {
         Value *TheBtCast = WhatToStore[I];
         unsigned ArgSize = TD->getTypeAllocSize(TheBtCast->getType());
-        StoreInst *StBuff = new StoreInst(TheBtCast, BufferIdx, BrnchPoint);
+        StoreInst *StBuff = new StoreInst(TheBtCast, BufferIdx, Brnch);
         LLVM_DEBUG(dbgs() << "inserting store to printf buffer:\n"
                           << *StBuff << '\n');
         (void)StBuff;
@@ -416,7 +413,7 @@ bool AMDGPUPrintfRuntimeBindingImpl::lowerPrintfForGpu(Module &M) {
           break;
         BufferIdx = GetElementPtrInst::Create(
             I8Ty, BufferIdx, {ConstantInt::get(I32Ty, ArgSize)},
-            "PrintBuffNextPtr", BrnchPoint);
+            "PrintBuffNextPtr", Brnch);
         LLVM_DEBUG(dbgs() << "inserting gep to the printf buffer:\n"
                           << *BufferIdx << '\n');
       }
@@ -436,14 +433,13 @@ bool AMDGPUPrintfRuntimeBindingImpl::run(Module &M) {
   if (TT.getArch() == Triple::r600)
     return false;
 
-  auto *PrintfFunction = M.getFunction("printf");
-  if (!PrintfFunction || !PrintfFunction->isDeclaration() ||
-      M.getModuleFlag("openmp"))
+  auto PrintfFunction = M.getFunction("printf");
+  if (!PrintfFunction || !PrintfFunction->isDeclaration())
     return false;
 
   for (auto &U : PrintfFunction->uses()) {
     if (auto *CI = dyn_cast<CallInst>(U.getUser())) {
-      if (CI->isCallee(&U) && !CI->isNoBuiltin())
+      if (CI->isCallee(&U))
         Printfs.push_back(CI);
     }
   }

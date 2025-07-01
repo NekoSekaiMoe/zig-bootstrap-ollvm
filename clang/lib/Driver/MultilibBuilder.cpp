@@ -8,6 +8,7 @@
 
 #include "clang/Driver/MultilibBuilder.h"
 #include "ToolChains/CommonArgs.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Regex.h"
@@ -73,11 +74,13 @@ bool MultilibBuilder::isValid() const {
   llvm::StringMap<int> FlagSet;
   for (unsigned I = 0, N = Flags.size(); I != N; ++I) {
     StringRef Flag(Flags[I]);
-    auto [SI, Inserted] = FlagSet.try_emplace(Flag.substr(1), I);
+    llvm::StringMap<int>::iterator SI = FlagSet.find(Flag.substr(1));
 
     assert(StringRef(Flag).front() == '-' || StringRef(Flag).front() == '!');
 
-    if (!Inserted && Flags[I] != Flags[SI->getValue()])
+    if (SI == FlagSet.end())
+      FlagSet[Flag.substr(1)] = I;
+    else if (Flags[I] != Flags[SI->getValue()])
       return false;
   }
   return true;

@@ -27,31 +27,16 @@ bool Operator::hasPoisonGeneratingFlags() const {
     auto *OBO = cast<OverflowingBinaryOperator>(this);
     return OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap();
   }
-  case Instruction::Trunc: {
-    if (auto *TI = dyn_cast<TruncInst>(this))
-      return TI->hasNoUnsignedWrap() || TI->hasNoSignedWrap();
-    return false;
-  }
   case Instruction::UDiv:
   case Instruction::SDiv:
   case Instruction::AShr:
   case Instruction::LShr:
     return cast<PossiblyExactOperator>(this)->isExact();
-  case Instruction::Or:
-    return cast<PossiblyDisjointInst>(this)->isDisjoint();
   case Instruction::GetElementPtr: {
     auto *GEP = cast<GEPOperator>(this);
     // Note: inrange exists on constexpr only
-    return GEP->getNoWrapFlags() != GEPNoWrapFlags::none() ||
-           GEP->getInRange() != std::nullopt;
+    return GEP->isInBounds() || GEP->getInRangeIndex() != std::nullopt;
   }
-  case Instruction::UIToFP:
-  case Instruction::ZExt:
-    if (auto *NNI = dyn_cast<PossiblyNonNegInst>(this))
-      return NNI->hasNonNeg();
-    return false;
-  case Instruction::ICmp:
-    return cast<ICmpInst>(this)->hasSameSign();
   default:
     if (const auto *FP = dyn_cast<FPMathOperator>(this))
       return FP->hasNoNaNs() || FP->hasNoInfs();
@@ -59,12 +44,11 @@ bool Operator::hasPoisonGeneratingFlags() const {
   }
 }
 
-bool Operator::hasPoisonGeneratingAnnotations() const {
+bool Operator::hasPoisonGeneratingFlagsOrMetadata() const {
   if (hasPoisonGeneratingFlags())
     return true;
   auto *I = dyn_cast<Instruction>(this);
-  return I && (I->hasPoisonGeneratingReturnAttributes() ||
-               I->hasPoisonGeneratingMetadata());
+  return I && I->hasPoisonGeneratingMetadata();
 }
 
 Type *GEPOperator::getSourceElementType() const {
@@ -77,12 +61,6 @@ Type *GEPOperator::getResultElementType() const {
   if (auto *I = dyn_cast<GetElementPtrInst>(this))
     return I->getResultElementType();
   return cast<GetElementPtrConstantExpr>(this)->getResultElementType();
-}
-
-std::optional<ConstantRange> GEPOperator::getInRange() const {
-  if (auto *CE = dyn_cast<GetElementPtrConstantExpr>(this))
-    return CE->getInRange();
-  return std::nullopt;
 }
 
 Align GEPOperator::getMaxPreservedAlignment(const DataLayout &DL) const {
@@ -103,7 +81,7 @@ Align GEPOperator::getMaxPreservedAlignment(const DataLayout &DL) const {
       /// If the index isn't known, we take 1 because it is the index that will
       /// give the worse alignment of the offset.
       const uint64_t ElemCount = OpC ? OpC->getZExtValue() : 1;
-      Offset = GTI.getSequentialElementStride(DL) * ElemCount;
+      Offset = DL.getTypeAllocSize(GTI.getIndexedType()) * ElemCount;
     }
     Result = Align(MinAlign(Offset, Result.value()));
   }
@@ -124,22 +102,10 @@ bool GEPOperator::accumulateConstantOffset(
 bool GEPOperator::accumulateConstantOffset(
     Type *SourceType, ArrayRef<const Value *> Index, const DataLayout &DL,
     APInt &Offset, function_ref<bool(Value &, APInt &)> ExternalAnalysis) {
-  // Fast path for canonical getelementptr i8 form.
-  if (SourceType->isIntegerTy(8) && !Index.empty() && !ExternalAnalysis) {
-    auto *CI = dyn_cast<ConstantInt>(Index.front());
-    if (CI && CI->getType()->isIntegerTy()) {
-      Offset += CI->getValue().sextOrTrunc(Offset.getBitWidth());
-      return true;
-    }
-    return false;
-  }
-
   bool UsedExternalAnalysis = false;
   auto AccumulateOffset = [&](APInt Index, uint64_t Size) -> bool {
     Index = Index.sextOrTrunc(Offset.getBitWidth());
-    // Truncate if type size exceeds index space.
-    APInt IndexedSize(Offset.getBitWidth(), Size, /*isSigned=*/false,
-                      /*implcitTrunc=*/true);
+    APInt IndexedSize = APInt(Offset.getBitWidth(), Size);
     // For array or vector indices, scale the index by the size of the type.
     if (!UsedExternalAnalysis) {
       Offset += Index * IndexedSize;
@@ -161,13 +127,14 @@ bool GEPOperator::accumulateConstantOffset(
   auto end = generic_gep_type_iterator<decltype(Index.end())>::end(Index.end());
   for (auto GTI = begin, GTE = end; GTI != GTE; ++GTI) {
     // Scalable vectors are multiplied by a runtime constant.
-    bool ScalableType = GTI.getIndexedType()->isScalableTy();
+    bool ScalableType = false;
+    if (isa<ScalableVectorType>(GTI.getIndexedType()))
+      ScalableType = true;
 
     Value *V = GTI.getOperand();
     StructType *STy = GTI.getStructTypeOrNull();
     // Handle ConstantInt if possible.
-    auto *ConstOffset = dyn_cast<ConstantInt>(V);
-    if (ConstOffset && ConstOffset->getType()->isIntegerTy()) {
+    if (auto ConstOffset = dyn_cast<ConstantInt>(V)) {
       if (ConstOffset->isZero())
         continue;
       // if the type is scalable and the constant is not zero (vscale * n * 0 =
@@ -186,7 +153,7 @@ bool GEPOperator::accumulateConstantOffset(
         continue;
       }
       if (!AccumulateOffset(ConstOffset->getValue(),
-                            GTI.getSequentialElementStride(DL)))
+                            DL.getTypeAllocSize(GTI.getIndexedType())))
         return false;
       continue;
     }
@@ -199,7 +166,8 @@ bool GEPOperator::accumulateConstantOffset(
     if (!ExternalAnalysis(*V, AnalysisIndex))
       return false;
     UsedExternalAnalysis = true;
-    if (!AccumulateOffset(AnalysisIndex, GTI.getSequentialElementStride(DL)))
+    if (!AccumulateOffset(AnalysisIndex,
+                          DL.getTypeAllocSize(GTI.getIndexedType())))
       return false;
   }
   return true;
@@ -207,29 +175,26 @@ bool GEPOperator::accumulateConstantOffset(
 
 bool GEPOperator::collectOffset(
     const DataLayout &DL, unsigned BitWidth,
-    SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+    MapVector<Value *, APInt> &VariableOffsets,
     APInt &ConstantOffset) const {
   assert(BitWidth == DL.getIndexSizeInBits(getPointerAddressSpace()) &&
          "The offset bit width does not match DL specification.");
 
   auto CollectConstantOffset = [&](APInt Index, uint64_t Size) {
     Index = Index.sextOrTrunc(BitWidth);
-    // Truncate if type size exceeds index space.
-    APInt IndexedSize(BitWidth, Size, /*isSigned=*/false,
-                      /*implcitTrunc=*/true);
+    APInt IndexedSize = APInt(BitWidth, Size);
     ConstantOffset += Index * IndexedSize;
   };
 
   for (gep_type_iterator GTI = gep_type_begin(this), GTE = gep_type_end(this);
        GTI != GTE; ++GTI) {
     // Scalable vectors are multiplied by a runtime constant.
-    bool ScalableType = GTI.getIndexedType()->isScalableTy();
+    bool ScalableType = isa<ScalableVectorType>(GTI.getIndexedType());
 
     Value *V = GTI.getOperand();
     StructType *STy = GTI.getStructTypeOrNull();
     // Handle ConstantInt if possible.
-    auto *ConstOffset = dyn_cast<ConstantInt>(V);
-    if (ConstOffset && ConstOffset->getType()->isIntegerTy()) {
+    if (auto ConstOffset = dyn_cast<ConstantInt>(V)) {
       if (ConstOffset->isZero())
         continue;
       // If the type is scalable and the constant is not zero (vscale * n * 0 =
@@ -249,20 +214,19 @@ bool GEPOperator::collectOffset(
         continue;
       }
       CollectConstantOffset(ConstOffset->getValue(),
-                            GTI.getSequentialElementStride(DL));
+                            DL.getTypeAllocSize(GTI.getIndexedType()));
       continue;
     }
 
     if (STy || ScalableType)
       return false;
-    // Truncate if type size exceeds index space.
-    APInt IndexedSize(BitWidth, GTI.getSequentialElementStride(DL),
-                      /*isSigned=*/false, /*implicitTrunc=*/true);
+    APInt IndexedSize =
+        APInt(BitWidth, DL.getTypeAllocSize(GTI.getIndexedType()));
     // Insert an initial offset of 0 for V iff none exists already, then
     // increment the offset by IndexedSize.
     if (!IndexedSize.isZero()) {
-      auto *It = VariableOffsets.insert({V, APInt(BitWidth, 0)}).first;
-      It->second += IndexedSize;
+      VariableOffsets.insert({V, APInt(BitWidth, 0)});
+      VariableOffsets[V] += IndexedSize;
     }
   }
   return true;

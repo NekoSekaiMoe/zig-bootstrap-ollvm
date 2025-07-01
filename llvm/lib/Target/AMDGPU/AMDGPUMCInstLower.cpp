@@ -16,6 +16,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUAsmPrinter.h"
 #include "AMDGPUMachineFunction.h"
+#include "AMDGPUTargetMachine.h"
 #include "MCTargetDesc/AMDGPUInstPrinter.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -95,6 +96,7 @@ bool AMDGPUMCInstLower::lowerOperand(const MachineOperand &MO,
   }
   case MachineOperand::MO_ExternalSymbol: {
     MCSymbol *Sym = Ctx.getOrCreateSymbol(StringRef(MO.getSymbolName()));
+    Sym->setExternal(true);
     const MCSymbolRefExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);
     MCOp = MCOperand::createExpr(Expr);
     return true;
@@ -117,7 +119,7 @@ void AMDGPUMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
   unsigned Opcode = MI->getOpcode();
   const auto *TII = static_cast<const SIInstrInfo*>(ST.getInstrInfo());
 
-  // FIXME: Should be able to handle this with lowerPseudoInstExpansion. We
+  // FIXME: Should be able to handle this with emitPseudoExpansionLowering. We
   // need to select it to the subtarget specific version, and there's no way to
   // do that with a single pseudo source operation.
   if (Opcode == AMDGPU::S_SETPC_B64_return)
@@ -186,10 +188,8 @@ void AMDGPUAsmPrinter::emitInstruction(const MachineInstr *MI) {
   // AMDGPU_MC::verifyInstructionPredicates(MI->getOpcode(),
   //                                        getSubtargetInfo().getFeatureBits());
 
-  if (MCInst OutInst; lowerPseudoInstExpansion(MI, OutInst)) {
-    EmitToStreamer(*OutStreamer, OutInst);
+  if (emitPseudoExpansionLowering(*OutStreamer, MI))
     return;
-  }
 
   const GCNSubtarget &STI = MF->getSubtarget<GCNSubtarget>();
   AMDGPUMCInstLower MCInstLowering(OutContext, STI, *this);
@@ -320,6 +320,7 @@ void AMDGPUAsmPrinter::emitInstruction(const MachineInstr *MI) {
         HexStream << format("%s%08X", (i > 0 ? " " : ""), CodeDWord);
       }
 
+      DisasmStream.flush();
       DisasmLineMaxLen = std::max(DisasmLineMaxLen, DisasmLine.size());
     }
   }

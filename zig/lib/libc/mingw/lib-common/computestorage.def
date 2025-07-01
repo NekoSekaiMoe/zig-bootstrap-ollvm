@@ -6,10 +6,8 @@
 LIBRARY "computestorage.dll"
 EXPORTS
 HcsAttachLayerStorageFilter
-HcsAttachOverlayFilter
 HcsDestroyLayer
 HcsDetachLayerStorageFilter
-HcsDetachOverlayFilter
 HcsExportLayer
 HcsExportLegacyWritableLayer
 HcsFormatWritableLayerVhd

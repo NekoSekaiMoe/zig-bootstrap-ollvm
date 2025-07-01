@@ -95,13 +95,14 @@ void MipsCCState::PreAnalyzeCallResultForF128(
 
 /// Identify lowered values that originated from f128 or float arguments and
 /// record this for use by RetCC_MipsN.
-void MipsCCState::PreAnalyzeCallReturnForF128(
-    const SmallVectorImpl<ISD::OutputArg> &Outs, const Type *RetTy) {
+void MipsCCState::PreAnalyzeReturnForF128(
+    const SmallVectorImpl<ISD::OutputArg> &Outs) {
+  const MachineFunction &MF = getMachineFunction();
   for (unsigned i = 0; i < Outs.size(); ++i) {
     OriginalArgWasF128.push_back(
-        originalTypeIsF128(RetTy, nullptr));
+        originalTypeIsF128(MF.getFunction().getReturnType(), nullptr));
     OriginalArgWasFloat.push_back(
-        RetTy->isFloatingPointTy());
+        MF.getFunction().getReturnType()->isFloatingPointTy());
   }
 }
 

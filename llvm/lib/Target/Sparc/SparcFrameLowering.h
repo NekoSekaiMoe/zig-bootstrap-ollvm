@@ -35,6 +35,7 @@ public:
                                 MachineBasicBlock::iterator I) const override;
 
   bool hasReservedCallFrame(const MachineFunction &MF) const override;
+  bool hasFP(const MachineFunction &MF) const override;
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
                             RegScavenger *RS = nullptr) const override;
 
@@ -45,9 +46,6 @@ public:
   /// responsible for rounding up the stack frame (probably at emitPrologue
   /// time).
   bool targetHandlesStackFrameRounding() const override { return true; }
-
-protected:
-  bool hasFPImpl(const MachineFunction &MF) const override;
 
 private:
   // Remap input registers to output registers for leaf procedure.

@@ -1,12 +1,12 @@
 const std = @import("std");
 
-pub const std_options: std.Options = .{
+pub const std_options = .{
     .logFn = log,
 };
 
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @Type(.EnumLiteral),
     comptime format: []const u8,
     args: anytype,
 ) void {

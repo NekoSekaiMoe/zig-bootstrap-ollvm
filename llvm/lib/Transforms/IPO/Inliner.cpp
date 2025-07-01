@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/IPO/Inliner.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PriorityWorklist.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -32,6 +33,7 @@
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ReplayInlineAdvisor.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/Utils/ImportedFunctionsInliningStatistics.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -46,6 +48,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
@@ -58,7 +61,9 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <algorithm>
 #include <cassert>
+#include <functional>
 #include <utility>
+#include <vector>
 
 using namespace llvm;
 
@@ -194,14 +199,6 @@ InlinerPass::getAdvisor(const ModuleAnalysisManagerCGSCCProxy::Result &MAM,
   return *IAA->getAdvisor();
 }
 
-void makeFunctionBodyUnreachable(Function &F) {
-  F.dropAllReferences();
-  for (BasicBlock &BB : make_early_inc_range(F))
-    BB.eraseFromParent();
-  BasicBlock *BB = BasicBlock::Create(F.getContext(), "", &F);
-  new UnreachableInst(F.getContext(), BB);
-}
-
 PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
                                    CGSCCAnalysisManager &AM, LazyCallGraph &CG,
                                    CGSCCUpdateResult &UR) {
@@ -219,6 +216,8 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
 
   InlineAdvisor &Advisor = getAdvisor(MAMProxy, FAM, M);
   Advisor.onPassEntry(&InitialC);
+
+  auto AdvisorOnExit = make_scope_exit([&] { Advisor.onPassExit(&InitialC); });
 
   // We use a single common worklist for calls across the entire SCC. We
   // process these in-order and append new calls introduced during inlining to
@@ -274,14 +273,11 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
           }
         }
   }
+  if (Calls.empty())
+    return PreservedAnalyses::all();
 
   // Capture updatable variable for the current SCC.
   auto *C = &InitialC;
-
-  auto AdvisorOnExit = make_scope_exit([&] { Advisor.onPassExit(C); });
-
-  if (Calls.empty())
-    return PreservedAnalyses::all();
 
   // When inlining a callee produces new call sites, we want to keep track of
   // the fact that they were inlined from the callee.  This allows us to avoid
@@ -454,9 +450,11 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
                              }),
               Calls.end());
 
-          // Clear the body and queue the function itself for call graph
-          // updating when we finish inlining.
-          makeFunctionBodyUnreachable(Callee);
+          // Clear the body and queue the function itself for deletion when we
+          // finish inlining and call graph updates.
+          // Note that after this point, it is an error to do anything other
+          // than use the callee's address or delete it.
+          Callee.dropAllReferences();
           assert(!is_contained(DeadFunctions, &Callee) &&
                  "Cannot put cause a function to become dead twice!");
           DeadFunctions.push_back(&Callee);
@@ -534,7 +532,7 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
   if (!DeadFunctionsInComdats.empty()) {
     filterDeadComdatFunctions(DeadFunctionsInComdats);
     for (auto *Callee : DeadFunctionsInComdats)
-      makeFunctionBodyUnreachable(*Callee);
+      Callee->dropAllReferences();
     DeadFunctions.append(DeadFunctionsInComdats);
   }
 
@@ -546,18 +544,25 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
   // that is OK as all we do is delete things and add pointers to unordered
   // sets.
   for (Function *DeadF : DeadFunctions) {
-    CG.markDeadFunction(*DeadF);
     // Get the necessary information out of the call graph and nuke the
     // function there. Also, clear out any cached analyses.
     auto &DeadC = *CG.lookupSCC(*CG.lookup(*DeadF));
     FAM.clear(*DeadF, DeadF->getName());
     AM.clear(DeadC, DeadC.getName());
+    auto &DeadRC = DeadC.getOuterRefSCC();
+    CG.removeDeadFunction(*DeadF);
 
     // Mark the relevant parts of the call graph as invalid so we don't visit
     // them.
     UR.InvalidatedSCCs.insert(&DeadC);
+    UR.InvalidatedRefSCCs.insert(&DeadRC);
 
-    UR.DeadFunctions.push_back(DeadF);
+    // If the updated SCC was the one containing the deleted function, clear it.
+    if (&DeadC == UR.UpdatedC)
+      UR.UpdatedC = nullptr;
+
+    // And delete the actual function from the module.
+    M.getFunctionList().erase(DeadF);
 
     ++NumDeleted;
   }

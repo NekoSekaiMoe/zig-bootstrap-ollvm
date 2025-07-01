@@ -11,7 +11,6 @@ add_llvm_component_library(LLVMTableGen
   TableGenBackendSkeleton.cpp
   TGLexer.cpp
   TGParser.cpp
-  TGTimer.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/TableGen

@@ -10,8 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ARMTargetMachine.h"
 #include "ARMTargetTransformInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/CommandLine.h"
 using namespace llvm;
 
@@ -29,11 +31,6 @@ cl::opt<TPLoop::MemTransfer> EnableMemtransferTPLoop(
                clEnumValN(TPLoop::Allow, "allow",
                           "Allow (may be subject to certain conditions) "
                           "conversion of memcpy to TP loop.")));
-
-bool ARMSelectionDAGInfo::isTargetMemoryOpcode(unsigned Opcode) const {
-  return Opcode >= ARMISD::FIRST_MEMORY_OPCODE &&
-         Opcode <= ARMISD::LAST_MEMORY_OPCODE;
-}
 
 // Emit, if possible, a specialized version of the given Libcall. Typically this
 // means selecting the appropriately aligned version, but we also convert memset

@@ -102,16 +102,21 @@ void DwarfFile::emitStrings(MCSection *StrSection, MCSection *OffsetSection,
   StrPool.emit(*Asm, StrSection, OffsetSection, UseRelativeOffsets);
 }
 
-void DwarfFile::addScopeVariable(LexicalScope *LS, DbgVariable *Var) {
+bool DwarfFile::addScopeVariable(LexicalScope *LS, DbgVariable *Var) {
   auto &ScopeVars = ScopeVariables[LS];
   const DILocalVariable *DV = Var->getVariable();
   if (unsigned ArgNum = DV->getArg()) {
-    auto Ret = ScopeVars.Args.insert({ArgNum, Var});
-    assert(Ret.second);
-    (void)Ret;
+    auto Cached = ScopeVars.Args.find(ArgNum);
+    if (Cached == ScopeVars.Args.end())
+      ScopeVars.Args[ArgNum] = Var;
+    else {
+      Cached->second->addMMIEntry(*Var);
+      return false;
+    }
   } else {
     ScopeVars.Locals.push_back(Var);
   }
+  return true;
 }
 
 void DwarfFile::addScopeLabel(LexicalScope *LS, DbgLabel *Label) {
@@ -121,19 +126,7 @@ void DwarfFile::addScopeLabel(LexicalScope *LS, DbgLabel *Label) {
 
 std::pair<uint32_t, RangeSpanList *>
 DwarfFile::addRange(const DwarfCompileUnit &CU, SmallVector<RangeSpan, 2> R) {
-  bool CanReuseLastRange = false;
-
-  if (!CURangeLists.empty()) {
-    auto Last = CURangeLists.back();
-    if (Last.CU == &CU && Last.Ranges == R) {
-      CanReuseLastRange = true;
-    }
-  }
-
-  if (!CanReuseLastRange) {
-    CURangeLists.push_back(RangeSpanList{Asm->createTempSymbol("debug_ranges"),
-                                         &CU, std::move(R)});
-  }
-
+  CURangeLists.push_back(
+      RangeSpanList{Asm->createTempSymbol("debug_ranges"), &CU, std::move(R)});
   return std::make_pair(CURangeLists.size() - 1, &CURangeLists.back());
 }

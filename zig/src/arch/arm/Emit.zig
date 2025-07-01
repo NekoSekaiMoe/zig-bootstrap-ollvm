@@ -8,23 +8,24 @@ const math = std.math;
 const Mir = @import("Mir.zig");
 const bits = @import("bits.zig");
 const link = @import("../../link.zig");
-const Zcu = @import("../../Zcu.zig");
-const Type = @import("../../Type.zig");
-const ErrorMsg = Zcu.ErrorMsg;
+const Module = @import("../../Module.zig");
+const Type = @import("../../type.zig").Type;
+const ErrorMsg = Module.ErrorMsg;
 const Target = std.Target;
 const assert = std.debug.assert;
 const Instruction = bits.Instruction;
 const Register = bits.Register;
 const log = std.log.scoped(.aarch32_emit);
+const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
 const CodeGen = @import("CodeGen.zig");
 
 mir: Mir,
 bin_file: *link.File,
-debug_output: link.File.DebugInfoOutput,
+debug_output: DebugInfoOutput,
 target: *const std.Target,
 err_msg: ?*ErrorMsg = null,
-src_loc: Zcu.LazySrcLoc,
-code: *std.ArrayListUnmanaged(u8),
+src_loc: Module.SrcLoc,
+code: *std.ArrayList(u8),
 
 prev_di_line: u32,
 prev_di_column: u32,
@@ -40,16 +41,16 @@ saved_regs_stack_space: u32,
 stack_size: u32,
 
 /// The branch type of every branch
-branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .empty,
+branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .{},
 /// For every forward branch, maps the target instruction to a list of
 /// branches which branch to this target instruction
-branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .empty,
+branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .{},
 /// For backward branches: stores the code offset of the target
 /// instruction
 ///
 /// For forward branches: stores the code offset of the branch
 /// instruction
-code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .empty,
+code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .{},
 
 const InnerError = error{
     OutOfMemory,
@@ -203,7 +204,7 @@ fn instructionSize(emit: *Emit, inst: Mir.Inst.Index) usize {
             } else if (Instruction.Operand.fromU32(imm32) != null) {
                 // sub
                 return 1 * 4;
-            } else if (emit.target.cpu.has(.arm, .has_v7)) {
+            } else if (Target.arm.featureSetHas(emit.target.cpu.features, .has_v7)) {
                 // movw; movt; sub
                 return 3 * 4;
             } else {
@@ -264,7 +265,7 @@ fn lowerBranches(emit: *Emit) !void {
                 if (emit.branch_forward_origins.getPtr(target_inst)) |origin_list| {
                     try origin_list.append(gpa, inst);
                 } else {
-                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .empty;
+                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .{};
                     try origin_list.append(gpa, inst);
                     try emit.branch_forward_origins.put(gpa, target_inst, origin_list);
                 }
@@ -342,14 +343,12 @@ fn lowerBranches(emit: *Emit) !void {
 }
 
 fn writeInstruction(emit: *Emit, instruction: Instruction) !void {
-    const comp = emit.bin_file.comp;
-    const gpa = comp.gpa;
     const endian = emit.target.cpu.arch.endian();
-    std.mem.writeInt(u32, try emit.code.addManyAsArray(gpa, 4), instruction.toU32(), endian);
+    std.mem.writeInt(u32, try emit.code.addManyAsArray(4), instruction.toU32(), endian);
 }
 
 fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
-    @branchHint(.cold);
+    @setCold(true);
     assert(emit.err_msg == null);
     const comp = emit.bin_file.comp;
     const gpa = comp.gpa;
@@ -452,7 +451,7 @@ fn mirSubStackPointer(emit: *Emit, inst: Mir.Inst.Index) !void {
             const operand = Instruction.Operand.fromU32(imm32) orelse blk: {
                 const scratch: Register = .r4;
 
-                if (emit.target.cpu.has(.arm, .has_v7)) {
+                if (Target.arm.featureSetHas(emit.target.cpu.features, .has_v7)) {
                     try emit.writeInstruction(Instruction.movw(cond, scratch, @as(u16, @truncate(imm32))));
                     try emit.writeInstruction(Instruction.movt(cond, scratch, @as(u16, @truncate(imm32 >> 16))));
                 } else {

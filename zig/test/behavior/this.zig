@@ -1,5 +1,4 @@
-const std = @import("std");
-const expect = std.testing.expect;
+const expect = @import("std").testing.expect;
 const builtin = @import("builtin");
 
 const module = @This();
@@ -55,11 +54,4 @@ test "this used as optional function parameter" {
     var global: State = undefined;
     global.enter = prev;
     global.enter(null);
-}
-
-test "@This() in opaque" {
-    const T = opaque {
-        const Self = @This();
-    };
-    comptime std.debug.assert(T.Self == T);
 }

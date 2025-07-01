@@ -276,7 +276,8 @@ protected:
 
 //===----------------------------------------------------------------------===//
 /// ImmutablePass class - This class is used to provide information that does
-/// not need to be run.  This is useful for things like target information.
+/// not need to be run.  This is useful for things like target information and
+/// "basic" versions of AnalysisGroups.
 ///
 class ImmutablePass : public ModulePass {
 public:

@@ -6,11 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <mutex>
-#include <shared_mutex>
-#if defined(__ELF__) && defined(_LIBCPP_LINK_PTHREAD_LIB)
-#  pragma comment(lib, "pthread")
-#endif
+#include <__config>
+
+#ifndef _LIBCPP_HAS_NO_THREADS
+
+#  include <mutex>
+#  include <shared_mutex>
+#  if defined(__ELF__) && defined(_LIBCPP_LINK_PTHREAD_LIB)
+#    pragma comment(lib, "pthread")
+#  endif
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
@@ -38,10 +42,8 @@ bool __shared_mutex_base::try_lock() {
 }
 
 void __shared_mutex_base::unlock() {
-  {
-    lock_guard<mutex> _(__mut_);
-    __state_ = 0;
-  }
+  lock_guard<mutex> _(__mut_);
+  __state_ = 0;
   __gate1_.notify_all();
 }
 
@@ -69,20 +71,16 @@ bool __shared_mutex_base::try_lock_shared() {
 }
 
 void __shared_mutex_base::unlock_shared() {
-  unique_lock<mutex> lk(__mut_);
+  lock_guard<mutex> _(__mut_);
   unsigned num_readers = (__state_ & __n_readers_) - 1;
   __state_ &= ~__n_readers_;
   __state_ |= num_readers;
   if (__state_ & __write_entered_) {
-    if (num_readers == 0) {
-      lk.unlock();
+    if (num_readers == 0)
       __gate2_.notify_one();
-    }
   } else {
-    if (num_readers == __n_readers_ - 1) {
-      lk.unlock();
+    if (num_readers == __n_readers_ - 1)
       __gate1_.notify_one();
-    }
   }
 }
 
@@ -97,3 +95,5 @@ bool shared_timed_mutex::try_lock_shared() { return __base_.try_lock_shared(); }
 void shared_timed_mutex::unlock_shared() { return __base_.unlock_shared(); }
 
 _LIBCPP_END_NAMESPACE_STD
+
+#endif // !_LIBCPP_HAS_NO_THREADS

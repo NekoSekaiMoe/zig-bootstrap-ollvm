@@ -13,7 +13,7 @@ comptime {
 }
 
 // error
-// backend=stage2
+// backend=llvm
 // target=native
 //
-// :11:21: error: 'error.B' not a member of error set 'error{A,C}'
+// :11:21: error: 'error.B' not a member of error set 'error{C,A}'

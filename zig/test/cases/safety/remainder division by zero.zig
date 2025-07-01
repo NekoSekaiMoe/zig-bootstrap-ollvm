@@ -16,5 +16,5 @@ fn rem0(a: i32, b: i32) i32 {
     return @rem(a, b);
 }
 // run
-// backend=stage2,llvm
+// backend=llvm
 // target=native

@@ -25,17 +25,16 @@
 
 namespace llvm {
 
-static constexpr unsigned InstCombineDefaultMaxIterations = 1;
+static constexpr unsigned InstCombineDefaultMaxIterations = 1000;
 
 struct InstCombineOptions {
-  // Verify that a fix point has been reached after MaxIterations.
-  bool VerifyFixpoint = false;
+  bool UseLoopInfo = false;
   unsigned MaxIterations = InstCombineDefaultMaxIterations;
 
   InstCombineOptions() = default;
 
-  InstCombineOptions &setVerifyFixpoint(bool Value) {
-    VerifyFixpoint = Value;
+  InstCombineOptions &setUseLoopInfo(bool Value) {
+    UseLoopInfo = Value;
     return *this;
   }
 
@@ -49,7 +48,6 @@ class InstCombinePass : public PassInfoMixin<InstCombinePass> {
 private:
   InstructionWorklist Worklist;
   InstCombineOptions Options;
-  static char ID;
 
 public:
   explicit InstCombinePass(InstCombineOptions Opts = {});

@@ -97,28 +97,28 @@ def iHasFLOAT7E60 : Predicate<"Subtarget->hasFLOAT7E60()">,
              "Support CSKY float7e60 instructions">;
 
 def FeatureHWDiv : SubtargetFeature<"hwdiv", "HasHardwareDivide", "true",
-                                    "Enable divide instructions">;
+                                    "Enable divide instrutions">;
 def HasHWDiv : Predicate<"Subtarget->hasHardwareDivide()">,
                AssemblerPredicate<(all_of FeatureHWDiv),
-               "Enable divide instructions">;
+               "Enable divide instrutions">;
 
 def FeatureSTM : SubtargetFeature<"multiple_stld", "HasSTM", "true",
-                                  "Enable multiple load/store instructions">;
+                                  "Enable multiple load/store instrutions">;
 def HasSTM : Predicate<"Subtarget->hasSTM()">,
              AssemblerPredicate<(all_of FeatureSTM),
-             "Enable multiple load/store instructions">;
+             "Enable multiple load/store instrutions">;
 
 def FeaturePushPop : SubtargetFeature<"pushpop", "HasPushPop", "true",
-                                      "Enable push/pop instructions">;
+                                      "Enable push/pop instrutions">;
 def HasPushPop : Predicate<"Subtarget->hasPushPop()">,
                  AssemblerPredicate<(all_of FeaturePushPop),
-                 "Enable push/pop instructions">;
+                 "Enable push/pop instrutions">;
 
 def FeatureDSP
-    : SubtargetFeature<"edsp", "HasDSP", "true", "Enable DSP instructions">;
+    : SubtargetFeature<"edsp", "HasDSP", "true", "Enable DSP instrutions">;
 def HasDSP : Predicate<"Subtarget->hasDSP()">,
              AssemblerPredicate<(all_of FeatureDSP),
-             "Enable DSP instructions">;
+             "Enable DSP instrutions">;
 
 def HasDSP1E2
     : SubtargetFeature<"dsp1e2", "HasDSP1E2", "true", "Support CSKY dsp1e2 instructions">;
@@ -133,16 +133,16 @@ def iHasDSPE60 : Predicate<"Subtarget->hasDSPE60()">,
              "Support CSKY dspe60 instructions">;
 
 def FeatureDSPV2 : SubtargetFeature<"dspv2", "HasDSPV2", "true",
-                                    "Enable DSP V2.0 instructions">;
+                                    "Enable DSP V2.0 instrutions">;
 def HasDSPV2 : Predicate<"Subtarget->hasDSPV2()">,
                AssemblerPredicate<(all_of FeatureDSPV2),
-               "Enable DSP V2.0 instructions">;
+               "Enable DSP V2.0 instrutions">;
 
 def FeatureDSP_Silan : SubtargetFeature<"dsp_silan", "HasDSP_Silan", "true",
-                                    "Enable DSP Silan instructions">;
+                                    "Enable DSP Silan instrutions">;
 def HasDSP_Silan : Predicate<"Subtarget->hasDSP_Silan()">,
                AssemblerPredicate<(all_of FeatureDSP_Silan),
-               "Enable DSP Silan instructions">;
+               "Enable DSP Silan instrutions">;
 
 // Atomic Support
 def FeatureBTST16 : SubtargetFeature<"btst16", "HasBTST16", "true",
@@ -232,11 +232,11 @@ def FeatureSoftTP : SubtargetFeature<"soft-tp", "ReadTPHard", "false",
                                      "Disable TLS Pointer register">;
 
 def FeatureIstack : SubtargetFeature<"istack", "EnableInterruptAttribute",
-                                     "true", "Enable interrupt attribute">;
+                                     "true", "Enable interrput attribute">;
 def EnableInterruptAttribute
     : Predicate<"Subtarget->enableInterruptAttribute()">,
       AssemblerPredicate<(all_of FeatureIstack),
-      "Enable interrupt attribute">;
+      "Enable interrput attribute">;
 
 def FeatureConstPool : SubtargetFeature<"constpool", "DumpConstPool", "true",
                                         "Dump the constant pool by compiler">;

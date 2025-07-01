@@ -35,21 +35,6 @@ public:
       : CoveragePrinter(Opts) {}
 };
 
-/// A coverage printer for text output, but generates index files in every
-/// subdirectory to show a hierarchical view. The implementation is similar
-/// to CoveragePrinterHTMLDirectory. So please refer to that for more comments.
-class CoveragePrinterTextDirectory : public CoveragePrinterText {
-public:
-  using CoveragePrinterText::CoveragePrinterText;
-
-  Error createIndexFile(ArrayRef<std::string> SourceFiles,
-                        const CoverageMapping &Coverage,
-                        const CoverageFiltersMatchAll &Filters) override;
-
-private:
-  struct Reporter;
-};
-
 /// A code coverage view which supports text-based rendering.
 class SourceCoverageViewText : public SourceCoverageView {
   void renderViewHeader(raw_ostream &OS) override;
@@ -77,9 +62,6 @@ class SourceCoverageViewText : public SourceCoverageView {
   void renderBranchView(raw_ostream &OS, BranchView &BRV,
                         unsigned ViewDepth) override;
 
-  void renderMCDCView(raw_ostream &OS, MCDCView &BRV,
-                      unsigned ViewDepth) override;
-
   void renderInstantiationView(raw_ostream &OS, InstantiationView &ISV,
                                unsigned ViewDepth) override;
 
@@ -93,7 +75,8 @@ class SourceCoverageViewText : public SourceCoverageView {
 
   void renderTitle(raw_ostream &OS, StringRef Title) override;
 
-  void renderTableHeader(raw_ostream &OS, unsigned IndentLevel) override;
+  void renderTableHeader(raw_ostream &OS, unsigned FirstUncoveredLineNo,
+                         unsigned IndentLevel) override;
 
 public:
   SourceCoverageViewText(StringRef SourceName, const MemoryBuffer &File,

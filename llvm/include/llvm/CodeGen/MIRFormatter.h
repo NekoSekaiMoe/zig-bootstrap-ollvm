@@ -14,7 +14,6 @@
 #define LLVM_CODEGEN_MIRFORMATTER_H
 
 #include "llvm/CodeGen/PseudoSourceValue.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <optional>
@@ -23,10 +22,7 @@ namespace llvm {
 
 class MachineFunction;
 class MachineInstr;
-class ModuleSlotTracker;
 struct PerFunctionMIParsingState;
-class Twine;
-class Value;
 
 /// MIRFormater - Interface to format MIR operand based on target
 class MIRFormatter {
@@ -46,7 +42,7 @@ public:
   }
 
   /// Implement target specific parsing of immediate mnemonics. The mnemonic is
-  /// dot separated strings.
+  /// dot seperated strings.
   virtual bool parseImmMnemonic(const unsigned OpCode, const unsigned OpIdx,
                                 StringRef Src, int64_t &Imm,
                                 ErrorCallbackType ErrorCallback) const {

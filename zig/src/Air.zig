@@ -1,5 +1,4 @@
 //! Analyzed Intermediate Representation.
-//!
 //! This data is produced by Sema and consumed by codegen.
 //! Unlike ZIR where there is one instance for an entire source file, each function
 //! gets its own `Air` instance.
@@ -9,20 +8,15 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 
 const Air = @This();
-const InternPool = @import("InternPool.zig");
-const Type = @import("Type.zig");
 const Value = @import("Value.zig");
-const Zcu = @import("Zcu.zig");
-const print = @import("Air/print.zig");
-const types_resolved = @import("Air/types_resolved.zig");
-
-pub const Legalize = @import("Air/Legalize.zig");
-pub const Liveness = @import("Air/Liveness.zig");
+const Type = @import("type.zig").Type;
+const InternPool = @import("InternPool.zig");
+const Module = @import("Module.zig");
 
 instructions: std.MultiArrayList(Inst).Slice,
 /// The meaning of this data is determined by `Inst.Tag` value.
 /// The first few indexes are reserved. See `ExtraIndex` for the values.
-extra: std.ArrayListUnmanaged(u32),
+extra: []const u32,
 
 pub const ExtraIndex = enum(u32) {
     /// Payload index of the main `Block` in the `extra` array.
@@ -41,7 +35,7 @@ pub const Inst = struct {
         /// liveness analysis without any special handling.
         /// Uses the `arg` field.
         arg,
-        /// Float or integer addition. For integers, wrapping is illegal behavior.
+        /// Float or integer addition. For integers, wrapping is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
@@ -51,6 +45,8 @@ pub const Inst = struct {
         /// is the same as both operands.
         /// The panic handler function must be populated before lowering AIR
         /// that contains this instruction.
+        /// This instruction will only be emitted if the backend has the
+        /// feature `safety_checked_instructions`.
         /// Uses the `bin_op` field.
         add_safe,
         /// Float addition. The instruction is allowed to have equal or more
@@ -68,7 +64,7 @@ pub const Inst = struct {
         /// is the same as both operands.
         /// Uses the `bin_op` field.
         add_sat,
-        /// Float or integer subtraction. For integers, wrapping is illegal behavior.
+        /// Float or integer subtraction. For integers, wrapping is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
@@ -78,6 +74,8 @@ pub const Inst = struct {
         /// is the same as both operands.
         /// The panic handler function must be populated before lowering AIR
         /// that contains this instruction.
+        /// This instruction will only be emitted if the backend has the
+        /// feature `safety_checked_instructions`.
         /// Uses the `bin_op` field.
         sub_safe,
         /// Float subtraction. The instruction is allowed to have equal or more
@@ -95,7 +93,7 @@ pub const Inst = struct {
         /// is the same as both operands.
         /// Uses the `bin_op` field.
         sub_sat,
-        /// Float or integer multiplication. For integers, wrapping is illegal behavior.
+        /// Float or integer multiplication. For integers, wrapping is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
@@ -105,6 +103,8 @@ pub const Inst = struct {
         /// is the same as both operands.
         /// The panic handler function must be populated before lowering AIR
         /// that contains this instruction.
+        /// This instruction will only be emitted if the backend has the
+        /// feature `safety_checked_instructions`.
         /// Uses the `bin_op` field.
         mul_safe,
         /// Float multiplication. The instruction is allowed to have equal or more
@@ -129,14 +129,14 @@ pub const Inst = struct {
         div_float,
         /// Same as `div_float` with optimized float mode.
         div_float_optimized,
-        /// Truncating integer or float division. For integers, wrapping is illegal behavior.
+        /// Truncating integer or float division. For integers, wrapping is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
         div_trunc,
         /// Same as `div_trunc` with optimized float mode.
         div_trunc_optimized,
-        /// Flooring integer or float division. For integers, wrapping is illegal behavior.
+        /// Flooring integer or float division. For integers, wrapping is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
@@ -144,8 +144,8 @@ pub const Inst = struct {
         /// Same as `div_floor` with optimized float mode.
         div_floor_optimized,
         /// Integer or float division.
-        /// If a remainder would be produced, illegal behavior occurs.
-        /// For integers, overflow is illegal behavior.
+        /// If a remainder would be produced, undefined behavior occurs.
+        /// For integers, overflow is undefined behavior.
         /// Both operands are guaranteed to be the same type, and the result type
         /// is the same as both operands.
         /// Uses the `bin_op` field.
@@ -168,14 +168,14 @@ pub const Inst = struct {
         mod_optimized,
         /// Add an offset to a pointer, returning a new pointer.
         /// The offset is in element type units, not bytes.
-        /// Wrapping is illegal behavior.
+        /// Wrapping is undefined behavior.
         /// The lhs is the pointer, rhs is the offset. Result type is the same as lhs.
         /// The pointer may be a slice.
         /// Uses the `ty_pl` field. Payload is `Bin`.
         ptr_add,
         /// Subtract an offset from a pointer, returning a new pointer.
         /// The offset is in element type units, not bytes.
-        /// Wrapping is illegal behavior.
+        /// Wrapping is undefined behavior.
         /// The lhs is the pointer, rhs is the offset. Result type is the same as lhs.
         /// The pointer may be a slice.
         /// Uses the `ty_pl` field. Payload is `Bin`.
@@ -242,27 +242,20 @@ pub const Inst = struct {
         /// Uses the `bin_op` field.
         bit_or,
         /// Shift right. `>>`
-        /// The rhs type may be a scalar version of the lhs type.
         /// Uses the `bin_op` field.
         shr,
         /// Shift right. The shift produces a poison value if it shifts out any non-zero bits.
-        /// The rhs type may be a scalar version of the lhs type.
         /// Uses the `bin_op` field.
         shr_exact,
         /// Shift left. `<<`
-        /// The rhs type may be a scalar version of the lhs type.
         /// Uses the `bin_op` field.
         shl,
         /// Shift left; For unsigned integers, the shift produces a poison value if it shifts
         /// out any non-zero bits. For signed integers, the shift produces a poison value if
         /// it shifts out any bits that disagree with the resultant sign bit.
-        /// The rhs type may be a scalar version of the lhs type.
         /// Uses the `bin_op` field.
         shl_exact,
-        /// Saturating integer shift left. `<<|`. The result is the same type as the `lhs`.
-        /// The `rhs` must have the same vector shape as the `lhs`, but with any unsigned
-        /// integer as the scalar type.
-        /// The rhs type may be a scalar version of the lhs type.
+        /// Saturating integer shift left. `<<|`
         /// Uses the `bin_op` field.
         shl_sat,
         /// Bitwise XOR. `^`
@@ -271,24 +264,21 @@ pub const Inst = struct {
         /// Boolean or binary NOT.
         /// Uses the `ty_op` field.
         not,
-        /// Reinterpret the bits of a value as a different type.  This is like `@bitCast` but
-        /// also supports enums and pointers.
+        /// Reinterpret the memory representation of a value as a different type.
         /// Uses the `ty_op` field.
         bitcast,
         /// Uses the `ty_pl` field with payload `Block`.  A block runs its body which always ends
         /// with a `noreturn` instruction, so the only way to proceed to the code after the `block`
         /// is to encounter a `br` that targets this `block`.  If the `block` type is `noreturn`,
-        /// then there do not exist any `br` instructions targeting this `block`.
+        /// then there do not exist any `br` instructions targetting this `block`.
         block,
-        /// A labeled block of code that loops forever. The body must be `noreturn`: loops
-        /// occur through an explicit `repeat` instruction pointing back to this one.
+        /// A labeled block of code that loops forever. At the end of the body it is implied
+        /// to repeat; no explicit "repeat" instruction terminates loop bodies.
         /// Result type is always `noreturn`; no instructions in a block follow this one.
-        /// There is always at least one `repeat` instruction referencing the loop.
+        /// The body never ends with a `noreturn` instruction, so the "repeat" operation
+        /// is always statically reachable.
         /// Uses the `ty_pl` field. Payload is `Block`.
         loop,
-        /// Sends control flow back to the beginning of a parent `loop` body.
-        /// Uses the `repeat` field.
-        repeat,
         /// Return from a block with a result.
         /// Result type is always noreturn; no instructions in a block follow this one.
         /// Uses the `br` field.
@@ -366,7 +356,7 @@ pub const Inst = struct {
         /// Base 10 logarithm of a floating point number.
         /// Uses the `un_op` field.
         log10,
-        /// Absolute value of an integer, floating point number or vector.
+        /// Aboslute value of an integer, floating point number or vector.
         /// Result type is always unsigned if the operand is an integer.
         /// Uses the `ty_op` field.
         abs,
@@ -435,14 +425,6 @@ pub const Inst = struct {
         /// Result type is always noreturn; no instructions in a block follow this one.
         /// Uses the `pl_op` field. Operand is the condition. Payload is `SwitchBr`.
         switch_br,
-        /// Switch branch which can dispatch back to itself with a different operand.
-        /// Result type is always noreturn; no instructions in a block follow this one.
-        /// Uses the `pl_op` field. Operand is the condition. Payload is `SwitchBr`.
-        loop_switch_br,
-        /// Dispatches back to a branch of a parent `loop_switch_br`.
-        /// Result type is always noreturn; no instructions in a block follow this one.
-        /// Uses the `br` field. `block_inst` is a `loop_switch_br` instruction.
-        switch_dispatch,
         /// Given an operand which is an error union, splits control flow. In
         /// case of error, control flow goes into the block that is part of this
         /// instruction, which is guaranteed to end with a return instruction
@@ -450,24 +432,17 @@ pub const Inst = struct {
         /// In the case of non-error, control flow proceeds to the next instruction
         /// after the `try`, with the result of this instruction being the unwrapped
         /// payload value, as if `unwrap_errunion_payload` was executed on the operand.
-        /// The error branch is considered to have a branch hint of `.unlikely`.
         /// Uses the `pl_op` field. Payload is `Try`.
         @"try",
-        /// Same as `try` except the error branch hint is `.cold`.
-        try_cold,
         /// Same as `try` except the operand is a pointer to an error union, and the
         /// result is a pointer to the payload. Result is as if `unwrap_errunion_payload_ptr`
         /// was executed on the operand.
         /// Uses the `ty_pl` field. Payload is `TryPtr`.
         try_ptr,
-        /// Same as `try_ptr` except the error branch hint is `.cold`.
-        try_ptr_cold,
         /// Notes the beginning of a source code statement and marks the line and column.
         /// Result type is always void.
         /// Uses the `dbg_stmt` field.
         dbg_stmt,
-        /// Marks a statement that can be stepped to but produces no code.
-        dbg_empty_stmt,
         /// A block that represents an inlined function call.
         /// Uses the `ty_pl` field. Payload is `DbgInlineBlock`.
         dbg_inline_block,
@@ -480,8 +455,6 @@ pub const Inst = struct {
         /// Same as `dbg_var_ptr` except the local is a const, not a var, and the
         /// operand is the local's value.
         dbg_var_val,
-        /// Same as `dbg_var_val` except the local is an inline function argument.
-        dbg_arg_inline,
         /// ?T => bool
         /// Result type is always bool.
         /// Uses the `un_op` field.
@@ -523,6 +496,14 @@ pub const Inst = struct {
         /// Read a value from a pointer.
         /// Uses the `ty_op` field.
         load,
+        /// Converts a pointer to its address. Result type is always `usize`.
+        /// Pointer type size may be any, including slice.
+        /// Uses the `un_op` field.
+        int_from_ptr,
+        /// Given a boolean, returns 0 or 1.
+        /// Result type is always `u1`.
+        /// Uses the `un_op` field.
+        int_from_bool,
         /// Return a value from a function.
         /// Result type is always noreturn; no instructions in a block follow this one.
         /// Uses the `un_op` field.
@@ -572,20 +553,14 @@ pub const Inst = struct {
         /// See `trunc` for integer truncation.
         /// Uses the `ty_op` field.
         intcast,
-        /// Like `intcast`, but includes two safety checks:
-        /// * triggers a safety panic if the cast truncates bits
-        /// * triggers a safety panic if the destination type is an exhaustive enum
-        ///   and the operand is not a valid value of this type; i.e. equivalent to
-        ///   a safety check based on `.is_named_enum_value`
-        intcast_safe,
-        /// Truncate higher bits from an integer, resulting in an integer type with the same
+        /// Truncate higher bits from an integer, resulting in an integer with the same
         /// sign but an equal or smaller number of bits.
         /// Uses the `ty_op` field.
         trunc,
-        /// ?T => T. If the value is null, illegal behavior.
+        /// ?T => T. If the value is null, undefined behavior.
         /// Uses the `ty_op` field.
         optional_payload,
-        /// *?T => *T. If the value is null, illegal behavior.
+        /// *?T => *T. If the value is null, undefined behavior.
         /// Uses the `ty_op` field.
         optional_payload_ptr,
         /// *?T => *T. Sets the value to non-null with an undefined payload value.
@@ -594,16 +569,16 @@ pub const Inst = struct {
         /// Given a payload value, wraps it in an optional type.
         /// Uses the `ty_op` field.
         wrap_optional,
-        /// E!T -> T. If the value is an error, illegal behavior.
+        /// E!T -> T. If the value is an error, undefined behavior.
         /// Uses the `ty_op` field.
         unwrap_errunion_payload,
-        /// E!T -> E. If the value is not an error, illegal behavior.
+        /// E!T -> E. If the value is not an error, undefined behavior.
         /// Uses the `ty_op` field.
         unwrap_errunion_err,
-        /// *(E!T) -> *T. If the value is an error, illegal behavior.
+        /// *(E!T) -> *T. If the value is an error, undefined behavior.
         /// Uses the `ty_op` field.
         unwrap_errunion_payload_ptr,
-        /// *(E!T) -> E. If the value is not an error, illegal behavior.
+        /// *(E!T) -> E. If the value is not an error, undefined behavior.
         /// Uses the `ty_op` field.
         unwrap_errunion_err_ptr,
         /// *(E!T) => *T. Sets the value to non-error with an undefined payload value.
@@ -700,21 +675,9 @@ pub const Inst = struct {
         /// equal to the scalar value.
         /// Uses the `ty_op` field.
         splat,
-        /// Constructs a vector by selecting elements from a single vector based on a mask. Each
-        /// mask element is either an index into the vector, or a comptime-known value, or "undef".
-        /// Uses the `ty_pl` field, where the payload index points to:
-        /// 1. mask_elem: ShuffleOneMask  // for each `mask_len`, which comes from `ty_pl.ty`
-        /// 2. operand: Ref               // guaranteed not to be an interned value
-        /// See `unwrapShuffleOne`.
-        shuffle_one,
-        /// Constructs a vector by selecting elements from two vectors based on a mask. Each mask
-        /// element is either an index into one of the vectors, or "undef".
-        /// Uses the `ty_pl` field, where the payload index points to:
-        /// 1. mask_elem: ShuffleOneMask  // for each `mask_len`, which comes from `ty_pl.ty`
-        /// 2. operand_a: Ref             // guaranteed not to be an interned value
-        /// 3. operand_b: Ref             // guaranteed not to be an interned value
-        /// See `unwrapShuffleTwo`.
-        shuffle_two,
+        /// Constructs a vector by selecting elements from `a` and `b` based on `mask`.
+        /// Uses the `ty_pl` field with payload `Shuffle`.
+        shuffle,
         /// Constructs a vector element-wise from `a` or `b` based on `pred`.
         /// Uses the `pl_op` field with `pred` as operand, and payload `Bin`.
         select,
@@ -747,23 +710,15 @@ pub const Inst = struct {
         /// source being a pointer-to-array), then it is guaranteed to be
         /// greater than zero.
         memcpy,
-        /// Given dest pointer and source pointer, copy elements from source to dest.
-        /// Dest pointer is either a slice or a pointer to array.
-        /// The dest element type may be any type.
-        /// Source pointer must have same element type as dest element type.
-        /// Dest slice may have any alignment; source pointer may have any alignment.
-        /// The two memory regions may overlap.
-        /// Result type is always void.
-        /// Uses the `bin_op` field. LHS is the dest slice. RHS is the source pointer.
-        /// If the length is compile-time known (due to the destination or
-        /// source being a pointer-to-array), then it is guaranteed to be
-        /// greater than zero.
-        memmove,
 
         /// Uses the `ty_pl` field with payload `Cmpxchg`.
         cmpxchg_weak,
         /// Uses the `ty_pl` field with payload `Cmpxchg`.
         cmpxchg_strong,
+        /// Lowers to a memory fence instruction.
+        /// Result type is always void.
+        /// Uses the `fence` field.
+        fence,
         /// Atomically load from a pointer.
         /// Result type is the element type of the pointer.
         /// Uses the `atomic_load` field.
@@ -827,13 +782,13 @@ pub const Inst = struct {
         field_parent_ptr,
 
         /// Implements @wasmMemorySize builtin.
-        /// Result type is always `usize`,
+        /// Result type is always `u32`,
         /// Uses the `pl_op` field, payload represents the index of the target memory.
         /// The operand is unused and always set to `Ref.none`.
         wasm_memory_size,
 
         /// Implements @wasmMemoryGrow builtin.
-        /// Result type is always `isize`,
+        /// Result type is always `i32`,
         /// Uses the `pl_op` field, payload represents the index of the target memory.
         wasm_memory_grow,
 
@@ -863,18 +818,6 @@ pub const Inst = struct {
         /// Store an element to a vector pointer at an index.
         /// Uses the `vector_store_elem` field.
         vector_store_elem,
-
-        /// Compute a pointer to a `Nav` at runtime, always one of:
-        ///
-        /// * `threadlocal var`
-        /// * `extern threadlocal var` (or corresponding `@extern`)
-        /// * `@extern` with `.is_dll_import = true`
-        /// * `@extern` with `.relocation = .pcrel`
-        ///
-        /// Such pointers are runtime values, so cannot be represented with an InternPool index.
-        ///
-        /// Uses the `ty_nav` field.
-        runtime_nav_ptr,
 
         /// Implements @cVaArg builtin.
         /// Uses the `ty_op` field.
@@ -933,38 +876,14 @@ pub const Inst = struct {
     pub const Index = enum(u32) {
         _,
 
-        pub fn unwrap(index: Index) union(enum) { ref: Inst.Ref, target: u31 } {
-            const low_index: u31 = @truncate(@intFromEnum(index));
-            return switch (@as(u1, @intCast(@intFromEnum(index) >> 31))) {
-                0 => .{ .ref = @enumFromInt(@as(u32, 1 << 31) | low_index) },
-                1 => .{ .target = low_index },
-            };
+        pub fn toRef(i: Index) Inst.Ref {
+            assert(@intFromEnum(i) >> 31 == 0);
+            return @enumFromInt((1 << 31) | @intFromEnum(i));
         }
 
-        pub fn toRef(index: Index) Inst.Ref {
-            return index.unwrap().ref;
-        }
-
-        pub fn fromTargetIndex(index: u31) Index {
-            return @enumFromInt((1 << 31) | @as(u32, index));
-        }
-
-        pub fn toTargetIndex(index: Index) u31 {
-            return index.unwrap().target;
-        }
-
-        pub fn format(
-            index: Index,
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
-        ) @TypeOf(writer).Error!void {
-            try writer.writeByte('%');
-            switch (index.unwrap()) {
-                .ref => {},
-                .target => try writer.writeByte('t'),
-            }
-            try writer.print("{d}", .{@as(u31, @truncate(@intFromEnum(index)))});
+        pub fn toTargetIndex(i: Index) u31 {
+            assert(@intFromEnum(i) >> 31 == 1);
+            return @truncate(@intFromEnum(i));
         }
     };
 
@@ -989,7 +908,6 @@ pub const Inst = struct {
         u80_type = @intFromEnum(InternPool.Index.u80_type),
         u128_type = @intFromEnum(InternPool.Index.u128_type),
         i128_type = @intFromEnum(InternPool.Index.i128_type),
-        u256_type = @intFromEnum(InternPool.Index.u256_type),
         usize_type = @intFromEnum(InternPool.Index.usize_type),
         isize_type = @intFromEnum(InternPool.Index.isize_type),
         c_char_type = @intFromEnum(InternPool.Index.c_char_type),
@@ -1019,85 +937,46 @@ pub const Inst = struct {
         null_type = @intFromEnum(InternPool.Index.null_type),
         undefined_type = @intFromEnum(InternPool.Index.undefined_type),
         enum_literal_type = @intFromEnum(InternPool.Index.enum_literal_type),
-        ptr_usize_type = @intFromEnum(InternPool.Index.ptr_usize_type),
-        ptr_const_comptime_int_type = @intFromEnum(InternPool.Index.ptr_const_comptime_int_type),
+        atomic_order_type = @intFromEnum(InternPool.Index.atomic_order_type),
+        atomic_rmw_op_type = @intFromEnum(InternPool.Index.atomic_rmw_op_type),
+        calling_convention_type = @intFromEnum(InternPool.Index.calling_convention_type),
+        address_space_type = @intFromEnum(InternPool.Index.address_space_type),
+        float_mode_type = @intFromEnum(InternPool.Index.float_mode_type),
+        reduce_op_type = @intFromEnum(InternPool.Index.reduce_op_type),
+        call_modifier_type = @intFromEnum(InternPool.Index.call_modifier_type),
+        prefetch_options_type = @intFromEnum(InternPool.Index.prefetch_options_type),
+        export_options_type = @intFromEnum(InternPool.Index.export_options_type),
+        extern_options_type = @intFromEnum(InternPool.Index.extern_options_type),
+        type_info_type = @intFromEnum(InternPool.Index.type_info_type),
         manyptr_u8_type = @intFromEnum(InternPool.Index.manyptr_u8_type),
         manyptr_const_u8_type = @intFromEnum(InternPool.Index.manyptr_const_u8_type),
         manyptr_const_u8_sentinel_0_type = @intFromEnum(InternPool.Index.manyptr_const_u8_sentinel_0_type),
+        single_const_pointer_to_comptime_int_type = @intFromEnum(InternPool.Index.single_const_pointer_to_comptime_int_type),
         slice_const_u8_type = @intFromEnum(InternPool.Index.slice_const_u8_type),
         slice_const_u8_sentinel_0_type = @intFromEnum(InternPool.Index.slice_const_u8_sentinel_0_type),
-        vector_8_i8_type = @intFromEnum(InternPool.Index.vector_8_i8_type),
-        vector_16_i8_type = @intFromEnum(InternPool.Index.vector_16_i8_type),
-        vector_32_i8_type = @intFromEnum(InternPool.Index.vector_32_i8_type),
-        vector_64_i8_type = @intFromEnum(InternPool.Index.vector_64_i8_type),
-        vector_1_u8_type = @intFromEnum(InternPool.Index.vector_1_u8_type),
-        vector_2_u8_type = @intFromEnum(InternPool.Index.vector_2_u8_type),
-        vector_4_u8_type = @intFromEnum(InternPool.Index.vector_4_u8_type),
-        vector_8_u8_type = @intFromEnum(InternPool.Index.vector_8_u8_type),
-        vector_16_u8_type = @intFromEnum(InternPool.Index.vector_16_u8_type),
-        vector_32_u8_type = @intFromEnum(InternPool.Index.vector_32_u8_type),
-        vector_64_u8_type = @intFromEnum(InternPool.Index.vector_64_u8_type),
-        vector_2_i16_type = @intFromEnum(InternPool.Index.vector_2_i16_type),
-        vector_4_i16_type = @intFromEnum(InternPool.Index.vector_4_i16_type),
-        vector_8_i16_type = @intFromEnum(InternPool.Index.vector_8_i16_type),
-        vector_16_i16_type = @intFromEnum(InternPool.Index.vector_16_i16_type),
-        vector_32_i16_type = @intFromEnum(InternPool.Index.vector_32_i16_type),
-        vector_4_u16_type = @intFromEnum(InternPool.Index.vector_4_u16_type),
-        vector_8_u16_type = @intFromEnum(InternPool.Index.vector_8_u16_type),
-        vector_16_u16_type = @intFromEnum(InternPool.Index.vector_16_u16_type),
-        vector_32_u16_type = @intFromEnum(InternPool.Index.vector_32_u16_type),
-        vector_2_i32_type = @intFromEnum(InternPool.Index.vector_2_i32_type),
-        vector_4_i32_type = @intFromEnum(InternPool.Index.vector_4_i32_type),
-        vector_8_i32_type = @intFromEnum(InternPool.Index.vector_8_i32_type),
-        vector_16_i32_type = @intFromEnum(InternPool.Index.vector_16_i32_type),
-        vector_4_u32_type = @intFromEnum(InternPool.Index.vector_4_u32_type),
-        vector_8_u32_type = @intFromEnum(InternPool.Index.vector_8_u32_type),
-        vector_16_u32_type = @intFromEnum(InternPool.Index.vector_16_u32_type),
-        vector_2_i64_type = @intFromEnum(InternPool.Index.vector_2_i64_type),
-        vector_4_i64_type = @intFromEnum(InternPool.Index.vector_4_i64_type),
-        vector_8_i64_type = @intFromEnum(InternPool.Index.vector_8_i64_type),
-        vector_2_u64_type = @intFromEnum(InternPool.Index.vector_2_u64_type),
-        vector_4_u64_type = @intFromEnum(InternPool.Index.vector_4_u64_type),
-        vector_8_u64_type = @intFromEnum(InternPool.Index.vector_8_u64_type),
-        vector_1_u128_type = @intFromEnum(InternPool.Index.vector_1_u128_type),
-        vector_2_u128_type = @intFromEnum(InternPool.Index.vector_2_u128_type),
-        vector_1_u256_type = @intFromEnum(InternPool.Index.vector_1_u256_type),
-        vector_4_f16_type = @intFromEnum(InternPool.Index.vector_4_f16_type),
-        vector_8_f16_type = @intFromEnum(InternPool.Index.vector_8_f16_type),
-        vector_16_f16_type = @intFromEnum(InternPool.Index.vector_16_f16_type),
-        vector_32_f16_type = @intFromEnum(InternPool.Index.vector_32_f16_type),
-        vector_2_f32_type = @intFromEnum(InternPool.Index.vector_2_f32_type),
-        vector_4_f32_type = @intFromEnum(InternPool.Index.vector_4_f32_type),
-        vector_8_f32_type = @intFromEnum(InternPool.Index.vector_8_f32_type),
-        vector_16_f32_type = @intFromEnum(InternPool.Index.vector_16_f32_type),
-        vector_2_f64_type = @intFromEnum(InternPool.Index.vector_2_f64_type),
-        vector_4_f64_type = @intFromEnum(InternPool.Index.vector_4_f64_type),
-        vector_8_f64_type = @intFromEnum(InternPool.Index.vector_8_f64_type),
         optional_noreturn_type = @intFromEnum(InternPool.Index.optional_noreturn_type),
         anyerror_void_error_union_type = @intFromEnum(InternPool.Index.anyerror_void_error_union_type),
         adhoc_inferred_error_set_type = @intFromEnum(InternPool.Index.adhoc_inferred_error_set_type),
         generic_poison_type = @intFromEnum(InternPool.Index.generic_poison_type),
-        empty_tuple_type = @intFromEnum(InternPool.Index.empty_tuple_type),
+        empty_struct_type = @intFromEnum(InternPool.Index.empty_struct_type),
         undef = @intFromEnum(InternPool.Index.undef),
-        undef_bool = @intFromEnum(InternPool.Index.undef_bool),
-        undef_usize = @intFromEnum(InternPool.Index.undef_usize),
-        undef_u1 = @intFromEnum(InternPool.Index.undef_u1),
         zero = @intFromEnum(InternPool.Index.zero),
         zero_usize = @intFromEnum(InternPool.Index.zero_usize),
-        zero_u1 = @intFromEnum(InternPool.Index.zero_u1),
         zero_u8 = @intFromEnum(InternPool.Index.zero_u8),
         one = @intFromEnum(InternPool.Index.one),
         one_usize = @intFromEnum(InternPool.Index.one_usize),
-        one_u1 = @intFromEnum(InternPool.Index.one_u1),
         one_u8 = @intFromEnum(InternPool.Index.one_u8),
         four_u8 = @intFromEnum(InternPool.Index.four_u8),
         negative_one = @intFromEnum(InternPool.Index.negative_one),
+        calling_convention_c = @intFromEnum(InternPool.Index.calling_convention_c),
+        calling_convention_inline = @intFromEnum(InternPool.Index.calling_convention_inline),
         void_value = @intFromEnum(InternPool.Index.void_value),
         unreachable_value = @intFromEnum(InternPool.Index.unreachable_value),
         null_value = @intFromEnum(InternPool.Index.null_value),
         bool_true = @intFromEnum(InternPool.Index.bool_true),
         bool_false = @intFromEnum(InternPool.Index.bool_false),
-        empty_tuple = @intFromEnum(InternPool.Index.empty_tuple),
+        empty_struct = @intFromEnum(InternPool.Index.empty_struct),
+        generic_poison = @intFromEnum(InternPool.Index.generic_poison),
 
         /// This Ref does not correspond to any AIR instruction or constant
         /// value and may instead be used as a sentinel to indicate null.
@@ -1135,7 +1014,7 @@ pub const Inst = struct {
         }
 
         pub fn toType(ref: Ref) Type {
-            return .fromInterned(ref.toInterned().?);
+            return Type.fromInterned(ref.toInterned().?);
         }
     };
 
@@ -1153,9 +1032,7 @@ pub const Inst = struct {
         ty: Type,
         arg: struct {
             ty: Ref,
-            /// Index into `extra` of a null-terminated string representing the parameter name.
-            /// This is `.none` if debug info is stripped.
-            name: NullTerminatedString,
+            src_index: u32,
         },
         ty_op: struct {
             ty: Ref,
@@ -1170,9 +1047,6 @@ pub const Inst = struct {
             block_inst: Index,
             operand: Ref,
         },
-        repeat: struct {
-            loop_inst: Index,
-        },
         pl_op: struct {
             operand: Ref,
             payload: u32,
@@ -1181,6 +1055,7 @@ pub const Inst = struct {
             line: u32,
             column: u32,
         },
+        fence: std.builtin.AtomicOrder,
         atomic_load: struct {
             ptr: Ref,
             order: std.builtin.AtomicOrder,
@@ -1199,10 +1074,6 @@ pub const Inst = struct {
             vector_ptr: Ref,
             // Index into a different array.
             payload: u32,
-        },
-        ty_nav: struct {
-            ty: InternPool.Index,
-            nav: InternPool.Nav.Index,
         },
         inferred_alloc_comptime: InferredAllocComptime,
         inferred_alloc: InferredAlloc,
@@ -1253,33 +1124,20 @@ pub const Call = struct {
 pub const CondBr = struct {
     then_body_len: u32,
     else_body_len: u32,
-    branch_hints: BranchHints,
-    pub const BranchHints = packed struct(u32) {
-        true: std.builtin.BranchHint = .none,
-        false: std.builtin.BranchHint = .none,
-        then_cov: CoveragePoint = .none,
-        else_cov: CoveragePoint = .none,
-        _: u24 = 0,
-    };
 };
 
 /// Trailing:
-/// * 0. `BranchHint` for each `cases_len + 1`. bit-packed into `u32`
-///      elems such that each `u32` contains up to 10x `BranchHint`.
-///      LSBs are first case. Final hint is `else`.
-/// * 1. `Case` for each `cases_len`
-/// * 2. the else body, according to `else_body_len`.
+/// * 0. `Case` for each `cases_len`
+/// * 1. the else body, according to `else_body_len`.
 pub const SwitchBr = struct {
     cases_len: u32,
     else_body_len: u32,
 
     /// Trailing:
-    /// * item: Inst.Ref // for each `items_len`
-    /// * { range_start: Inst.Ref, range_end: Inst.Ref } // for each `ranges_len`
-    /// * body_inst: Inst.Index // for each `body_len`
+    /// * item: Inst.Ref // for each `items_len`.
+    /// * instruction index for each `body_len`.
     pub const Case = struct {
         items_len: u32,
-        ranges_len: u32,
         body_len: u32,
     };
 };
@@ -1313,75 +1171,24 @@ pub const FieldParentPtr = struct {
     field_index: u32,
 };
 
+pub const Shuffle = struct {
+    a: Inst.Ref,
+    b: Inst.Ref,
+    mask: InternPool.Index,
+    mask_len: u32,
+};
+
 pub const VectorCmp = struct {
     lhs: Inst.Ref,
     rhs: Inst.Ref,
     op: u32,
 
     pub fn compareOperator(self: VectorCmp) std.math.CompareOperator {
-        return @enumFromInt(@as(u3, @intCast(self.op)));
+        return @as(std.math.CompareOperator, @enumFromInt(@as(u3, @truncate(self.op))));
     }
 
     pub fn encodeOp(compare_operator: std.math.CompareOperator) u32 {
         return @intFromEnum(compare_operator);
-    }
-};
-
-/// Used by `Inst.Tag.shuffle_one`. Represents a mask element which either indexes into a
-/// runtime-known vector, or is a comptime-known value.
-pub const ShuffleOneMask = packed struct(u32) {
-    index: u31,
-    kind: enum(u1) { elem, value },
-    pub fn elem(idx: u32) ShuffleOneMask {
-        return .{ .index = @intCast(idx), .kind = .elem };
-    }
-    pub fn value(val: Value) ShuffleOneMask {
-        return .{ .index = @intCast(@intFromEnum(val.toIntern())), .kind = .value };
-    }
-    pub const Unwrapped = union(enum) {
-        /// The resulting element is this index into the runtime vector.
-        elem: u32,
-        /// The resulting element is this comptime-known value.
-        /// It is correctly typed. It might be `undefined`.
-        value: InternPool.Index,
-    };
-    pub fn unwrap(raw: ShuffleOneMask) Unwrapped {
-        return switch (raw.kind) {
-            .elem => .{ .elem = raw.index },
-            .value => .{ .value = @enumFromInt(raw.index) },
-        };
-    }
-};
-
-/// Used by `Inst.Tag.shuffle_two`. Represents a mask element which either indexes into one
-/// of two runtime-known vectors, or is undefined.
-pub const ShuffleTwoMask = enum(u32) {
-    undef = std.math.maxInt(u32),
-    _,
-    pub fn aElem(idx: u32) ShuffleTwoMask {
-        return @enumFromInt(idx << 1);
-    }
-    pub fn bElem(idx: u32) ShuffleTwoMask {
-        return @enumFromInt(idx << 1 | 1);
-    }
-    pub const Unwrapped = union(enum) {
-        /// The resulting element is this index into the first runtime vector.
-        a_elem: u32,
-        /// The resulting element is this index into the second runtime vector.
-        b_elem: u32,
-        /// The resulting element is `undefined`.
-        undef,
-    };
-    pub fn unwrap(raw: ShuffleTwoMask) Unwrapped {
-        switch (raw) {
-            .undef => return .undef,
-            _ => {},
-        }
-        const x = @intFromEnum(raw);
-        return switch (@as(u1, @truncate(x))) {
-            0 => .{ .a_elem = x >> 1 },
-            1 => .{ .b_elem = x >> 1 },
-        };
     }
 };
 
@@ -1422,11 +1229,11 @@ pub const Cmpxchg = struct {
     flags: u32,
 
     pub fn successOrder(self: Cmpxchg) std.builtin.AtomicOrder {
-        return @enumFromInt(@as(u3, @truncate(self.flags)));
+        return @as(std.builtin.AtomicOrder, @enumFromInt(@as(u3, @truncate(self.flags))));
     }
 
     pub fn failureOrder(self: Cmpxchg) std.builtin.AtomicOrder {
-        return @enumFromInt(@as(u3, @intCast(self.flags >> 3)));
+        return @as(std.builtin.AtomicOrder, @enumFromInt(@as(u3, @truncate(self.flags >> 3))));
     }
 };
 
@@ -1437,11 +1244,11 @@ pub const AtomicRmw = struct {
     flags: u32,
 
     pub fn ordering(self: AtomicRmw) std.builtin.AtomicOrder {
-        return @enumFromInt(@as(u3, @truncate(self.flags)));
+        return @as(std.builtin.AtomicOrder, @enumFromInt(@as(u3, @truncate(self.flags))));
     }
 
     pub fn op(self: AtomicRmw) std.builtin.AtomicRmwOp {
-        return @enumFromInt(@as(u4, @intCast(self.flags >> 3)));
+        return @as(std.builtin.AtomicRmwOp, @enumFromInt(@as(u4, @truncate(self.flags >> 3))));
     }
 };
 
@@ -1451,14 +1258,14 @@ pub const UnionInit = struct {
 };
 
 pub fn getMainBody(air: Air) []const Air.Inst.Index {
-    const body_index = air.extra.items[@intFromEnum(ExtraIndex.main_block)];
+    const body_index = air.extra[@intFromEnum(ExtraIndex.main_block)];
     const extra = air.extraData(Block, body_index);
-    return @ptrCast(air.extra.items[extra.end..][0..extra.data.body_len]);
+    return @ptrCast(air.extra[extra.end..][0..extra.data.body_len]);
 }
 
 pub fn typeOf(air: *const Air, inst: Air.Inst.Ref, ip: *const InternPool) Type {
     if (inst.toInterned()) |ip_index| {
-        return .fromInterned(ip.typeOf(ip_index));
+        return Type.fromInterned(ip.typeOf(ip_index));
     } else {
         return air.typeOfIndex(inst.toIndex().?, ip);
     }
@@ -1548,7 +1355,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .is_non_err_ptr,
         .is_named_enum_value,
         .error_set_has_value,
-        => return .bool,
+        => return Type.bool,
 
         .alloc,
         .ret_ptr,
@@ -1568,6 +1375,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .cmpxchg_weak,
         .cmpxchg_strong,
         .slice,
+        .shuffle,
         .aggregate_init,
         .union_init,
         .field_parent_ptr,
@@ -1580,9 +1388,6 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .ptr_add,
         .ptr_sub,
         .try_ptr,
-        .try_ptr_cold,
-        .shuffle_one,
-        .shuffle_two,
         => return datas[@intFromEnum(inst)].ty_pl.ty.toType(),
 
         .not,
@@ -1591,7 +1396,6 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .fpext,
         .fptrunc,
         .intcast,
-        .intcast_safe,
         .trunc,
         .optional_payload,
         .optional_payload_ptr,
@@ -1629,27 +1433,23 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         => return datas[@intFromEnum(inst)].ty_op.ty.toType(),
 
         .loop,
-        .repeat,
         .br,
         .cond_br,
         .switch_br,
-        .loop_switch_br,
-        .switch_dispatch,
         .ret,
         .ret_safe,
         .ret_load,
         .unreach,
         .trap,
-        => return .noreturn,
+        => return Type.noreturn,
 
         .breakpoint,
         .dbg_stmt,
-        .dbg_empty_stmt,
         .dbg_var_ptr,
         .dbg_var_val,
-        .dbg_arg_inline,
         .store,
         .store_safe,
+        .fence,
         .atomic_store_unordered,
         .atomic_store_monotonic,
         .atomic_store_release,
@@ -1657,28 +1457,30 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .memset,
         .memset_safe,
         .memcpy,
-        .memmove,
         .set_union_tag,
         .prefetch,
         .set_err_return_trace,
         .vector_store_elem,
         .c_va_end,
-        => return .void,
+        => return Type.void,
 
+        .int_from_ptr,
         .slice_len,
         .ret_addr,
         .frame_addr,
         .save_err_return_trace_index,
-        => return .usize,
+        => return Type.usize,
 
-        .wasm_memory_grow => return .isize,
-        .wasm_memory_size => return .usize,
+        .wasm_memory_grow => return Type.i32,
+        .wasm_memory_size => return Type.u32,
 
-        .tag_name, .error_name => return .slice_const_u8_sentinel_0,
+        .int_from_bool => return Type.u1,
+
+        .tag_name, .error_name => return Type.slice_const_u8_sentinel_0,
 
         .call, .call_always_tail, .call_never_tail, .call_never_inline => {
             const callee_ty = air.typeOf(datas[@intFromEnum(inst)].pl_op.operand, ip);
-            return .fromInterned(ip.funcTypeReturnType(callee_ty.toIntern()));
+            return Type.fromInterned(ip.funcTypeReturnType(callee_ty.toIntern()));
         },
 
         .slice_elem_val, .ptr_elem_val, .array_elem_val => {
@@ -1696,7 +1498,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
 
         .reduce, .reduce_optimized => {
             const operand_ty = air.typeOf(datas[@intFromEnum(inst)].reduce.operand, ip);
-            return .fromInterned(ip.indexToKey(operand_ty.ip_index).vector_type.child);
+            return Type.fromInterned(ip.indexToKey(operand_ty.ip_index).vector_type.child);
         },
 
         .mul_add => return air.typeOf(datas[@intFromEnum(inst)].pl_op.operand, ip),
@@ -1705,17 +1507,15 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
             return air.typeOf(extra.lhs, ip);
         },
 
-        .@"try", .try_cold => {
+        .@"try" => {
             const err_union_ty = air.typeOf(datas[@intFromEnum(inst)].pl_op.operand, ip);
-            return .fromInterned(ip.indexToKey(err_union_ty.ip_index).error_union_type.payload_type);
+            return Type.fromInterned(ip.indexToKey(err_union_ty.ip_index).error_union_type.payload_type);
         },
-
-        .runtime_nav_ptr => return .fromInterned(datas[@intFromEnum(inst)].ty_nav.ty),
 
         .work_item_id,
         .work_group_size,
         .work_group_id,
-        => return .u32,
+        => return Type.u32,
 
         .inferred_alloc => unreachable,
         .inferred_alloc_comptime => unreachable,
@@ -1730,9 +1530,10 @@ pub fn extraData(air: Air, comptime T: type, index: usize) struct { data: T, end
     var result: T = undefined;
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
-            u32 => air.extra.items[i],
-            InternPool.Index, Inst.Ref => @enumFromInt(air.extra.items[i]),
-            i32, CondBr.BranchHints => @bitCast(air.extra.items[i]),
+            u32 => air.extra[i],
+            Inst.Ref => @as(Inst.Ref, @enumFromInt(air.extra[i])),
+            i32 => @as(i32, @bitCast(air.extra[i])),
+            InternPool.Index => @as(InternPool.Index, @enumFromInt(air.extra[i])),
             else => @compileError("bad field type: " ++ @typeName(field.type)),
         };
         i += 1;
@@ -1745,7 +1546,7 @@ pub fn extraData(air: Air, comptime T: type, index: usize) struct { data: T, end
 
 pub fn deinit(air: *Air, gpa: std.mem.Allocator) void {
     air.instructions.deinit(gpa);
-    air.extra.deinit(gpa);
+    gpa.free(air.extra);
     air.* = undefined;
 }
 
@@ -1760,24 +1561,22 @@ pub fn internedToRef(ip_index: InternPool.Index) Inst.Ref {
 }
 
 /// Returns `null` if runtime-known.
-pub fn value(air: Air, inst: Inst.Ref, pt: Zcu.PerThread) !?Value {
+pub fn value(air: Air, inst: Inst.Ref, mod: *Module) !?Value {
     if (inst.toInterned()) |ip_index| {
-        return .fromInterned(ip_index);
+        return Value.fromInterned(ip_index);
     }
     const index = inst.toIndex().?;
-    return air.typeOfIndex(index, &pt.zcu.intern_pool).onePossibleValue(pt);
+    return air.typeOfIndex(index, &mod.intern_pool).onePossibleValue(mod);
 }
 
-pub const NullTerminatedString = enum(u32) {
-    none = std.math.maxInt(u32),
-    _,
-
-    pub fn toSlice(nts: NullTerminatedString, air: Air) [:0]const u8 {
-        if (nts == .none) return "";
-        const bytes = std.mem.sliceAsBytes(air.extra.items[@intFromEnum(nts)..]);
-        return bytes[0..std.mem.indexOfScalar(u8, bytes, 0).? :0];
+pub fn nullTerminatedString(air: Air, index: usize) [:0]const u8 {
+    const bytes = std.mem.sliceAsBytes(air.extra[index..]);
+    var end: usize = 0;
+    while (bytes[end] != 0) {
+        end += 1;
     }
-};
+    return bytes[0..end :0];
+}
 
 /// Returns whether the given instruction must always be lowered, for instance
 /// because it can cause side effects. If an instruction does not need to be
@@ -1787,10 +1586,8 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
     const data = air.instructions.items(.data)[@intFromEnum(inst)];
     return switch (air.instructions.items(.tag)[@intFromEnum(inst)]) {
         .arg,
-        .assembly,
         .block,
         .loop,
-        .repeat,
         .br,
         .trap,
         .breakpoint,
@@ -1800,18 +1597,12 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .call_never_inline,
         .cond_br,
         .switch_br,
-        .loop_switch_br,
-        .switch_dispatch,
         .@"try",
-        .try_cold,
         .try_ptr,
-        .try_ptr_cold,
         .dbg_stmt,
-        .dbg_empty_stmt,
         .dbg_inline_block,
         .dbg_var_ptr,
         .dbg_var_val,
-        .dbg_arg_inline,
         .ret,
         .ret_safe,
         .ret_load,
@@ -1824,9 +1615,9 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .memset,
         .memset_safe,
         .memcpy,
-        .memmove,
         .cmpxchg_weak,
         .cmpxchg_strong,
+        .fence,
         .atomic_store_unordered,
         .atomic_store_monotonic,
         .atomic_store_release,
@@ -1843,7 +1634,6 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .add_safe,
         .sub_safe,
         .mul_safe,
-        .intcast_safe,
         => true,
 
         .add,
@@ -1931,10 +1721,16 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .cmp_vector_optimized,
         .is_null,
         .is_non_null,
+        .is_null_ptr,
+        .is_non_null_ptr,
         .is_err,
         .is_non_err,
+        .is_err_ptr,
+        .is_non_err_ptr,
         .bool_and,
         .bool_or,
+        .int_from_ptr,
+        .int_from_bool,
         .fptrunc,
         .fpext,
         .intcast,
@@ -1945,6 +1741,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .unwrap_errunion_payload,
         .unwrap_errunion_err,
         .unwrap_errunion_payload_ptr,
+        .unwrap_errunion_err_ptr,
         .wrap_errunion_payload,
         .wrap_errunion_err,
         .struct_field_ptr,
@@ -1969,8 +1766,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .reduce,
         .reduce_optimized,
         .splat,
-        .shuffle_one,
-        .shuffle_two,
+        .shuffle,
         .select,
         .is_named_enum_value,
         .tag_name,
@@ -1985,174 +1781,21 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .err_return_trace,
         .addrspace_cast,
         .save_err_return_trace_index,
-        .runtime_nav_ptr,
         .work_item_id,
         .work_group_size,
         .work_group_id,
         => false,
 
-        .is_non_null_ptr, .is_null_ptr, .is_non_err_ptr, .is_err_ptr => air.typeOf(data.un_op, ip).isVolatilePtrIp(ip),
-        .load, .unwrap_errunion_err_ptr => air.typeOf(data.ty_op.operand, ip).isVolatilePtrIp(ip),
-        .slice_elem_val, .ptr_elem_val => air.typeOf(data.bin_op.lhs, ip).isVolatilePtrIp(ip),
-        .atomic_load => switch (data.atomic_load.order) {
-            .unordered, .monotonic => air.typeOf(data.atomic_load.ptr, ip).isVolatilePtrIp(ip),
-            else => true, // Stronger memory orderings have inter-thread side effects.
+        .assembly => {
+            const extra = air.extraData(Air.Asm, data.ty_pl.payload);
+            const is_volatile = @as(u1, @truncate(extra.data.flags >> 31)) != 0;
+            return is_volatile or if (extra.data.outputs_len == 1)
+                @as(Air.Inst.Ref, @enumFromInt(air.extra[extra.end])) != .none
+            else
+                extra.data.outputs_len > 1;
         },
+        .load => air.typeOf(data.ty_op.operand, ip).isVolatilePtrIp(ip),
+        .slice_elem_val, .ptr_elem_val => air.typeOf(data.bin_op.lhs, ip).isVolatilePtrIp(ip),
+        .atomic_load => air.typeOf(data.atomic_load.ptr, ip).isVolatilePtrIp(ip),
     };
 }
-
-pub const UnwrappedSwitch = struct {
-    air: *const Air,
-    operand: Inst.Ref,
-    cases_len: u32,
-    else_body_len: u32,
-    branch_hints_start: u32,
-    cases_start: u32,
-
-    /// Asserts that `case_idx < us.cases_len`.
-    pub fn getHint(us: UnwrappedSwitch, case_idx: u32) std.builtin.BranchHint {
-        assert(case_idx < us.cases_len);
-        return us.getHintInner(case_idx);
-    }
-    pub fn getElseHint(us: UnwrappedSwitch) std.builtin.BranchHint {
-        return us.getHintInner(us.cases_len);
-    }
-    fn getHintInner(us: UnwrappedSwitch, idx: u32) std.builtin.BranchHint {
-        const bag = us.air.extra.items[us.branch_hints_start..][idx / 10];
-        const bits: u3 = @truncate(bag >> @intCast(3 * (idx % 10)));
-        return @enumFromInt(bits);
-    }
-
-    pub fn iterateCases(us: UnwrappedSwitch) CaseIterator {
-        return .{
-            .air = us.air,
-            .cases_len = us.cases_len,
-            .else_body_len = us.else_body_len,
-            .next_case = 0,
-            .extra_index = us.cases_start,
-        };
-    }
-    pub const CaseIterator = struct {
-        air: *const Air,
-        cases_len: u32,
-        else_body_len: u32,
-        next_case: u32,
-        extra_index: u32,
-
-        pub fn next(it: *CaseIterator) ?Case {
-            if (it.next_case == it.cases_len) return null;
-            const idx = it.next_case;
-            it.next_case += 1;
-
-            const extra = it.air.extraData(SwitchBr.Case, it.extra_index);
-            var extra_index = extra.end;
-            const items: []const Inst.Ref = @ptrCast(it.air.extra.items[extra_index..][0..extra.data.items_len]);
-            extra_index += items.len;
-            // TODO: ptrcast from []const Inst.Ref to []const [2]Inst.Ref when supported
-            const ranges_ptr: [*]const [2]Inst.Ref = @ptrCast(it.air.extra.items[extra_index..]);
-            const ranges: []const [2]Inst.Ref = ranges_ptr[0..extra.data.ranges_len];
-            extra_index += ranges.len * 2;
-            const body: []const Inst.Index = @ptrCast(it.air.extra.items[extra_index..][0..extra.data.body_len]);
-            extra_index += body.len;
-            it.extra_index = @intCast(extra_index);
-
-            return .{
-                .idx = idx,
-                .items = items,
-                .ranges = ranges,
-                .body = body,
-            };
-        }
-        /// Only valid to call once all cases have been iterated, i.e. `next` returns `null`.
-        /// Returns the body of the "default" (`else`) case.
-        pub fn elseBody(it: *CaseIterator) []const Inst.Index {
-            assert(it.next_case == it.cases_len);
-            return @ptrCast(it.air.extra.items[it.extra_index..][0..it.else_body_len]);
-        }
-        pub const Case = struct {
-            idx: u32,
-            items: []const Inst.Ref,
-            ranges: []const [2]Inst.Ref,
-            body: []const Inst.Index,
-        };
-    };
-};
-
-pub fn unwrapSwitch(air: *const Air, switch_inst: Inst.Index) UnwrappedSwitch {
-    const inst = air.instructions.get(@intFromEnum(switch_inst));
-    switch (inst.tag) {
-        .switch_br, .loop_switch_br => {},
-        else => unreachable, // assertion failure
-    }
-    const pl_op = inst.data.pl_op;
-    const extra = air.extraData(SwitchBr, pl_op.payload);
-    const hint_bag_count = std.math.divCeil(usize, extra.data.cases_len + 1, 10) catch unreachable;
-    return .{
-        .air = air,
-        .operand = pl_op.operand,
-        .cases_len = extra.data.cases_len,
-        .else_body_len = extra.data.else_body_len,
-        .branch_hints_start = @intCast(extra.end),
-        .cases_start = @intCast(extra.end + hint_bag_count),
-    };
-}
-
-pub fn unwrapShuffleOne(air: *const Air, zcu: *const Zcu, inst_index: Inst.Index) struct {
-    result_ty: Type,
-    operand: Inst.Ref,
-    mask: []const ShuffleOneMask,
-} {
-    const inst = air.instructions.get(@intFromEnum(inst_index));
-    switch (inst.tag) {
-        .shuffle_one => {},
-        else => unreachable, // assertion failure
-    }
-    const result_ty: Type = .fromInterned(inst.data.ty_pl.ty.toInterned().?);
-    const mask_len: u32 = result_ty.vectorLen(zcu);
-    const extra_idx = inst.data.ty_pl.payload;
-    return .{
-        .result_ty = result_ty,
-        .operand = @enumFromInt(air.extra.items[extra_idx + mask_len]),
-        .mask = @ptrCast(air.extra.items[extra_idx..][0..mask_len]),
-    };
-}
-
-pub fn unwrapShuffleTwo(air: *const Air, zcu: *const Zcu, inst_index: Inst.Index) struct {
-    result_ty: Type,
-    operand_a: Inst.Ref,
-    operand_b: Inst.Ref,
-    mask: []const ShuffleTwoMask,
-} {
-    const inst = air.instructions.get(@intFromEnum(inst_index));
-    switch (inst.tag) {
-        .shuffle_two => {},
-        else => unreachable, // assertion failure
-    }
-    const result_ty: Type = .fromInterned(inst.data.ty_pl.ty.toInterned().?);
-    const mask_len: u32 = result_ty.vectorLen(zcu);
-    const extra_idx = inst.data.ty_pl.payload;
-    return .{
-        .result_ty = result_ty,
-        .operand_a = @enumFromInt(air.extra.items[extra_idx + mask_len + 0]),
-        .operand_b = @enumFromInt(air.extra.items[extra_idx + mask_len + 1]),
-        .mask = @ptrCast(air.extra.items[extra_idx..][0..mask_len]),
-    };
-}
-
-pub const typesFullyResolved = types_resolved.typesFullyResolved;
-pub const typeFullyResolved = types_resolved.checkType;
-pub const valFullyResolved = types_resolved.checkVal;
-pub const legalize = Legalize.legalize;
-pub const write = print.write;
-pub const writeInst = print.writeInst;
-pub const dump = print.dump;
-pub const dumpInst = print.dumpInst;
-
-pub const CoveragePoint = enum(u1) {
-    /// Indicates the block is not a place of interest corresponding to
-    /// a source location for coverage purposes.
-    none,
-    /// Point of interest. The next instruction emitted corresponds to
-    /// a source location used for coverage instrumentation.
-    poi,
-};

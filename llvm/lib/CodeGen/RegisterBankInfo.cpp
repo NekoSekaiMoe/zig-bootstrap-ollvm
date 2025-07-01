@@ -61,8 +61,7 @@ RegisterBankInfo::RegisterBankInfo(const RegisterBank **RegBanks,
 #ifndef NDEBUG
   for (unsigned Idx = 0, End = getNumRegBanks(); Idx != End; ++Idx) {
     assert(RegBanks[Idx] != nullptr && "Invalid RegisterBank");
-    assert(RegBanks[Idx]->getID() == Idx &&
-           "RegisterBank ID should match index");
+    assert(RegBanks[Idx]->isValid() && "RegisterBank should be valid");
   }
 #endif // NDEBUG
 }
@@ -103,10 +102,12 @@ const TargetRegisterClass *
 RegisterBankInfo::getMinimalPhysRegClass(Register Reg,
                                          const TargetRegisterInfo &TRI) const {
   assert(Reg.isPhysical() && "Reg must be a physreg");
-  const auto [RegRCIt, Inserted] = PhysRegMinimalRCs.try_emplace(Reg);
-  if (Inserted)
-    RegRCIt->second = TRI.getMinimalPhysRegClassLLT(Reg, LLT());
-  return RegRCIt->second;
+  const auto &RegRCIt = PhysRegMinimalRCs.find(Reg);
+  if (RegRCIt != PhysRegMinimalRCs.end())
+    return RegRCIt->second;
+  const TargetRegisterClass *PhysRC = TRI.getMinimalPhysRegClassLLT(Reg, LLT());
+  PhysRegMinimalRCs[Reg] = PhysRC;
+  return PhysRC;
 }
 
 const RegisterBank *RegisterBankInfo::getRegBankFromConstraints(
@@ -213,9 +214,8 @@ RegisterBankInfo::getInstrMappingImpl(const MachineInstr &MI) const {
       }
     }
 
-    TypeSize Size = getSizeInBits(Reg, MRI, TRI);
-    const ValueMapping *ValMapping =
-        &getValueMapping(0, Size.getKnownMinValue(), *CurRegBank);
+    unsigned Size = getSizeInBits(Reg, MRI, TRI);
+    const ValueMapping *ValMapping = &getValueMapping(0, Size, *CurRegBank);
     if (IsCopyLike) {
       if (!OperandsMapping[0]) {
         if (MI.isRegSequence()) {
@@ -483,10 +483,9 @@ void RegisterBankInfo::applyDefaultMapping(const OperandsMapper &OpdMapper) {
       // the storage. However, right now we don't necessarily bump all
       // the types to storage size. For instance, we can consider
       // s16 G_AND legal whereas the storage size is going to be 32.
-      assert(
-          TypeSize::isKnownLE(OrigTy.getSizeInBits(), NewTy.getSizeInBits()) &&
-          "Types with difference size cannot be handled by the default "
-          "mapping");
+      assert(OrigTy.getSizeInBits() <= NewTy.getSizeInBits() &&
+             "Types with difference size cannot be handled by the default "
+             "mapping");
       LLVM_DEBUG(dbgs() << "\nChange type of new opd from " << NewTy << " to "
                         << OrigTy);
       MRI.setType(NewReg, OrigTy);
@@ -495,7 +494,7 @@ void RegisterBankInfo::applyDefaultMapping(const OperandsMapper &OpdMapper) {
   }
 }
 
-TypeSize RegisterBankInfo::getSizeInBits(Register Reg,
+unsigned RegisterBankInfo::getSizeInBits(Register Reg,
                                          const MachineRegisterInfo &MRI,
                                          const TargetRegisterInfo &TRI) const {
   if (Reg.isPhysical()) {
@@ -553,7 +552,7 @@ bool RegisterBankInfo::ValueMapping::partsAllUniform() const {
 }
 
 bool RegisterBankInfo::ValueMapping::verify(const RegisterBankInfo &RBI,
-                                            TypeSize MeaningfulBitWidth) const {
+                                            unsigned MeaningfulBitWidth) const {
   assert(NumBreakDowns && "Value mapped nowhere?!");
   unsigned OrigValueBitWidth = 0;
   for (const RegisterBankInfo::PartialMapping &PartMap : *this) {
@@ -565,8 +564,7 @@ bool RegisterBankInfo::ValueMapping::verify(const RegisterBankInfo &RBI,
     OrigValueBitWidth =
         std::max(OrigValueBitWidth, PartMap.getHighBitIdx() + 1);
   }
-  assert((MeaningfulBitWidth.isScalable() ||
-          OrigValueBitWidth >= MeaningfulBitWidth) &&
+  assert(OrigValueBitWidth >= MeaningfulBitWidth &&
          "Meaningful bits not covered by the mapping");
   APInt ValueMask(OrigValueBitWidth, 0);
   for (const RegisterBankInfo::PartialMapping &PartMap : *this) {

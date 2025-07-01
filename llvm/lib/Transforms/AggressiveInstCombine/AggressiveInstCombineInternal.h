@@ -20,6 +20,8 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Support/KnownBits.h"
 
+using namespace llvm;
+
 //===----------------------------------------------------------------------===//
 // TruncInstCombine - looks for expression graphs dominated by trunc
 // instructions and for each eligible graph, it will create a reduced bit-width
@@ -135,4 +137,4 @@ private:
 };
 } // end namespace llvm.
 
-#endif // LLVM_LIB_TRANSFORMS_AGGRESSIVEINSTCOMBINE_COMBINEINTERNAL_H
+#endif

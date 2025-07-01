@@ -12,12 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
+#include "clang/Analysis/PathDiagnostic.h"
 #include "clang/AST/DeclObjC.h"
-#include "clang/AST/DynamicRecursiveASTVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprObjC.h"
-#include "clang/Analysis/PathDiagnostic.h"
-#include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
@@ -38,11 +38,11 @@ struct SelectorDescriptor {
 // FindSuperCallVisitor - Identify specific calls to the superclass.
 //===----------------------------------------------------------------------===//
 
-class FindSuperCallVisitor : public DynamicRecursiveASTVisitor {
+class FindSuperCallVisitor : public RecursiveASTVisitor<FindSuperCallVisitor> {
 public:
   explicit FindSuperCallVisitor(Selector S) : DoesCallSuper(false), Sel(S) {}
 
-  bool VisitObjCMessageExpr(ObjCMessageExpr *E) override {
+  bool VisitObjCMessageExpr(ObjCMessageExpr *E) {
     if (E->getSelector() == Sel)
       if (E->getReceiverKind() == ObjCMessageExpr::SuperInstance)
         DoesCallSuper = true;
@@ -64,7 +64,7 @@ private:
 class ObjCSuperCallChecker : public Checker<
                                       check::ASTDecl<ObjCImplementationDecl> > {
 public:
-  ObjCSuperCallChecker() = default;
+  ObjCSuperCallChecker() : IsInitialized(false) {}
 
   void checkASTDecl(const ObjCImplementationDecl *D, AnalysisManager &Mgr,
                     BugReporter &BR) const;
@@ -75,7 +75,7 @@ private:
   void fillSelectors(ASTContext &Ctx, ArrayRef<SelectorDescriptor> Sel,
                      StringRef ClassName) const;
   mutable llvm::StringMap<llvm::SmallPtrSet<Selector, 16>> SelectorsForClass;
-  mutable bool IsInitialized = false;
+  mutable bool IsInitialized;
 };
 
 }
@@ -107,7 +107,7 @@ void ObjCSuperCallChecker::fillSelectors(ASTContext &Ctx,
     assert(Descriptor.ArgumentCount <= 1); // No multi-argument selectors yet.
 
     // Get the selector.
-    const IdentifierInfo *II = &Ctx.Idents.get(Descriptor.SelectorName);
+    IdentifierInfo *II = &Ctx.Idents.get(Descriptor.SelectorName);
 
     Selector Sel = Ctx.Selectors.getSelector(Descriptor.ArgumentCount, &II);
     ClassSelectors.insert(Sel);

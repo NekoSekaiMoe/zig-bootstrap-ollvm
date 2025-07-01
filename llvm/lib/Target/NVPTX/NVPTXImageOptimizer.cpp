@@ -19,6 +19,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 
 using namespace llvm;
@@ -156,7 +157,7 @@ void NVPTXImageOptimizer::replaceWith(Instruction *From, ConstantInt *To) {
       else
         // Get true block
         Dest = BI->getSuccessor(0);
-      BranchInst::Create(Dest, BI->getIterator());
+      BranchInst::Create(Dest, BI);
       InstrToDelete.push_back(BI);
     }
   }

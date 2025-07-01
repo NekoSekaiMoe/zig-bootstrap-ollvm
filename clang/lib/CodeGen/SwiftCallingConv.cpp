@@ -15,6 +15,7 @@
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
 #include "clang/Basic/TargetInfo.h"
+#include <optional>
 
 using namespace clang;
 using namespace CodeGen;
@@ -77,7 +78,7 @@ void SwiftAggLowering::addTypedData(QualType type, CharUnits begin) {
 
     QualType eltType = arrayType->getElementType();
     auto eltSize = CGM.getContext().getTypeSizeInChars(eltType);
-    for (uint64_t i = 0, e = arrayType->getZExtSize(); i != e; ++i) {
+    for (uint64_t i = 0, e = arrayType->getSize().getZExtValue(); i != e; ++i) {
       addTypedData(eltType, begin + i * eltSize);
     }
 
@@ -186,7 +187,7 @@ void SwiftAggLowering::addBitFieldData(const FieldDecl *bitfield,
                                        uint64_t bitfieldBitBegin) {
   assert(bitfield->isBitField());
   auto &ctx = CGM.getContext();
-  auto width = bitfield->getBitWidthValue();
+  auto width = bitfield->getBitWidthValue(ctx);
 
   // We can ignore zero-width bit-fields.
   if (width == 0) return;
@@ -408,10 +409,9 @@ void SwiftAggLowering::splitVectorEntry(unsigned index) {
 
   CharUnits begin = Entries[index].Begin;
   for (unsigned i = 0; i != numElts; ++i) {
-    unsigned idx = index + i;
-    Entries[idx].Type = eltTy;
-    Entries[idx].Begin = begin;
-    Entries[idx].End = begin + eltSize;
+    Entries[index].Type = eltTy;
+    Entries[index].Begin = begin;
+    Entries[index].End = begin + eltSize;
     begin += eltSize;
   }
 }

@@ -51,6 +51,10 @@ __mingw_init_ehandler (void)
   if (_FindPESectionByName (".pdata") != NULL)
     return 1;
 
+  /* Allocate # of e tables and entries.  */
+  memset (emu_pdata, 0, sizeof (RUNTIME_FUNCTION) * MAX_PDATA_ENTRIES);
+  memset (emu_xdata, 0, sizeof (UNWIND_INFO) * MAX_PDATA_ENTRIES);
+    
   e = 0;
   /* Fill tables and entries.  */
   while (e < MAX_PDATA_ENTRIES && (pSec = _FindPESectionExec (e)) != NULL)

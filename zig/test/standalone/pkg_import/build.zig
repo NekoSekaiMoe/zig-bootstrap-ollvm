@@ -8,11 +8,9 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "test",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test.zig"),
-            .optimize = optimize,
-            .target = b.graph.host,
-        }),
+        .root_source_file = b.path("test.zig"),
+        .optimize = optimize,
+        .target = b.host,
     });
     exe.root_module.addAnonymousImport("my_pkg", .{ .root_source_file = b.path("pkg.zig") });
 

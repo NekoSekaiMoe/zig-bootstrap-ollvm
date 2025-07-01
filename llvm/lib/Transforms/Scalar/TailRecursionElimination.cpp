@@ -243,12 +243,6 @@ static bool markTails(Function &F, OptimizationRemarkEmitter *ORE) {
           isa<PseudoProbeInst>(&I))
         continue;
 
-      // Bail out for intrinsic stackrestore call because it can modify
-      // unescaped allocas.
-      if (auto *II = dyn_cast<IntrinsicInst>(CI))
-        if (II->getIntrinsicID() == Intrinsic::stackrestore)
-          continue;
-
       // Special-case operand bundles "clang.arc.attachedcall", "ptrauth", and
       // "kcfi".
       bool IsNoTail = CI->isNoTailCall() ||
@@ -355,7 +349,7 @@ static bool canMoveAboveCall(Instruction *I, CallInst *CI, AliasAnalysis *AA) {
       // does not write to memory and the load provably won't trap.
       // Writes to memory only matter if they may alias the pointer
       // being loaded from.
-      const DataLayout &DL = L->getDataLayout();
+      const DataLayout &DL = L->getModule()->getDataLayout();
       if (isModSet(AA->getModRefInfo(CI, MemoryLocation::get(L))) ||
           !isSafeToLoadUnconditionally(L->getPointerOperand(), L->getType(),
                                        L->getAlign(), DL, L))
@@ -375,14 +369,8 @@ static bool canTransformAccumulatorRecursion(Instruction *I, CallInst *CI) {
   if (!I->isAssociative() || !I->isCommutative())
     return false;
 
-  assert(I->getNumOperands() >= 2 &&
-         "Associative/commutative operations should have at least 2 args!");
-
-  if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
-    // Accumulators must have an identity.
-    if (!ConstantExpr::getIntrinsicIdentity(II->getIntrinsicID(), I->getType()))
-      return false;
-  }
+  assert(I->getNumOperands() == 2 &&
+         "Associative/commutative operations should have 2 args!");
 
   // Exactly one operand should be the result of the call instruction.
   if ((I->getOperand(0) == CI && I->getOperand(1) == CI) ||
@@ -515,10 +503,8 @@ void TailRecursionEliminator::createTailRecurseLoopHeader(CallInst *CI) {
   BasicBlock *NewEntry = BasicBlock::Create(F.getContext(), "", &F, HeaderBB);
   NewEntry->takeName(HeaderBB);
   HeaderBB->setName("tailrecurse");
-  BranchInst::Create(HeaderBB, NewEntry);
-  // If the new branch preserves the debug location of CI, it could result in
-  // misleading stepping, if CI is located in a conditional branch.
-  // So, here we don't give any debug location to the new branch.
+  BranchInst *BI = BranchInst::Create(HeaderBB, NewEntry);
+  BI->setDebugLoc(CI->getDebugLoc());
 
   // Move all fixed sized allocas from HeaderBB to NewEntry.
   for (BasicBlock::iterator OEBI = HeaderBB->begin(), E = HeaderBB->end(),
@@ -526,16 +512,16 @@ void TailRecursionEliminator::createTailRecurseLoopHeader(CallInst *CI) {
        OEBI != E;)
     if (AllocaInst *AI = dyn_cast<AllocaInst>(OEBI++))
       if (isa<ConstantInt>(AI->getArraySize()))
-        AI->moveBefore(NEBI);
+        AI->moveBefore(&*NEBI);
 
   // Now that we have created a new block, which jumps to the entry
   // block, insert a PHI node for each argument of the function.
   // For now, we initialize each PHI to only have the real arguments
   // which are passed in.
-  BasicBlock::iterator InsertPos = HeaderBB->begin();
+  Instruction *InsertPos = &HeaderBB->front();
   for (Function::arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E; ++I) {
-    PHINode *PN = PHINode::Create(I->getType(), 2, I->getName() + ".tr");
-    PN->insertBefore(InsertPos);
+    PHINode *PN =
+        PHINode::Create(I->getType(), 2, I->getName() + ".tr", InsertPos);
     I->replaceAllUsesWith(PN); // Everyone use the PHI node now!
     PN->addIncoming(&*I, NewEntry);
     ArgumentPHIs.push_back(PN);
@@ -548,10 +534,8 @@ void TailRecursionEliminator::createTailRecurseLoopHeader(CallInst *CI) {
   Type *RetType = F.getReturnType();
   if (!RetType->isVoidTy()) {
     Type *BoolType = Type::getInt1Ty(F.getContext());
-    RetPN = PHINode::Create(RetType, 2, "ret.tr");
-    RetPN->insertBefore(InsertPos);
-    RetKnownPN = PHINode::Create(BoolType, 2, "ret.known.tr");
-    RetKnownPN->insertBefore(InsertPos);
+    RetPN = PHINode::Create(RetType, 2, "ret.tr", InsertPos);
+    RetKnownPN = PHINode::Create(BoolType, 2, "ret.known.tr", InsertPos);
 
     RetPN->addIncoming(PoisonValue::get(RetType), NewEntry);
     RetKnownPN->addIncoming(ConstantInt::getFalse(BoolType), NewEntry);
@@ -571,8 +555,7 @@ void TailRecursionEliminator::insertAccumulator(Instruction *AccRecInstr) {
   // Start by inserting a new PHI node for the accumulator.
   pred_iterator PB = pred_begin(HeaderBB), PE = pred_end(HeaderBB);
   AccPN = PHINode::Create(F.getReturnType(), std::distance(PB, PE) + 1,
-                          "accumulator.tr");
-  AccPN->insertBefore(HeaderBB->begin());
+                          "accumulator.tr", &HeaderBB->front());
 
   // Loop over all of the predecessors of the tail recursion block.  For the
   // real entry into the function we seed the PHI with the identity constant for
@@ -583,8 +566,8 @@ void TailRecursionEliminator::insertAccumulator(Instruction *AccRecInstr) {
   for (pred_iterator PI = PB; PI != PE; ++PI) {
     BasicBlock *P = *PI;
     if (P == &F.getEntryBlock()) {
-      Constant *Identity =
-          ConstantExpr::getIdentity(AccRecInstr, AccRecInstr->getType());
+      Constant *Identity = ConstantExpr::getBinOpIdentity(
+          AccRecInstr->getOpcode(), AccRecInstr->getType());
       AccPN->addIncoming(Identity, P);
     } else {
       AccPN->addIncoming(AccPN, P);
@@ -600,7 +583,7 @@ void TailRecursionEliminator::copyByValueOperandIntoLocalTemp(CallInst *CI,
                                                               int OpndIdx) {
   Type *AggTy = CI->getParamByValType(OpndIdx);
   assert(AggTy);
-  const DataLayout &DL = F.getDataLayout();
+  const DataLayout &DL = F.getParent()->getDataLayout();
 
   // Get alignment of byVal operand.
   Align Alignment(CI->getParamAlign(OpndIdx).valueOrOne());
@@ -609,7 +592,7 @@ void TailRecursionEliminator::copyByValueOperandIntoLocalTemp(CallInst *CI,
   // Put alloca into the entry block.
   Value *NewAlloca = new AllocaInst(
       AggTy, DL.getAllocaAddrSpace(), nullptr, Alignment,
-      CI->getArgOperand(OpndIdx)->getName(), F.getEntryBlock().begin());
+      CI->getArgOperand(OpndIdx)->getName(), &*F.getEntryBlock().begin());
 
   IRBuilder<> Builder(CI);
   Value *Size = Builder.getInt64(DL.getTypeAllocSize(AggTy));
@@ -627,7 +610,7 @@ void TailRecursionEliminator::copyLocalTempOfByValueOperandIntoArguments(
     CallInst *CI, int OpndIdx) {
   Type *AggTy = CI->getParamByValType(OpndIdx);
   assert(AggTy);
-  const DataLayout &DL = F.getDataLayout();
+  const DataLayout &DL = F.getParent()->getDataLayout();
 
   // Get alignment of byVal operand.
   Align Alignment(CI->getParamAlign(OpndIdx).valueOrOne());
@@ -722,9 +705,8 @@ bool TailRecursionEliminator::eliminateCall(CallInst *CI) {
       // We found a return value we want to use, insert a select instruction to
       // select it if we don't already know what our return value will be and
       // store the result in our return value PHI node.
-      SelectInst *SI =
-          SelectInst::Create(RetKnownPN, RetPN, Ret->getReturnValue(),
-                             "current.ret.tr", Ret->getIterator());
+      SelectInst *SI = SelectInst::Create(
+          RetKnownPN, RetPN, Ret->getReturnValue(), "current.ret.tr", Ret);
       RetSelects.push_back(SI);
 
       RetPN->addIncoming(SI, BB);
@@ -737,7 +719,7 @@ bool TailRecursionEliminator::eliminateCall(CallInst *CI) {
 
   // Now that all of the PHI nodes are in place, remove the call and
   // ret instructions, replacing them with an unconditional branch.
-  BranchInst *NewBI = BranchInst::Create(HeaderBB, Ret->getIterator());
+  BranchInst *NewBI = BranchInst::Create(HeaderBB, Ret);
   NewBI->setDebugLoc(CI->getDebugLoc());
 
   Ret->eraseFromParent();  // Remove return.
@@ -755,7 +737,7 @@ void TailRecursionEliminator::cleanupAndFinalize() {
   // call.
   for (PHINode *PN : ArgumentPHIs) {
     // If the PHI Node is a dynamic constant, replace it with the value it is.
-    if (Value *PNV = simplifyInstruction(PN, F.getDataLayout())) {
+    if (Value *PNV = simplifyInstruction(PN, F.getParent()->getDataLayout())) {
       PN->replaceAllUsesWith(PNV);
       PN->eraseFromParent();
     }
@@ -784,8 +766,7 @@ void TailRecursionEliminator::cleanupAndFinalize() {
           AccRecInstrNew->setName("accumulator.ret.tr");
           AccRecInstrNew->setOperand(AccRecInstr->getOperand(0) == AccPN,
                                      RI->getOperand(0));
-          AccRecInstrNew->insertBefore(RI->getIterator());
-          AccRecInstrNew->dropLocation();
+          AccRecInstrNew->insertBefore(RI);
           RI->setOperand(0, AccRecInstrNew);
         }
       }
@@ -797,9 +778,8 @@ void TailRecursionEliminator::cleanupAndFinalize() {
         if (!RI)
           continue;
 
-        SelectInst *SI =
-            SelectInst::Create(RetKnownPN, RetPN, RI->getOperand(0),
-                               "current.ret.tr", RI->getIterator());
+        SelectInst *SI = SelectInst::Create(
+            RetKnownPN, RetPN, RI->getOperand(0), "current.ret.tr", RI);
         RetSelects.push_back(SI);
         RI->setOperand(0, SI);
       }
@@ -813,8 +793,7 @@ void TailRecursionEliminator::cleanupAndFinalize() {
           AccRecInstrNew->setName("accumulator.ret.tr");
           AccRecInstrNew->setOperand(AccRecInstr->getOperand(0) == AccPN,
                                      SI->getFalseValue());
-          AccRecInstrNew->insertBefore(SI->getIterator());
-          AccRecInstrNew->dropLocation();
+          AccRecInstrNew->insertBefore(SI);
           SI->setFalseValue(AccRecInstrNew);
         }
       }

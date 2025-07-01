@@ -1,6 +1,6 @@
 comptime {
     _ = @Type(.{
-        .@"union" = .{
+        .Union = .{
             .layout = .auto,
             .tag_type = null,
             .fields = &.{
@@ -12,12 +12,12 @@ comptime {
 }
 comptime {
     _ = @Type(.{
-        .@"struct" = .{
+        .Struct = .{
             .layout = .auto,
             .fields = &.{.{
                 .name = "0",
                 .type = u32,
-                .default_value_ptr = null,
+                .default_value = null,
                 .is_comptime = true,
                 .alignment = 5,
             }},
@@ -28,20 +28,22 @@ comptime {
 }
 comptime {
     _ = @Type(.{
-        .pointer = .{
-            .size = .many,
+        .Pointer = .{
+            .size = .Many,
             .is_const = true,
             .is_volatile = false,
             .alignment = 7,
             .address_space = .generic,
             .child = u8,
             .is_allowzero = false,
-            .sentinel_ptr = null,
+            .sentinel = null,
         },
     });
 }
 
 // error
+// backend=stage2
+// target=native
 //
 // :2:9: error: alignment value '3' is not a power of two or zero
 // :14:9: error: alignment value '5' is not a power of two or zero

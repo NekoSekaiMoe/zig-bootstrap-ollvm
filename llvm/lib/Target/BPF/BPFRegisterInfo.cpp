@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "BPFRegisterInfo.h"
+#include "BPF.h"
 #include "BPFSubtarget.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -39,17 +40,6 @@ BPFRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   return CSR_SaveList;
 }
 
-const uint32_t *
-BPFRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
-                                      CallingConv::ID CC) const {
-  switch (CC) {
-  default:
-    return CSR_RegMask;
-  case CallingConv::PreserveAll:
-    return CSR_PreserveAll_RegMask;
-  }
-}
-
 BitVector BPFRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   markSuperRegs(Reserved, BPF::W10); // [W|R]10 is read only frame pointer
@@ -57,17 +47,9 @@ BitVector BPFRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
-static void WarnSize(int Offset, MachineFunction &MF, DebugLoc& DL,
-                     MachineBasicBlock& MBB) {
+static void WarnSize(int Offset, MachineFunction &MF, DebugLoc& DL)
+{
   if (Offset <= -BPFStackSizeOption) {
-    if (!DL)
-      /* try harder to get some debug loc */
-      for (auto &I : MBB)
-        if (I.getDebugLoc()) {
-          DL = I.getDebugLoc();
-          break;
-        }
-
     const Function &F = MF.getFunction();
     DiagnosticInfoUnsupported DiagStackSize(
         F,
@@ -91,6 +73,14 @@ bool BPFRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MachineFunction &MF = *MBB.getParent();
   DebugLoc DL = MI.getDebugLoc();
 
+  if (!DL)
+    /* try harder to get some debug loc */
+    for (auto &I : MBB)
+      if (I.getDebugLoc()) {
+        DL = I.getDebugLoc();
+        break;
+      }
+
   while (!MI.getOperand(i).isFI()) {
     ++i;
     assert(i < MI.getNumOperands() && "Instr doesn't have FrameIndex operand!");
@@ -103,7 +93,7 @@ bool BPFRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   if (MI.getOpcode() == BPF::MOV_rr) {
     int Offset = MF.getFrameInfo().getObjectOffset(FrameIndex);
 
-    WarnSize(Offset, MF, DL, MBB);
+    WarnSize(Offset, MF, DL);
     MI.getOperand(i).ChangeToRegister(FrameReg, false);
     Register reg = MI.getOperand(i - 1).getReg();
     BuildMI(MBB, ++II, DL, TII.get(BPF::ADD_ri), reg)
@@ -118,7 +108,7 @@ bool BPFRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   if (!isInt<32>(Offset))
     llvm_unreachable("bug in frame offset");
 
-  WarnSize(Offset, MF, DL, MBB);
+  WarnSize(Offset, MF, DL);
 
   if (MI.getOpcode() == BPF::FI_ri) {
     // architecture does not really support FI_ri, replace it with

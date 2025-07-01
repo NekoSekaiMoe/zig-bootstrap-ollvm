@@ -16,7 +16,7 @@ test "write a file, read it, then delete it" {
     defer tmp.cleanup();
 
     var data: [1024]u8 = undefined;
-    var prng = DefaultPrng.init(std.testing.random_seed);
+    var prng = DefaultPrng.init(1234);
     const random = prng.random();
     random.bytes(data[0..]);
     const tmp_file_name = "temp_test_file.txt";
@@ -82,7 +82,7 @@ test "BitStreams with File Stream" {
 
         var bit_stream = io.bitReader(native_endian, file.reader());
 
-        var out_bits: u16 = undefined;
+        var out_bits: usize = undefined;
 
         try expect(1 == try bit_stream.readBits(u2, 1, &out_bits));
         try expect(out_bits == 1);
@@ -108,7 +108,10 @@ test "File seek ops" {
 
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer {
+        file.close();
+        tmp.dir.deleteFile(tmp_file_name) catch {};
+    }
 
     try file.writeAll(&([_]u8{0x55} ** 8192));
 
@@ -132,7 +135,10 @@ test "setEndPos" {
 
     const tmp_file_name = "temp_test_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    defer {
+        file.close();
+        tmp.dir.deleteFile(tmp_file_name) catch {};
+    }
 
     // Verify that the file size changes and the file offset is not moved
     try std.testing.expect((try file.getEndPos()) == 0);
@@ -155,8 +161,10 @@ test "updateTimes" {
 
     const tmp_file_name = "just_a_temporary_file.txt";
     var file = try tmp.dir.createFile(tmp_file_name, .{ .read = true });
-    defer file.close();
-
+    defer {
+        file.close();
+        tmp.dir.deleteFile(tmp_file_name) catch {};
+    }
     const stat_old = try file.stat();
     // Set atime and mtime to 5s before
     try file.updateTimes(

@@ -897,7 +897,7 @@ pub const Scanner = struct {
                 },
                 .number_post_dot => {
                     if (self.cursor >= self.input.len) return self.endOfBufferInNumber(false);
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         '0'...'9' => {
                             self.cursor += 1;
                             self.state = .number_frac;
@@ -1032,8 +1032,7 @@ pub const Scanner = struct {
                     return error.BufferUnderrun;
                 },
                 .string_backslash => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         '"', '\\', '/' => {
                             // Since these characters now represent themselves literally,
                             // we can simply begin the next plaintext slice here.
@@ -1081,8 +1080,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_backslash_u => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.utf16_code_units[0] = @as(u16, c - '0') << 12;
@@ -1100,8 +1098,7 @@ pub const Scanner = struct {
                     continue :state_loop;
                 },
                 .string_backslash_u_1 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.utf16_code_units[0] |= @as(u16, c - '0') << 8;
@@ -1119,8 +1116,7 @@ pub const Scanner = struct {
                     continue :state_loop;
                 },
                 .string_backslash_u_2 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.utf16_code_units[0] |= @as(u16, c - '0') << 4;
@@ -1138,8 +1134,7 @@ pub const Scanner = struct {
                     continue :state_loop;
                 },
                 .string_backslash_u_3 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.utf16_code_units[0] |= c - '0';
@@ -1165,8 +1160,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         '\\' => {
                             self.cursor += 1;
                             self.state = .string_surrogate_half_backslash;
@@ -1176,8 +1170,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half_backslash => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         'u' => {
                             self.cursor += 1;
                             self.state = .string_surrogate_half_backslash_u;
@@ -1187,8 +1180,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half_backslash_u => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         'D', 'd' => {
                             self.cursor += 1;
                             self.utf16_code_units[1] = 0xD << 12;
@@ -1199,8 +1191,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half_backslash_u_1 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         'C'...'F' => {
                             self.cursor += 1;
@@ -1218,8 +1209,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half_backslash_u_2 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.cursor += 1;
@@ -1243,8 +1233,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_surrogate_half_backslash_u_3 => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    const c = self.input[self.cursor];
+                    const c = try self.expectByte();
                     switch (c) {
                         '0'...'9' => {
                             self.utf16_code_units[1] |= c - '0';
@@ -1265,8 +1254,7 @@ pub const Scanner = struct {
                 },
 
                 .string_utf8_last_byte => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x80...0xBF => {
                             self.cursor += 1;
                             self.state = .string;
@@ -1276,8 +1264,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_second_to_last_byte => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x80...0xBF => {
                             self.cursor += 1;
                             self.state = .string_utf8_last_byte;
@@ -1287,8 +1274,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_second_to_last_byte_guard_against_overlong => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0xA0...0xBF => {
                             self.cursor += 1;
                             self.state = .string_utf8_last_byte;
@@ -1298,8 +1284,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_second_to_last_byte_guard_against_surrogate_half => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x80...0x9F => {
                             self.cursor += 1;
                             self.state = .string_utf8_last_byte;
@@ -1309,8 +1294,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_third_to_last_byte => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x80...0xBF => {
                             self.cursor += 1;
                             self.state = .string_utf8_second_to_last_byte;
@@ -1320,8 +1304,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_third_to_last_byte_guard_against_overlong => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x90...0xBF => {
                             self.cursor += 1;
                             self.state = .string_utf8_second_to_last_byte;
@@ -1331,8 +1314,7 @@ pub const Scanner = struct {
                     }
                 },
                 .string_utf8_third_to_last_byte_guard_against_too_large => {
-                    if (self.cursor >= self.input.len) return self.endOfBufferInString();
-                    switch (self.input[self.cursor]) {
+                    switch (try self.expectByte()) {
                         0x80...0x8F => {
                             self.cursor += 1;
                             self.state = .string_utf8_second_to_last_byte;
@@ -1684,17 +1666,6 @@ pub const Scanner = struct {
         self.value_start = self.cursor;
         return slice;
     }
-    fn takeValueSliceMinusTrailingOffset(self: *@This(), trailing_negative_offset: usize) []const u8 {
-        // Check if the escape sequence started before the current input buffer.
-        // (The algebra here is awkward to avoid unsigned underflow,
-        //  but it's just making sure the slice on the next line isn't UB.)
-        if (self.cursor <= self.value_start + trailing_negative_offset) return "";
-        const slice = self.input[self.value_start .. self.cursor - trailing_negative_offset];
-        // When trailing_negative_offset is non-zero, setting self.value_start doesn't matter,
-        // because we always set it again while emitting the .partial_string_escaped_*.
-        self.value_start = self.cursor;
-        return slice;
-    }
 
     fn endOfBufferInNumber(self: *@This(), allow_end: bool) !Token {
         const slice = self.takeValueSlice();
@@ -1705,39 +1676,6 @@ pub const Scanner = struct {
         }
         if (slice.len == 0) return error.BufferUnderrun;
         return Token{ .partial_number = slice };
-    }
-
-    fn endOfBufferInString(self: *@This()) !Token {
-        if (self.is_end_of_input) return error.UnexpectedEndOfInput;
-        const slice = self.takeValueSliceMinusTrailingOffset(switch (self.state) {
-            // Don't include the escape sequence in the partial string.
-            .string_backslash => 1,
-            .string_backslash_u => 2,
-            .string_backslash_u_1 => 3,
-            .string_backslash_u_2 => 4,
-            .string_backslash_u_3 => 5,
-            .string_surrogate_half => 6,
-            .string_surrogate_half_backslash => 7,
-            .string_surrogate_half_backslash_u => 8,
-            .string_surrogate_half_backslash_u_1 => 9,
-            .string_surrogate_half_backslash_u_2 => 10,
-            .string_surrogate_half_backslash_u_3 => 11,
-
-            // Include everything up to the cursor otherwise.
-            .string,
-            .string_utf8_last_byte,
-            .string_utf8_second_to_last_byte,
-            .string_utf8_second_to_last_byte_guard_against_overlong,
-            .string_utf8_second_to_last_byte_guard_against_surrogate_half,
-            .string_utf8_third_to_last_byte,
-            .string_utf8_third_to_last_byte_guard_against_overlong,
-            .string_utf8_third_to_last_byte_guard_against_too_large,
-            => 0,
-
-            else => unreachable,
-        });
-        if (slice.len == 0) return error.BufferUnderrun;
-        return Token{ .partial_string = slice };
     }
 
     fn partialStringCodepoint(code_point: u21) Token {

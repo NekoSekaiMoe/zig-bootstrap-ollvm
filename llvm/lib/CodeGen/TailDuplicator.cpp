@@ -38,6 +38,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+#include <algorithm>
 #include <cassert>
 #include <iterator>
 #include <utility>
@@ -67,18 +68,6 @@ static cl::opt<unsigned> TailDupIndirectBranchSize(
              "end with indirect branches."), cl::init(20),
     cl::Hidden);
 
-static cl::opt<unsigned>
-    TailDupPredSize("tail-dup-pred-size",
-                    cl::desc("Maximum predecessors (maximum successors at the "
-                             "same time) to consider tail duplicating blocks."),
-                    cl::init(16), cl::Hidden);
-
-static cl::opt<unsigned>
-    TailDupSuccSize("tail-dup-succ-size",
-                    cl::desc("Maximum successors (maximum predecessors at the "
-                             "same time) to consider tail duplicating blocks."),
-                    cl::init(16), cl::Hidden);
-
 static cl::opt<bool>
     TailDupVerify("tail-dup-verify",
                   cl::desc("Verify sanity of PHI instructions during taildup"),
@@ -96,6 +85,7 @@ void TailDuplicator::initMF(MachineFunction &MFin, bool PreRegAlloc,
   TII = MF->getSubtarget().getInstrInfo();
   TRI = MF->getSubtarget().getRegisterInfo();
   MRI = &MF->getRegInfo();
+  MMI = &MF->getMMI();
   MBPI = MBPIin;
   MBFI = MBFIin;
   PSI = PSIin;
@@ -199,7 +189,8 @@ bool TailDuplicator::tailDuplicateAndUpdate(
 
   // Update SSA form.
   if (!SSAUpdateVRs.empty()) {
-    for (unsigned VReg : SSAUpdateVRs) {
+    for (unsigned i = 0, e = SSAUpdateVRs.size(); i != e; ++i) {
+      unsigned VReg = SSAUpdateVRs[i];
       SSAUpdate.Initialize(VReg);
 
       // If the original definition is still around, add it as an available
@@ -250,7 +241,8 @@ bool TailDuplicator::tailDuplicateAndUpdate(
 
   // Eliminate some of the copies inserted by tail duplication to maintain
   // SSA form.
-  for (MachineInstr *Copy : Copies) {
+  for (unsigned i = 0, e = Copies.size(); i != e; ++i) {
+    MachineInstr *Copy = Copies[i];
     if (!Copy->isCopy())
       continue;
     Register Dst = Copy->getOperand(0).getReg();
@@ -577,11 +569,13 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
   // duplicate only one, because one branch instruction can be eliminated to
   // compensate for the duplication.
   unsigned MaxDuplicateCount;
+  bool OptForSize = MF->getFunction().hasOptSize() ||
+                    llvm::shouldOptimizeForSize(&TailBB, PSI, MBFI);
   if (TailDupSize == 0)
     MaxDuplicateCount = TailDuplicateSize;
   else
     MaxDuplicateCount = TailDupSize;
-  if (llvm::shouldOptimizeForSize(&TailBB, PSI, MBFI))
+  if (OptForSize)
     MaxDuplicateCount = 1;
 
   // If the block to be duplicated ends in an unanalyzable fallthrough, don't
@@ -601,11 +595,8 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
   // that rearrange the predecessors of the indirect branch.
 
   bool HasIndirectbr = false;
-  bool HasComputedGoto = false;
-  if (!TailBB.empty()) {
+  if (!TailBB.empty())
     HasIndirectbr = TailBB.back().isIndirectBranch();
-    HasComputedGoto = TailBB.back().isComputedGoto();
-  }
 
   if (HasIndirectbr && PreRegAlloc)
     MaxDuplicateCount = TailDupIndirectBranchSize;
@@ -613,7 +604,6 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
   // Check the instructions in the block to determine whether tail-duplication
   // is invalid or unlikely to be profitable.
   unsigned InstrCount = 0;
-  unsigned NumPhis = 0;
   for (MachineInstr &MI : TailBB) {
     // Non-duplicable things shouldn't be tail-duplicated.
     // CFI instructions are marked as non-duplicable, because Darwin compact
@@ -656,25 +646,6 @@ bool TailDuplicator::shouldTailDuplicate(bool IsSimple,
       InstrCount += 1;
 
     if (InstrCount > MaxDuplicateCount)
-      return false;
-    NumPhis += MI.isPHI();
-  }
-
-  // Duplicating a BB which has both multiple predecessors and successors will
-  // may cause huge amount of PHI nodes. If we want to remove this limitation,
-  // we have to address https://github.com/llvm/llvm-project/issues/78578.
-  // NB. This basically unfactors computed gotos that were factored early on in
-  // the compilation process to speed up edge based data flow. If we do not
-  // unfactor them again, it can seriously pessimize code with many computed
-  // jumps in the source code, such as interpreters. Therefore we do not
-  // restrict the computed gotos.
-  if (!HasComputedGoto && TailBB.pred_size() > TailDupPredSize &&
-      TailBB.succ_size() > TailDupSuccSize) {
-    // If TailBB or any of its successors contains a phi, we may have to add a
-    // large number of additional phis with additional incoming values.
-    if (NumPhis != 0 || any_of(TailBB.successors(), [](MachineBasicBlock *MBB) {
-          return any_of(*MBB, [](MachineInstr &MI) { return MI.isPHI(); });
-        }))
       return false;
   }
 
@@ -1083,10 +1054,10 @@ void TailDuplicator::removeDeadBlock(
   LLVM_DEBUG(dbgs() << "\nRemoving MBB: " << *MBB);
 
   MachineFunction *MF = MBB->getParent();
-  // Update the call info.
+  // Update the call site info.
   for (const MachineInstr &MI : *MBB)
-    if (MI.shouldUpdateAdditionalCallInfo())
-      MF->eraseAdditionalCallInfo(&MI);
+    if (MI.shouldUpdateCallSiteInfo())
+      MF->eraseCallSiteInfo(&MI);
 
   if (RemovalCallback)
     (*RemovalCallback)(MBB);
