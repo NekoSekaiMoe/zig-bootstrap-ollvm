@@ -117,6 +117,28 @@ std::string getFunctionAnnotation(Function *F) {
  * @return true
  * @return false
  */
+
+// Fix in line 193
+bool vulueEscapes(Instruction &I) {
+  BasicBlock *BB =I.getParent();
+  for (User &U : I.uses()) {
+    //检测是否跨基本块调用（控制流分析）
+    if (Instruction *User = dyn_cast<Instruction>(U.getUser())) {
+      if (User->getParent != BB) {
+        return true;
+      }
+      //检测是否涉及内存操作
+      if (User->mayReadFromMemory() || User ->mayWriteToMemory()) {
+        return true;
+      }
+    } else {
+      //使用者不是指令（比如常量表达式），以为发生逃逸
+      return false;
+    }
+  }
+  return false;
+}
+
 bool llvm::toObfuscate(bool flag, Function *f,
                        std::string const &attribute) { // 取自原版ollvm项目
   std::string attr = attribute;
