@@ -20,6 +20,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mach-o/compact_unwind_encoding.h"
+
 namespace lld::macho {
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
