@@ -119,7 +119,7 @@ std::string getFunctionAnnotation(Function *F) {
  */
 
 // Fix in line 193
-bool vulueEscapes(Instruction &I) {
+bool valueEscapes(Instruction &I) {
   BasicBlock *BB =I.getParent();
   for (const Use &U : I.uses()) {
     //检测是否跨基本块调用（控制流分析）
