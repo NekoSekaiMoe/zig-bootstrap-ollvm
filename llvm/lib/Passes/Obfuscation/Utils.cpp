@@ -121,10 +121,10 @@ std::string getFunctionAnnotation(Function *F) {
 // Fix in line 193
 bool vulueEscapes(Instruction &I) {
   BasicBlock *BB =I.getParent();
-  for (User &U : I.uses()) {
+  for (const Use &U : I.uses()) {
     //检测是否跨基本块调用（控制流分析）
     if (Instruction *User = dyn_cast<Instruction>(U.getUser())) {
-      if (User->getParent != BB) {
+      if (User->getParent() != BB) {
         return true;
       }
       //检测是否涉及内存操作
