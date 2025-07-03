@@ -471,7 +471,6 @@ add_subdirectory(tools)
 add_subdirectory(runtime)
 
 option(CLANG_BUILD_EXAMPLES "Build CLANG example programs by default." OFF)
-add_subdirectory(examples)
 
 if(APPLE)
   # this line is needed as a cleanup to ensure that any CMakeCaches with the old
@@ -493,28 +492,6 @@ if(APPLE)
       message(FATAL_ERROR "Specified order file '${CLANG_ORDER_FILE}' does not exist.")
     endif()
   endif()
-endif()
-
-
-if( CLANG_INCLUDE_TESTS )
-  add_subdirectory(unittests)
-  list(APPEND CLANG_TEST_DEPS ClangUnitTests)
-  list(APPEND CLANG_TEST_PARAMS
-    clang_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/test/Unit/lit.site.cfg
-  )
-  add_subdirectory(test)
-  add_subdirectory(bindings/python/tests)
-
-  if(CLANG_BUILT_STANDALONE)
-    umbrella_lit_testsuite_end(check-all)
-  endif()
-  add_subdirectory(utils/perf-training)
-endif()
-
-option(CLANG_INCLUDE_DOCS "Generate build targets for the Clang docs."
-  ${LLVM_INCLUDE_DOCS})
-if( CLANG_INCLUDE_DOCS )
-  add_subdirectory(docs)
 endif()
 
 # Custom target to install all clang libraries.
