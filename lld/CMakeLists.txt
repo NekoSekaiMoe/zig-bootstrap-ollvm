@@ -190,13 +190,6 @@ endif()
 add_subdirectory(Common)
 add_subdirectory(tools/lld)
 
-if (LLVM_INCLUDE_TESTS)
-  add_custom_target(LLDUnitTests)
-  llvm_add_unittests(LLD_UNITTESTS_ADDED)
-  add_subdirectory(test)
-endif()
-
-add_subdirectory(docs)
 add_subdirectory(COFF)
 add_subdirectory(ELF)
 add_subdirectory(MachO)
