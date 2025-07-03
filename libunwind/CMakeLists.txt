@@ -297,11 +297,3 @@ endif()
 add_subdirectory(include)
 
 add_subdirectory(src)
-
-if (LIBUNWIND_INCLUDE_DOCS)
-  add_subdirectory(docs)
-endif()
-
-if (LIBUNWIND_INCLUDE_TESTS AND EXISTS ${LLVM_CMAKE_DIR})
-  add_subdirectory(test)
-endif()
