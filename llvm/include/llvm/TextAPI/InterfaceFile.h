@@ -14,15 +14,16 @@
 #ifndef LLVM_TEXTAPI_INTERFACEFILE_H
 #define LLVM_TEXTAPI_INTERFACEFILE_H
 
-#include "llvm/ADT/BitmaskEnum.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/TextAPI/ArchitectureSet.h"
+#include "llvm/TextAPI/FileTypes.h"
 #include "llvm/TextAPI/PackedVersion.h"
 #include "llvm/TextAPI/Platform.h"
+#include "llvm/TextAPI/RecordsSlice.h"
 #include "llvm/TextAPI/Symbol.h"
 #include "llvm/TextAPI/SymbolSet.h"
 #include "llvm/TextAPI/Target.h"
@@ -48,35 +49,6 @@ enum class ObjCConstraintType : unsigned {
   GC = 4,
 };
 
-// clang-format off
-
-/// Defines the file type this file represents.
-enum FileType : unsigned {
-  /// Invalid file type.
-  Invalid = 0U,
-
-  /// Text-based stub file (.tbd) version 1.0
-  TBD_V1  = 1U <<  0,
-
-  /// Text-based stub file (.tbd) version 2.0
-  TBD_V2  = 1U <<  1,
-
-  /// Text-based stub file (.tbd) version 3.0
-  TBD_V3  = 1U <<  2,
-
-  /// Text-based stub file (.tbd) version 4.0
-  TBD_V4  = 1U <<  3,
-
-  /// Text-based stub file (.tbd) version 5.0
-  TBD_V5  = 1U <<  4,
-
-  All     = ~0U,
-
-  LLVM_MARK_AS_BITMASK_ENUM(/*LargestValue=*/All),
-};
-
-// clang-format on
-
 /// Reference to an interface file.
 class InterfaceFileRef {
 public:
@@ -89,10 +61,14 @@ public:
 
   StringRef getInstallName() const { return InstallName; };
 
-  void addTarget(const Target &Target);
+  LLVM_ABI void addTarget(const Target &Target);
   template <typename RangeT> void addTargets(RangeT &&Targets) {
     for (const auto &Target : Targets)
       addTarget(Target(Target));
+  }
+
+  bool hasTarget(Target &Targ) const {
+    return llvm::is_contained(Targets, Targ);
   }
 
   using const_target_iterator = TargetList::const_iterator;
@@ -171,7 +147,14 @@ public:
   /// Set and add target.
   ///
   /// \param Target the target to add into.
-  void addTarget(const Target &Target);
+  LLVM_ABI void addTarget(const Target &Target);
+
+  /// Determine if target triple slice exists in file.
+  ///
+  /// \param Targ the value to find.
+  bool hasTarget(const Target &Targ) const {
+    return llvm::is_contained(Targets, Targ);
+  }
 
   /// Set and add targets.
   ///
@@ -192,7 +175,7 @@ public:
                             std::function<bool(const Target &)>>;
   using const_filtered_target_range =
       llvm::iterator_range<const_filtered_target_iterator>;
-  const_filtered_target_range targets(ArchitectureSet Archs) const;
+  LLVM_ABI const_filtered_target_range targets(ArchitectureSet Archs) const;
 
   /// Set the install name of the library.
   void setInstallName(StringRef InstallName_) {
@@ -228,11 +211,25 @@ public:
   /// Check if the library uses two-level namespace.
   bool isTwoLevelNamespace() const { return IsTwoLevelNamespace; }
 
+  /// Specify if the library is an OS library but not shared cache eligible.
+  void setOSLibNotForSharedCache(bool V = true) {
+    IsOSLibNotForSharedCache = V;
+  }
+
+  /// Check if the library is an OS library that is not shared cache eligible.
+  bool isOSLibNotForSharedCache() const { return IsOSLibNotForSharedCache; }
+
   /// Specify if the library is application extension safe (or not).
   void setApplicationExtensionSafe(bool V = true) { IsAppExtensionSafe = V; }
 
   /// Check if the library is application extension safe.
   bool isApplicationExtensionSafe() const { return IsAppExtensionSafe; }
+
+  /// Check if the library has simulator support.
+  bool hasSimulatorSupport() const { return HasSimSupport; }
+
+  /// Specify if the library has simulator support.
+  void setSimulatorSupport(bool V = true) { HasSimSupport = V; }
 
   /// Set the Objective-C constraint.
   void setObjCConstraint(ObjCConstraintType Constraint) {
@@ -245,7 +242,7 @@ public:
   /// Set the parent umbrella frameworks.
   /// \param Target_ The target applicable to Parent
   /// \param Parent  The name of Parent
-  void addParentUmbrella(const Target &Target_, StringRef Parent);
+  LLVM_ABI void addParentUmbrella(const Target &Target_, StringRef Parent);
 
   /// Get the list of Parent Umbrella frameworks.
   ///
@@ -265,7 +262,7 @@ public:
   /// \param InstallName The name of the client that is allowed to link this
   /// library.
   /// \param Target The target triple for which this applies.
-  void addAllowableClient(StringRef InstallName, const Target &Target);
+  LLVM_ABI void addAllowableClient(StringRef InstallName, const Target &Target);
 
   /// Get the list of allowable clients.
   ///
@@ -278,7 +275,8 @@ public:
   ///
   /// \param InstallName The name of the library to re-export.
   /// \param Target The target triple for which this applies.
-  void addReexportedLibrary(StringRef InstallName, const Target &Target);
+  LLVM_ABI void addReexportedLibrary(StringRef InstallName,
+                                     const Target &Target);
 
   /// Get the list of re-exported libraries.
   ///
@@ -290,7 +288,7 @@ public:
   /// Add a library for inlining to top level library.
   ///
   ///\param Document The library to inline with top level library.
-  void addDocument(std::shared_ptr<InterfaceFile> &&Document);
+  LLVM_ABI void addDocument(std::shared_ptr<InterfaceFile> &&Document);
 
   /// Returns the pointer to parent document if exists or nullptr otherwise.
   InterfaceFile *getParent() const { return Parent; }
@@ -303,9 +301,9 @@ public:
   }
 
   /// Set the runpath search paths.
-  /// \param InputTarget The target applicable to runpath search path.
   /// \param RPath The name of runpath.
-  void addRPath(const Target &InputTarget, StringRef RPath);
+  /// \param InputTarget The target applicable to runpath search path.
+  LLVM_ABI void addRPath(StringRef RPath, const Target &InputTarget);
 
   /// Get the list of runpath search paths.
   ///
@@ -318,18 +316,19 @@ public:
   ///
   /// \param Kind The kind of global symbol to record.
   /// \param Name The name of the symbol.
-  std::optional<const Symbol *> getSymbol(SymbolKind Kind,
-                                          StringRef Name) const {
-    if (auto *Sym = SymbolsSet->findSymbol(Kind, Name))
+  /// \param ObjCIF The ObjCInterface symbol type, if applicable.
+  std::optional<const Symbol *>
+  getSymbol(EncodeKind Kind, StringRef Name,
+            ObjCIFSymbolKind ObjCIF = ObjCIFSymbolKind::None) const {
+    if (auto *Sym = SymbolsSet->findSymbol(Kind, Name, ObjCIF))
       return Sym;
     return std::nullopt;
   }
 
   /// Add a symbol to the symbols list or extend an existing one.
-  template <typename RangeT,
-            typename ElT = typename std::remove_reference<
-                decltype(*std::begin(std::declval<RangeT>()))>::type>
-  void addSymbol(SymbolKind Kind, StringRef Name, RangeT &&Targets,
+  template <typename RangeT, typename ElT = std::remove_reference_t<
+                                 decltype(*std::begin(std::declval<RangeT>()))>>
+  void addSymbol(EncodeKind Kind, StringRef Name, RangeT &&Targets,
                  SymbolFlags Flags = SymbolFlags::None) {
     SymbolsSet->addGlobal(Kind, Name, Flags, Targets);
   }
@@ -340,7 +339,7 @@ public:
   /// \param Name The name of the symbol.
   /// \param Targets The list of targets the symbol is defined in.
   /// \param Flags The properties the symbol holds.
-  void addSymbol(SymbolKind Kind, StringRef Name, TargetList &&Targets,
+  void addSymbol(EncodeKind Kind, StringRef Name, TargetList &&Targets,
                  SymbolFlags Flags = SymbolFlags::None) {
     SymbolsSet->addGlobal(Kind, Name, Flags, Targets);
   }
@@ -351,7 +350,7 @@ public:
   /// \param Name The name of the symbol.
   /// \param Target The target the symbol is defined in.
   /// \param Flags The properties the symbol holds.
-  void addSymbol(SymbolKind Kind, StringRef Name, Target &Target,
+  void addSymbol(EncodeKind Kind, StringRef Name, Target &Target,
                  SymbolFlags Flags = SymbolFlags::None) {
     SymbolsSet->addGlobal(Kind, Name, Flags, Target);
   }
@@ -372,11 +371,50 @@ public:
     return SymbolsSet->undefineds();
   };
 
+  /// Extract architecture slice from Interface.
+  ///
+  /// \param Arch architecture to extract from.
+  /// \return New InterfaceFile with extracted architecture slice.
+  LLVM_ABI llvm::Expected<std::unique_ptr<InterfaceFile>>
+  extract(Architecture Arch) const;
+
+  /// Remove architecture slice from Interface.
+  ///
+  /// \param Arch architecture to remove.
+  /// \return New Interface File with removed architecture slice.
+  LLVM_ABI llvm::Expected<std::unique_ptr<InterfaceFile>>
+  remove(Architecture Arch) const;
+
+  /// Merge Interfaces for the same library. The following library attributes
+  /// must match.
+  /// * Install name, Current & Compatibility version,
+  /// * Two-level namespace enablement, and App extension enablement.
+  ///
+  /// \param O The Interface to merge.
+  /// \return New Interface File that was merged.
+  LLVM_ABI llvm::Expected<std::unique_ptr<InterfaceFile>>
+  merge(const InterfaceFile *O) const;
+
+  /// Inline reexported library into Interface.
+  ///
+  /// \param Library Interface of reexported library.
+  /// \param Overwrite Whether to overwrite preexisting inlined library.
+  LLVM_ABI void inlineLibrary(std::shared_ptr<InterfaceFile> Library,
+                              bool Overwrite = false);
+
+  /// Set InterfaceFile properties from pre-gathered binary attributes,
+  /// if they are not set already.
+  ///
+  /// \param BA Attributes typically represented in load commands.
+  /// \param Targ MachO Target slice to add attributes to.
+  LLVM_ABI void setFromBinaryAttrs(const RecordsSlice::BinaryAttrs &BA,
+                                   const Target &Targ);
+
   /// The equality is determined by attributes that impact linking
   /// compatibilities. Path, & FileKind are irrelevant since these by
   /// itself should not impact linking.
   /// This is an expensive operation.
-  bool operator==(const InterfaceFile &O) const;
+  LLVM_ABI bool operator==(const InterfaceFile &O) const;
 
   bool operator!=(const InterfaceFile &O) const { return !(*this == O); }
 
@@ -399,7 +437,9 @@ private:
   PackedVersion CompatibilityVersion;
   uint8_t SwiftABIVersion{0};
   bool IsTwoLevelNamespace{false};
+  bool IsOSLibNotForSharedCache{false};
   bool IsAppExtensionSafe{false};
+  bool HasSimSupport{false};
   ObjCConstraintType ObjcConstraint = ObjCConstraintType::None;
   std::vector<std::pair<Target, std::string>> ParentUmbrellas;
   std::vector<InterfaceFileRef> AllowableClients;

@@ -6,16 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Option/ArgList.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Option/Arg.h"
-#include "llvm/Option/ArgList.h"
-#include "llvm/Option/Option.h"
 #include "llvm/Option/OptSpecifier.h"
+#include "llvm/Option/Option.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -132,17 +131,14 @@ void ArgList::AddAllArgsExcept(ArgStringList &Output,
 }
 
 /// This is a nicer interface when you don't have a list of Ids to exclude.
-void ArgList::AddAllArgs(ArgStringList &Output,
+void ArgList::addAllArgs(ArgStringList &Output,
                          ArrayRef<OptSpecifier> Ids) const {
-  ArrayRef<OptSpecifier> Exclude = std::nullopt;
+  ArrayRef<OptSpecifier> Exclude = {};
   AddAllArgsExcept(Output, Ids, Exclude);
 }
 
-/// This 3-opt variant of AddAllArgs could be eliminated in favor of one
-/// that accepts a single specifier, given the above which accepts any number.
-void ArgList::AddAllArgs(ArgStringList &Output, OptSpecifier Id0,
-                         OptSpecifier Id1, OptSpecifier Id2) const {
-  for (auto *Arg : filtered(Id0, Id1, Id2)) {
+void ArgList::AddAllArgs(ArgStringList &Output, OptSpecifier Id0) const {
+  for (auto *Arg : filtered(Id0)) {
     Arg->claim();
     Arg->render(*this, Output);
   }
@@ -188,8 +184,8 @@ const char *ArgList::GetOrMakeJoinedArgString(unsigned Index,
                                               StringRef LHS,
                                               StringRef RHS) const {
   StringRef Cur = getArgString(Index);
-  if (Cur.size() == LHS.size() + RHS.size() &&
-      Cur.startswith(LHS) && Cur.endswith(RHS))
+  if (Cur.size() == LHS.size() + RHS.size() && Cur.starts_with(LHS) &&
+      Cur.ends_with(RHS))
     return Cur.data();
 
   return MakeArgString(LHS + RHS);

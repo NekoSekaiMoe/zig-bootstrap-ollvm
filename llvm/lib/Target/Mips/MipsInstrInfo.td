@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 // Mips profiles and nodes
 //===----------------------------------------------------------------------===//
+include "MipsInstrCompiler.td"
 
 def SDT_MipsJmpLink      : SDTypeProfile<0, 1, [SDTCisVT<0, iPTR>]>;
 def SDT_MipsCMov         : SDTypeProfile<1, 4, [SDTCisSameAs<0, 1>,
@@ -857,6 +858,16 @@ def calltarget  : Operand<iPTR> {
 
 def imm64: Operand<i64>;
 
+def ConstantImmAsmOperandClass : AsmOperandClass {
+  let Name = "ConstantImm";
+  let PredicateMethod = "isConstantImm";
+  let RenderMethod = "addImmOperands";
+}
+
+def ConstantImm64: Operand<i64> {
+  let ParserMatchClass = ConstantImmAsmOperandClass;
+}
+
 def simm19_lsl2 : Operand<i32> {
   let EncoderMethod = "getSimm19Lsl2Encoding";
   let DecoderMethod = "DecodeSimm19Lsl2";
@@ -1198,7 +1209,9 @@ def HI16 : SDNodeXForm<imm, [{
 }]>;
 
 // Plus 1.
-def Plus1 : SDNodeXForm<imm, [{ return getImm(N, N->getSExtValue() + 1); }]>;
+def Plus1 : SDNodeXForm<imm, [{
+  return getSignedImm(N, N->getSExtValue() + 1);
+}]>;
 
 // Node immediate is zero (e.g. insve.d)
 def immz : PatLeaf<(imm), [{ return N->getSExtValue() == 0; }]>;
@@ -1903,45 +1916,45 @@ def ADJCALLSTACKUP   : MipsPseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
 }
 
 let usesCustomInserter = 1 in {
-  def ATOMIC_LOAD_ADD_I8   : Atomic2Ops<atomic_load_add_8, GPR32>;
-  def ATOMIC_LOAD_ADD_I16  : Atomic2Ops<atomic_load_add_16, GPR32>;
-  def ATOMIC_LOAD_ADD_I32  : Atomic2Ops<atomic_load_add_32, GPR32>;
-  def ATOMIC_LOAD_SUB_I8   : Atomic2Ops<atomic_load_sub_8, GPR32>;
-  def ATOMIC_LOAD_SUB_I16  : Atomic2Ops<atomic_load_sub_16, GPR32>;
-  def ATOMIC_LOAD_SUB_I32  : Atomic2Ops<atomic_load_sub_32, GPR32>;
-  def ATOMIC_LOAD_AND_I8   : Atomic2Ops<atomic_load_and_8, GPR32>;
-  def ATOMIC_LOAD_AND_I16  : Atomic2Ops<atomic_load_and_16, GPR32>;
-  def ATOMIC_LOAD_AND_I32  : Atomic2Ops<atomic_load_and_32, GPR32>;
-  def ATOMIC_LOAD_OR_I8    : Atomic2Ops<atomic_load_or_8, GPR32>;
-  def ATOMIC_LOAD_OR_I16   : Atomic2Ops<atomic_load_or_16, GPR32>;
-  def ATOMIC_LOAD_OR_I32   : Atomic2Ops<atomic_load_or_32, GPR32>;
-  def ATOMIC_LOAD_XOR_I8   : Atomic2Ops<atomic_load_xor_8, GPR32>;
-  def ATOMIC_LOAD_XOR_I16  : Atomic2Ops<atomic_load_xor_16, GPR32>;
-  def ATOMIC_LOAD_XOR_I32  : Atomic2Ops<atomic_load_xor_32, GPR32>;
-  def ATOMIC_LOAD_NAND_I8  : Atomic2Ops<atomic_load_nand_8, GPR32>;
-  def ATOMIC_LOAD_NAND_I16 : Atomic2Ops<atomic_load_nand_16, GPR32>;
-  def ATOMIC_LOAD_NAND_I32 : Atomic2Ops<atomic_load_nand_32, GPR32>;
+  def ATOMIC_LOAD_ADD_I8   : Atomic2Ops<atomic_load_add_i8, GPR32>;
+  def ATOMIC_LOAD_ADD_I16  : Atomic2Ops<atomic_load_add_i16, GPR32>;
+  def ATOMIC_LOAD_ADD_I32  : Atomic2Ops<atomic_load_add_i32, GPR32>;
+  def ATOMIC_LOAD_SUB_I8   : Atomic2Ops<atomic_load_sub_i8, GPR32>;
+  def ATOMIC_LOAD_SUB_I16  : Atomic2Ops<atomic_load_sub_i16, GPR32>;
+  def ATOMIC_LOAD_SUB_I32  : Atomic2Ops<atomic_load_sub_i32, GPR32>;
+  def ATOMIC_LOAD_AND_I8   : Atomic2Ops<atomic_load_and_i8, GPR32>;
+  def ATOMIC_LOAD_AND_I16  : Atomic2Ops<atomic_load_and_i16, GPR32>;
+  def ATOMIC_LOAD_AND_I32  : Atomic2Ops<atomic_load_and_i32, GPR32>;
+  def ATOMIC_LOAD_OR_I8    : Atomic2Ops<atomic_load_or_i8, GPR32>;
+  def ATOMIC_LOAD_OR_I16   : Atomic2Ops<atomic_load_or_i16, GPR32>;
+  def ATOMIC_LOAD_OR_I32   : Atomic2Ops<atomic_load_or_i32, GPR32>;
+  def ATOMIC_LOAD_XOR_I8   : Atomic2Ops<atomic_load_xor_i8, GPR32>;
+  def ATOMIC_LOAD_XOR_I16  : Atomic2Ops<atomic_load_xor_i16, GPR32>;
+  def ATOMIC_LOAD_XOR_I32  : Atomic2Ops<atomic_load_xor_i32, GPR32>;
+  def ATOMIC_LOAD_NAND_I8  : Atomic2Ops<atomic_load_nand_i8, GPR32>;
+  def ATOMIC_LOAD_NAND_I16 : Atomic2Ops<atomic_load_nand_i16, GPR32>;
+  def ATOMIC_LOAD_NAND_I32 : Atomic2Ops<atomic_load_nand_i32, GPR32>;
 
-  def ATOMIC_SWAP_I8       : Atomic2Ops<atomic_swap_8, GPR32>;
-  def ATOMIC_SWAP_I16      : Atomic2Ops<atomic_swap_16, GPR32>;
-  def ATOMIC_SWAP_I32      : Atomic2Ops<atomic_swap_32, GPR32>;
+  def ATOMIC_SWAP_I8       : Atomic2Ops<atomic_swap_i8, GPR32>;
+  def ATOMIC_SWAP_I16      : Atomic2Ops<atomic_swap_i16, GPR32>;
+  def ATOMIC_SWAP_I32      : Atomic2Ops<atomic_swap_i32, GPR32>;
 
-  def ATOMIC_CMP_SWAP_I8   : AtomicCmpSwap<atomic_cmp_swap_8, GPR32>;
-  def ATOMIC_CMP_SWAP_I16  : AtomicCmpSwap<atomic_cmp_swap_16, GPR32>;
-  def ATOMIC_CMP_SWAP_I32  : AtomicCmpSwap<atomic_cmp_swap_32, GPR32>;
+  def ATOMIC_CMP_SWAP_I8   : AtomicCmpSwap<atomic_cmp_swap_i8, GPR32>;
+  def ATOMIC_CMP_SWAP_I16  : AtomicCmpSwap<atomic_cmp_swap_i16, GPR32>;
+  def ATOMIC_CMP_SWAP_I32  : AtomicCmpSwap<atomic_cmp_swap_i32, GPR32>;
 
-  def ATOMIC_LOAD_MIN_I8   : Atomic2Ops<atomic_load_min_8, GPR32>;
-  def ATOMIC_LOAD_MIN_I16  : Atomic2Ops<atomic_load_min_16, GPR32>;
-  def ATOMIC_LOAD_MIN_I32  : Atomic2Ops<atomic_load_min_32, GPR32>;
-  def ATOMIC_LOAD_MAX_I8   : Atomic2Ops<atomic_load_max_8, GPR32>;
-  def ATOMIC_LOAD_MAX_I16  : Atomic2Ops<atomic_load_max_16, GPR32>;
-  def ATOMIC_LOAD_MAX_I32  : Atomic2Ops<atomic_load_max_32, GPR32>;
-  def ATOMIC_LOAD_UMIN_I8  : Atomic2Ops<atomic_load_umin_8, GPR32>;
-  def ATOMIC_LOAD_UMIN_I16 : Atomic2Ops<atomic_load_umin_16, GPR32>;
-  def ATOMIC_LOAD_UMIN_I32 : Atomic2Ops<atomic_load_umin_32, GPR32>;
-  def ATOMIC_LOAD_UMAX_I8  : Atomic2Ops<atomic_load_umax_8, GPR32>;
-  def ATOMIC_LOAD_UMAX_I16 : Atomic2Ops<atomic_load_umax_16, GPR32>;
-  def ATOMIC_LOAD_UMAX_I32 : Atomic2Ops<atomic_load_umax_32, GPR32>;
+  def ATOMIC_LOAD_MIN_I8   : Atomic2Ops<atomic_load_min_i8, GPR32>;
+  def ATOMIC_LOAD_MIN_I16  : Atomic2Ops<atomic_load_min_i16, GPR32>;
+  def ATOMIC_LOAD_MIN_I32  : Atomic2Ops<atomic_load_min_i32, GPR32>;
+  def ATOMIC_LOAD_MAX_I8   : Atomic2Ops<atomic_load_max_i8, GPR32>;
+  def ATOMIC_LOAD_MAX_I16  : Atomic2Ops<atomic_load_max_i16, GPR32>;
+  def ATOMIC_LOAD_MAX_I32  : Atomic2Ops<atomic_load_max_i32, GPR32>;
+  def ATOMIC_LOAD_UMIN_I8  : Atomic2Ops<atomic_load_umin_i8, GPR32>;
+  def ATOMIC_LOAD_UMIN_I16 : Atomic2Ops<atomic_load_umin_i16, GPR32>;
+  def ATOMIC_LOAD_UMIN_I32 : Atomic2Ops<atomic_load_umin_i32, GPR32>;
+  def ATOMIC_LOAD_UMAX_I8  : Atomic2Ops<atomic_load_umax_i8, GPR32>;
+  def ATOMIC_LOAD_UMAX_I16 : Atomic2Ops<atomic_load_umax_i16, GPR32>;
+  def ATOMIC_LOAD_UMAX_I32 : Atomic2Ops<atomic_load_umax_i32, GPR32>;
 }
 
 def ATOMIC_LOAD_ADD_I8_POSTRA   : Atomic2OpsSubwordPostRA<GPR32>;
@@ -2079,17 +2092,17 @@ let AdditionalPredicates = [NotInMicroMips] in {
 
 let AdditionalPredicates = [NotInMicroMips] in {
   /// Shift Instructions
-  def SLL  : MMRel, shift_rotate_imm<"sll", uimm5, GPR32Opnd, II_SLL, shl,
+  def SLL  : MMRel, shift_rotate_imm<"sll", uimm5, GPR32Opnd, II_SLL, mshl_32,
                                      immZExt5>, SRA_FM<0, 0>, ISA_MIPS1;
-  def SRL  : MMRel, shift_rotate_imm<"srl", uimm5, GPR32Opnd, II_SRL, srl,
+  def SRL  : MMRel, shift_rotate_imm<"srl", uimm5, GPR32Opnd, II_SRL, msrl_32,
                                      immZExt5>, SRA_FM<2, 0>, ISA_MIPS1;
-  def SRA  : MMRel, shift_rotate_imm<"sra", uimm5, GPR32Opnd, II_SRA, sra,
+  def SRA  : MMRel, shift_rotate_imm<"sra", uimm5, GPR32Opnd, II_SRA, msra_32,
                                      immZExt5>, SRA_FM<3, 0>, ISA_MIPS1;
-  def SLLV : MMRel, shift_rotate_reg<"sllv", GPR32Opnd, II_SLLV, shl>,
+  def SLLV : MMRel, shift_rotate_reg<"sllv", GPR32Opnd, II_SLLV, mshl_32>,
              SRLV_FM<4, 0>, ISA_MIPS1;
-  def SRLV : MMRel, shift_rotate_reg<"srlv", GPR32Opnd, II_SRLV, srl>,
+  def SRLV : MMRel, shift_rotate_reg<"srlv", GPR32Opnd, II_SRLV, msrl_32>,
              SRLV_FM<6, 0>, ISA_MIPS1;
-  def SRAV : MMRel, shift_rotate_reg<"srav", GPR32Opnd, II_SRAV, sra>,
+  def SRAV : MMRel, shift_rotate_reg<"srav", GPR32Opnd, II_SRAV, msra_32>,
              SRLV_FM<7, 0>, ISA_MIPS1;
 
   // Rotate Instructions
@@ -2947,10 +2960,10 @@ def : MipsInstAlias<"nor\t$rs, $imm", (NORImm GPR32Opnd:$rs, GPR32Opnd:$rs,
 
 let hasDelaySlot = 1, isCTI = 1 in {
 def BneImm : MipsAsmPseudoInst<(outs GPR32Opnd:$rt),
-                               (ins imm64:$imm64, brtarget:$offset),
+                               (ins ConstantImm64:$imm64, brtarget:$offset),
                                "bne\t$rt, $imm64, $offset">;
 def BeqImm : MipsAsmPseudoInst<(outs GPR32Opnd:$rt),
-                               (ins imm64:$imm64, brtarget:$offset),
+                               (ins ConstantImm64:$imm64, brtarget:$offset),
                                "beq\t$rt, $imm64, $offset">;
 
 class CondBranchPseudo<string instr_asm> :
@@ -2978,7 +2991,7 @@ def BGTUL: CondBranchPseudo<"bgtul">, ISA_MIPS2_NOT_32R6_64R6;
 
 let isCTI = 1 in
 class CondBranchImmPseudo<string instr_asm> :
-  MipsAsmPseudoInst<(outs), (ins GPR32Opnd:$rs, imm64:$imm, brtarget:$offset),
+  MipsAsmPseudoInst<(outs), (ins GPR32Opnd:$rs, ConstantImm64:$imm, brtarget:$offset),
                     !strconcat(instr_asm, "\t$rs, $imm, $offset")>;
 
 def BEQLImmMacro : CondBranchImmPseudo<"beql">, ISA_MIPS2_NOT_32R6_64R6;
@@ -3047,6 +3060,9 @@ def : MipsInstAlias<"divu $rt, $rs", (UDivMacro GPR32NonZeroOpnd:$rt,
 def : MipsInstAlias<"divu $rd, $imm", (UDivIMacro GPR32Opnd:$rd, GPR32Opnd:$rd,
                                                   simm32:$imm), 0>,
       ISA_MIPS1_NOT_32R6_64R6;
+
+
+def : MipsInstAlias<"nal", (BLTZAL ZERO, 0), 1>, ISA_MIPS1_NOT_32R6_64R6;
 
 def SRemMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rd),
                                   (ins GPR32Opnd:$rs, GPR32Opnd:$rt),
@@ -3352,16 +3368,16 @@ let AdditionalPredicates = [NotInMicroMips] in {
   }
 
   // Atomic load patterns.
-  def : MipsPat<(atomic_load_8 addr:$a), (LB addr:$a)>, ISA_MIPS1;
-  def : MipsPat<(atomic_load_16 addr:$a), (LH addr:$a)>, ISA_MIPS1;
-  def : MipsPat<(atomic_load_32 addr:$a), (LW addr:$a)>, ISA_MIPS1;
+  def : MipsPat<(atomic_load_asext_8 addr:$a), (LB addr:$a)>, ISA_MIPS1;
+  def : MipsPat<(atomic_load_asext_16 addr:$a), (LH addr:$a)>, ISA_MIPS1;
+  def : MipsPat<(atomic_load_nonext_32 addr:$a), (LW addr:$a)>, ISA_MIPS1;
 
   // Atomic store patterns.
-  def : MipsPat<(atomic_store_8 addr:$a, GPR32:$v), (SB GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_8 GPR32:$v, addr:$a), (SB GPR32:$v, addr:$a)>,
         ISA_MIPS1;
-  def : MipsPat<(atomic_store_16 addr:$a, GPR32:$v), (SH GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_16 GPR32:$v, addr:$a), (SH GPR32:$v, addr:$a)>,
         ISA_MIPS1;
-  def : MipsPat<(atomic_store_32 addr:$a, GPR32:$v), (SW GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_32 GPR32:$v, addr:$a), (SW GPR32:$v, addr:$a)>,
         ISA_MIPS1;
 }
 

@@ -14,9 +14,12 @@
 #define LLVM_CODEGEN_GLOBALISEL_INSTRUCTIONSELECTOR_H
 
 #include "llvm/CodeGen/GlobalISel/GIMatchTableExecutor.h"
+#include "llvm/Support/Compiler.h"
 
 namespace llvm {
-class InstructionSelector : public GIMatchTableExecutor {
+class GISelObserverWrapper;
+
+class LLVM_ABI InstructionSelector : public GIMatchTableExecutor {
 public:
   virtual ~InstructionSelector();
 
@@ -31,6 +34,16 @@ public:
   ///     for I in all mutated/inserted instructions:
   ///       !isPreISelGenericOpcode(I.getOpcode())
   virtual bool select(MachineInstr &I) = 0;
+
+  // FIXME: Eliminate dependency on TargetPassConfig for NewPM transition
+  const TargetPassConfig *TPC = nullptr;
+
+  MachineOptimizationRemarkEmitter *MORE = nullptr;
+
+  /// Note: InstructionSelect does not track changed instructions.
+  /// changingInstr() and changedInstr() will never be called on these
+  /// observers.
+  GISelObserverWrapper *AllObservers = nullptr;
 };
 } // namespace llvm
 

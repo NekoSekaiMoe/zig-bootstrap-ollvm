@@ -13,6 +13,7 @@
 #include "clang/Basic/LLVM.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/Options.h"
+#include "clang/Driver/SanitizerArgs.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Option/ArgList.h"
@@ -36,9 +37,11 @@ struct DeviceLibABIVersion {
   /// and below works with ROCm 5.0 and below which does not have
   /// abi_version_*.bc. Code object v5 requires abi_version_500.bc.
   bool requiresLibrary() { return ABIVersion >= 500; }
-  std::string toString() {
+  std::string toString() { return Twine(getAsCodeObjectVersion()).str(); }
+
+  unsigned getAsCodeObjectVersion() const {
     assert(ABIVersion % 100 == 0 && "Not supported");
-    return Twine(ABIVersion / 100).str();
+    return ABIVersion / 100;
   }
 };
 
@@ -77,6 +80,9 @@ private:
   const Driver &D;
   bool HasHIPRuntime = false;
   bool HasDeviceLibrary = false;
+  bool HasHIPStdParLibrary = false;
+  bool HasRocThrustLibrary = false;
+  bool HasRocPrimLibrary = false;
 
   // Default version if not detected or specified.
   const unsigned DefaultVersionMajor = 3;
@@ -96,6 +102,13 @@ private:
   std::vector<std::string> RocmDeviceLibPathArg;
   // HIP runtime path specified by --hip-path.
   StringRef HIPPathArg;
+  // HIP Standard Parallel Algorithm acceleration library specified by
+  // --hipstdpar-path
+  StringRef HIPStdParPathArg;
+  // rocThrust algorithm library specified by --hipstdpar-thrust-path
+  StringRef HIPRocThrustPathArg;
+  // rocPrim algorithm library specified by --hipstdpar-prim-path
+  StringRef HIPRocPrimPathArg;
   // HIP version specified by --hip-version.
   StringRef HIPVersionArg;
   // Wheter -nogpulib is specified.
@@ -116,7 +129,6 @@ private:
 
   // Libraries that are always linked depending on the language
   SmallString<0> OpenCL;
-  SmallString<0> HIP;
 
   // Asan runtime library
   SmallString<0> AsanRTL;
@@ -138,7 +150,7 @@ private:
   bool Verbose;
 
   bool allGenericLibsValid() const {
-    return !OCML.empty() && !OCKL.empty() && !OpenCL.empty() && !HIP.empty() &&
+    return !OCML.empty() && !OCKL.empty() && !OpenCL.empty() &&
            WavefrontSize64.isValid() && FiniteOnly.isValid() &&
            UnsafeMath.isValid() && DenormalsAreZero.isValid() &&
            CorrectlyRoundedSqrt.isValid();
@@ -163,12 +175,11 @@ public:
 
   /// Get file paths of default bitcode libraries common to AMDGPU based
   /// toolchains.
-  llvm::SmallVector<std::string, 12>
-  getCommonBitcodeLibs(const llvm::opt::ArgList &DriverArgs,
-                       StringRef LibDeviceFile, bool Wave64, bool DAZ,
-                       bool FiniteOnly, bool UnsafeMathOpt,
-                       bool FastRelaxedMath, bool CorrectSqrt,
-                       DeviceLibABIVersion ABIVer, bool isOpenMP) const;
+  llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12> getCommonBitcodeLibs(
+      const llvm::opt::ArgList &DriverArgs, StringRef LibDeviceFile,
+      bool Wave64, bool DAZ, bool FiniteOnly, bool UnsafeMathOpt,
+      bool FastRelaxedMath, bool CorrectSqrt, DeviceLibABIVersion ABIVer,
+      bool GPUSan, bool isOpenMP) const;
   /// Check file paths of default bitcode libraries common to AMDGPU based
   /// toolchains. \returns false if there are invalid or missing files.
   bool checkCommonBitcodeLibs(StringRef GPUArch, StringRef LibDeviceFile,
@@ -179,6 +190,9 @@ public:
 
   /// Check whether we detected a valid ROCm device library.
   bool hasDeviceLibrary() const { return HasDeviceLibrary; }
+
+  /// Check whether we detected a valid HIP STDPAR Acceleration library.
+  bool hasHIPStdParLibrary() const { return HasHIPStdParLibrary; }
 
   /// Print information about the detected ROCm installation.
   void print(raw_ostream &OS) const;
@@ -214,11 +228,6 @@ public:
   StringRef getOpenCLPath() const {
     assert(!OpenCL.empty());
     return OpenCL;
-  }
-
-  StringRef getHIPPath() const {
-    assert(!HIP.empty());
-    return HIP;
   }
 
   /// Returns empty string of Asan runtime library is not available.

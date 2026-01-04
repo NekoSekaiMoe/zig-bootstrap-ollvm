@@ -37,7 +37,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -64,12 +63,12 @@ class IvarInvalidationCheckerImpl {
 
   struct InvalidationInfo {
     /// Has the ivar been invalidated?
-    bool IsInvalidated;
+    bool IsInvalidated = false;
 
     /// The methods which can be used to invalidate the ivar.
     MethodSet InvalidationMethods;
 
-    InvalidationInfo() : IsInvalidated(false) {}
+    InvalidationInfo() = default;
     void addInvalidationMethod(const ObjCMethodDecl *MD) {
       InvalidationMethods.insert(MD);
     }

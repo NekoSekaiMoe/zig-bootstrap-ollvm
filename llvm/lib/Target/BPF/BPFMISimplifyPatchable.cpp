@@ -34,6 +34,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/Support/Debug.h"
 #include <set>
 
@@ -49,9 +50,7 @@ struct BPFMISimplifyPatchable : public MachineFunctionPass {
   const BPFInstrInfo *TII;
   MachineFunction *MF;
 
-  BPFMISimplifyPatchable() : MachineFunctionPass(ID) {
-    initializeBPFMISimplifyPatchablePass(*PassRegistry::getPassRegistry());
-  }
+  BPFMISimplifyPatchable() : MachineFunctionPass(ID) {}
 
 private:
   std::set<MachineInstr *> SkipInsts;
@@ -93,10 +92,39 @@ void BPFMISimplifyPatchable::initialize(MachineFunction &MFParm) {
   LLVM_DEBUG(dbgs() << "*** BPF simplify patchable insts pass ***\n\n");
 }
 
+static bool isStoreImm(unsigned Opcode) {
+  return Opcode == BPF::STB_imm || Opcode == BPF::STH_imm ||
+         Opcode == BPF::STW_imm || Opcode == BPF::STD_imm;
+}
+
+static bool isStore32(unsigned Opcode) {
+  return Opcode == BPF::STB32 || Opcode == BPF::STH32 || Opcode == BPF::STW32 ||
+         Opcode == BPF::STBREL32 || Opcode == BPF::STHREL32 ||
+         Opcode == BPF::STWREL32;
+}
+
+static bool isStore64(unsigned Opcode) {
+  return Opcode == BPF::STB || Opcode == BPF::STH || Opcode == BPF::STW ||
+         Opcode == BPF::STD || Opcode == BPF::STDREL;
+}
+
+static bool isLoad32(unsigned Opcode) {
+  return Opcode == BPF::LDB32 || Opcode == BPF::LDH32 || Opcode == BPF::LDW32 ||
+         Opcode == BPF::LDBACQ32 || Opcode == BPF::LDHACQ32 ||
+         Opcode == BPF::LDWACQ32;
+}
+
+static bool isLoad64(unsigned Opcode) {
+  return Opcode == BPF::LDB || Opcode == BPF::LDH || Opcode == BPF::LDW ||
+         Opcode == BPF::LDD || Opcode == BPF::LDDACQ;
+}
+
+static bool isLoadSext(unsigned Opcode) {
+  return Opcode == BPF::LDBSX || Opcode == BPF::LDHSX || Opcode == BPF::LDWSX;
+}
+
 bool BPFMISimplifyPatchable::isLoadInst(unsigned Opcode) {
-  return Opcode == BPF::LDD || Opcode == BPF::LDW || Opcode == BPF::LDH ||
-         Opcode == BPF::LDB || Opcode == BPF::LDW32 || Opcode == BPF::LDH32 ||
-         Opcode == BPF::LDB32;
+  return isLoad32(Opcode) || isLoad64(Opcode) || isLoadSext(Opcode);
 }
 
 void BPFMISimplifyPatchable::checkADDrr(MachineRegisterInfo *MRI,
@@ -117,14 +145,12 @@ void BPFMISimplifyPatchable::checkADDrr(MachineRegisterInfo *MRI,
     MachineInstr *DefInst = MO.getParent();
     unsigned Opcode = DefInst->getOpcode();
     unsigned COREOp;
-    if (Opcode == BPF::LDB || Opcode == BPF::LDH || Opcode == BPF::LDW ||
-        Opcode == BPF::LDD || Opcode == BPF::STB || Opcode == BPF::STH ||
-        Opcode == BPF::STW || Opcode == BPF::STD)
-      COREOp = BPF::CORE_MEM;
-    else if (Opcode == BPF::LDB32 || Opcode == BPF::LDH32 ||
-             Opcode == BPF::LDW32 || Opcode == BPF::STB32 ||
-             Opcode == BPF::STH32 || Opcode == BPF::STW32)
-      COREOp = BPF::CORE_ALU32_MEM;
+    if (isLoad64(Opcode) || isLoadSext(Opcode))
+      COREOp = BPF::CORE_LD64;
+    else if (isLoad32(Opcode))
+      COREOp = BPF::CORE_LD32;
+    else if (isStore64(Opcode) || isStore32(Opcode) || isStoreImm(Opcode))
+      COREOp = BPF::CORE_ST;
     else
       continue;
 
@@ -136,9 +162,7 @@ void BPFMISimplifyPatchable::checkADDrr(MachineRegisterInfo *MRI,
     // Reject the form:
     //   %1 = ADD_rr %2, %3
     //   *(type *)(%2 + 0) = %1
-    if (Opcode == BPF::STB || Opcode == BPF::STH || Opcode == BPF::STW ||
-        Opcode == BPF::STD || Opcode == BPF::STB32 || Opcode == BPF::STH32 ||
-        Opcode == BPF::STW32) {
+    if (isStore64(Opcode) || isStore32(Opcode)) {
       const MachineOperand &Opnd = DefInst->getOperand(0);
       if (Opnd.isReg() && Opnd.getReg() == MO.getReg())
         continue;

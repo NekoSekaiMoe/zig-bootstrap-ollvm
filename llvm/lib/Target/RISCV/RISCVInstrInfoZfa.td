@@ -7,11 +7,19 @@
 //===----------------------------------------------------------------------===//
 //
 // This file describes the RISC-V instructions from the standard 'Zfa'
-// additional floating-point extension, version 0.1.
-// This version is still experimental as the 'Zfa' extension hasn't been
-// ratified yet.
+// additional floating-point extension, version 1.0.
 //
 //===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// RISC-V specific DAG Nodes.
+//===----------------------------------------------------------------------===//
+
+def SDT_RISCVFLI
+    : SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisVT<1, XLenVT>]>;
+
+// Zfa fli instruction for constant materialization.
+def riscv_fli : RVSDNode<"FLI", SDT_RISCVFLI>;
 
 //===----------------------------------------------------------------------===//
 // Operand and SDNode transformation definitions.
@@ -23,24 +31,30 @@ def LoadFPImmOperand : AsmOperandClass {
   let ParserMethod = "parseFPImm";
   let RenderMethod = "addFPImmOperands";
   let DiagnosticType = "InvalidLoadFPImm";
+  let DiagnosticString = "operand must be a valid floating-point constant";
 }
 
 def loadfpimm : Operand<XLenVT> {
   let ParserMatchClass = LoadFPImmOperand;
   let PrintMethod = "printFPImmOperand";
+  let OperandType = "OPERAND_UIMM5";
+  let OperandNamespace = "RISCVOp";
 }
 
 def RTZArg : AsmOperandClass {
   let Name = "RTZArg";
   let RenderMethod = "addFRMArgOperands";
   let DiagnosticType = "InvalidRTZArg";
+  let DiagnosticString = "operand must be 'rtz' floating-point rounding mode";
   let ParserMethod = "parseFRMArg";
 }
 
 def rtzarg : Operand<XLenVT> {
   let ParserMatchClass = RTZArg;
   let PrintMethod = "printFRMArg";
-  let DecoderMethod = "decodeFRMArg";
+  let DecoderMethod = "decodeRTZArg";
+  let OperandType = "OPERAND_RTZARG";
+  let OperandNamespace = "RISCVOp";
 }
 
 //===----------------------------------------------------------------------===//
@@ -54,18 +68,14 @@ class FPBinaryOp_rr<bits<7> funct7, bits<3> funct3, DAGOperand rdty,
               (ins rsty:$rs1, rsty:$rs2), opcodestr, "$rd, $rs1, $rs2">;
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
-class FPUnaryOp_imm<bits<7> funct7, bits<5> rs2val, bits<3> funct3,
-                    dag outs, dag ins, string opcodestr, string argstr>
-    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatI> {
+class FPFLI_r<bits<7> funct7, bits<5> rs2val, bits<3> funct3,
+              DAGOperand rdty, string opcodestr>
+    : RVInstR<funct7, funct3, OPC_OP_FP, (outs rdty:$rd),
+              (ins loadfpimm:$imm), opcodestr, "$rd, $imm"> {
   bits<5> imm;
-  bits<5> rd;
 
-  let Inst{31-25} = funct7;
-  let Inst{24-20} = rs2val;
-  let Inst{19-15} = imm;
-  let Inst{14-12} = funct3;
-  let Inst{11-7} = rd;
-  let Inst{6-0} = OPC_OP_FP.Value;
+  let rs2 = rs2val;
+  let rs1 = imm;
 }
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0, mayRaiseFPException = 1,
@@ -84,8 +94,7 @@ class FPUnaryOp_r_rtz<bits<7> funct7, bits<5> rs2val, DAGOperand rdty,
 
 let Predicates = [HasStdExtZfa] in {
 let isReMaterializable = 1, isAsCheapAsAMove = 1 in
-def FLI_S : FPUnaryOp_imm<0b1111000, 0b00001, 0b000, (outs FPR32:$rd),
-            (ins loadfpimm:$imm), "fli.s", "$rd, $imm">,
+def FLI_S : FPFLI_r<0b1111000, 0b00001, 0b000, FPR32, "fli.s">,
             Sched<[WriteFLI32]>;
 
 let SchedRW = [WriteFMinMax32, ReadFMinMax32, ReadFMinMax32] in {
@@ -106,8 +115,7 @@ def FLEQ_S : FPCmp_rr<0b1010000, 0b100, "fleq.s", FPR32>;
 
 let Predicates = [HasStdExtZfa, HasStdExtD] in {
 let isReMaterializable = 1, isAsCheapAsAMove = 1 in
-def FLI_D : FPUnaryOp_imm<0b1111001, 0b00001, 0b000, (outs FPR64:$rd),
-            (ins loadfpimm:$imm), "fli.d", "$rd, $imm">,
+def FLI_D : FPFLI_r<0b1111001, 0b00001, 0b000, FPR64, "fli.d">,
             Sched<[WriteFLI64]>;
 
 let SchedRW = [WriteFMinMax64, ReadFMinMax64, ReadFMinMax64] in {
@@ -120,6 +128,7 @@ def FROUND_D : FPUnaryOp_r_frm<0b0100001, 0b00100, FPR64, FPR64, "fround.d">,
 def FROUNDNX_D : FPUnaryOp_r_frm<0b0100001, 0b00101, FPR64, FPR64, "froundnx.d">,
                  Sched<[WriteFRoundF64, ReadFRoundF64]>;
 
+let IsSignExtendingOpW = 1 in
 def FCVTMOD_W_D
     : FPUnaryOp_r_rtz<0b1100001, 0b01000, GPR, FPR64, "fcvtmod.w.d">,
       Sched<[WriteFCvtF64ToI32, ReadFCvtF64ToI32]>;
@@ -135,7 +144,7 @@ let mayRaiseFPException = 0 in {
 def FMVH_X_D : FPUnaryOp_r<0b1110001, 0b00001, 0b000, GPR, FPR64, "fmvh.x.d">,
                Sched<[WriteFMovF64ToI64, ReadFMovF64ToI64]>;
 def FMVP_D_X : FPBinaryOp_rr<0b1011001, 0b000, FPR64, GPR, "fmvp.d.x">,
-               Sched<[WriteFMovI64ToF64, ReadFMovI64ToF64]>;
+               Sched<[WriteFMovI64ToF64, ReadFMovI64ToF64, ReadFMovI64ToF64]>;
 }
 
 let isCodeGenOnly = 1, mayRaiseFPException = 0 in
@@ -146,8 +155,7 @@ def FMV_X_W_FPR64 : FPUnaryOp_r<0b1110000, 0b00000, 0b000, GPR, FPR64,
 
 let Predicates = [HasStdExtZfa, HasStdExtZfhOrZvfh] in
 let isReMaterializable = 1, isAsCheapAsAMove = 1 in
-def FLI_H : FPUnaryOp_imm<0b1111010, 0b00001, 0b000, (outs FPR16:$rd),
-            (ins loadfpimm:$imm), "fli.h", "$rd, $imm">,
+def FLI_H : FPFLI_r<0b1111010, 0b00001, 0b000, FPR16, "fli.h">,
             Sched<[WriteFLI16]>;
 
 let Predicates = [HasStdExtZfa, HasStdExtZfh] in {
@@ -166,6 +174,35 @@ def FLTQ_H : FPCmp_rr<0b1010010, 0b101, "fltq.h", FPR16>;
 def FLEQ_H : FPCmp_rr<0b1010010, 0b100, "fleq.h", FPR16>;
 }
 } // Predicates = [HasStdExtZfa, HasStdExtZfh]
+
+let Predicates = [HasStdExtZfa, HasStdExtQ] in {
+let isReMaterializable = 1, isAsCheapAsAMove = 1 in
+def FLI_Q : FPFLI_r<0b1111011, 0b00001, 0b000, FPR128, "fli.q">,
+            Sched<[WriteFLI128]>;
+
+let SchedRW = [WriteFMinMax128, ReadFMinMax128, ReadFMinMax128] in {
+def FMINM_Q: FPALU_rr<0b0010111, 0b010, "fminm.q", FPR128, Commutable=1>;
+def FMAXM_Q: FPALU_rr<0b0010111, 0b011, "fmaxm.q", FPR128, Commutable=1>;
+}
+
+def FROUND_Q : FPUnaryOp_r_frm<0b0100011, 0b00100, FPR128, FPR128, "fround.q">,
+               Sched<[WriteFRoundF128, ReadFRoundF128]>;
+def FROUNDNX_Q : FPUnaryOp_r_frm<0b0100011, 0b00101, FPR128, FPR128, 
+                                 "froundnx.q">,
+                 Sched<[WriteFRoundF128, ReadFRoundF128]>;
+
+let SchedRW = [WriteFCmp128, ReadFCmp128, ReadFCmp128] in {
+def FLTQ_Q : FPCmp_rr<0b1010011, 0b101, "fltq.q", FPR128>;
+def FLEQ_Q : FPCmp_rr<0b1010011, 0b100, "fleq.q", FPR128>;
+}
+} // Predicates = [HasStdExtZfa, HasStdExtQ]
+
+let Predicates = [HasStdExtZfa, HasStdExtQ, IsRV64] in {
+  let mayRaiseFPException = 0 in {
+    def FMVH_X_Q : FPUnaryOp_r<0b1110011, 0b00001, 0b000, GPR, FPR128, "fmvh.x.q">;
+    def FMVP_Q_X : FPBinaryOp_rr<0b1011011, 0b000, FPR128, GPR, "fmvp.q.x">;
+  }
+} // Predicates = [HasStdExtZfa, HasStdExtQ, IsRV64]
 
 //===----------------------------------------------------------------------===//
 // Pseudo-instructions and codegen patterns
@@ -192,11 +229,20 @@ def : InstAlias<"fgeq.h $rd, $rs, $rt",
                 (FLEQ_H GPR:$rd, FPR16:$rt, FPR16:$rs), 0>;
 }
 
+let Predicates = [HasStdExtZfa, HasStdExtQ] in {
+def : InstAlias<"fgtq.q $rd, $rs, $rt",
+                (FLTQ_Q GPR:$rd, FPR128:$rt, FPR128:$rs), 0>;
+def : InstAlias<"fgeq.q $rd, $rs, $rt",
+                (FLEQ_Q GPR:$rd, FPR128:$rt, FPR128:$rs), 0>;
+}
+
 //===----------------------------------------------------------------------===//
 // Codegen patterns
 //===----------------------------------------------------------------------===//
 
 let Predicates = [HasStdExtZfa] in {
+def: Pat<(f32 (riscv_fli timm:$imm)), (FLI_S timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_S, FPR32, f32>;
 def: PatFprFpr<fmaximum, FMAXM_S, FPR32, f32>;
 
@@ -208,6 +254,7 @@ def: Pat<(any_frint FPR32:$rs1), (FROUNDNX_S FPR32:$rs1, FRM_DYN)>;
 def: Pat<(any_fnearbyint FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_DYN)>;
 
 def: Pat<(any_fround FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RMM)>;
+def: Pat<(any_froundeven FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RNE)>;
 def: Pat<(any_ffloor FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RDN)>;
 def: Pat<(any_fceil FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RUP)>;
 def: Pat<(any_ftrunc FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RTZ)>;
@@ -219,6 +266,8 @@ def: PatSetCC<FPR32, strict_fsetcc, SETOLE, FLEQ_S, f32>;
 } // Predicates = [HasStdExtZfa]
 
 let Predicates = [HasStdExtZfa, HasStdExtD] in {
+def: Pat<(f64 (riscv_fli timm:$imm)), (FLI_D timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_D, FPR64, f64>;
 def: PatFprFpr<fmaximum, FMAXM_D, FPR64, f64>;
 
@@ -247,6 +296,8 @@ def : Pat<(RISCVBuildPairF64 GPR:$rs1, GPR:$rs2),
 }
 
 let Predicates = [HasStdExtZfa, HasStdExtZfh] in {
+def: Pat<(f16 (riscv_fli timm:$imm)), (FLI_H timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_H, FPR16, f16>;
 def: PatFprFpr<fmaximum, FMAXM_H, FPR16, f16>;
 

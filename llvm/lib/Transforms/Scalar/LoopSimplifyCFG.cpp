@@ -16,17 +16,14 @@
 #include "llvm/Transforms/Scalar/LoopSimplifyCFG.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopIterator.h"
-#include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/MemorySSAUpdater.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -131,6 +128,8 @@ private:
   // from any other block. So this variable set to true means that loop's latch
   // has become unreachable from loop header.
   bool DeleteCurrentLoop = false;
+  // Whether or not we enter the loop through an indirectbr.
+  bool HasIndirectEntry = false;
 
   // The blocks of the original loop that will still be reachable from entry
   // after the constant folding.
@@ -216,6 +215,19 @@ private:
     // algorithms, but so far we just give up analyzing them.
     if (hasIrreducibleCFG(DFS)) {
       HasIrreducibleCFG = true;
+      return;
+    }
+
+    // We need a loop preheader to split in handleDeadExits(). If LoopSimplify
+    // wasn't able to form one because the loop can be entered through an
+    // indirectbr we cannot continue.
+    if (!L.getLoopPreheader()) {
+      assert(any_of(predecessors(L.getHeader()),
+                    [&](BasicBlock *Pred) {
+                      return isa<IndirectBrInst>(Pred->getTerminator());
+                    }) &&
+             "Loop should have preheader if it is not entered indirectly");
+      HasIndirectEntry = true;
       return;
     }
 
@@ -364,15 +376,14 @@ private:
     for (BasicBlock *BB : DeadExitBlocks) {
       // Eliminate all Phis and LandingPads from dead exits.
       // TODO: Consider removing all instructions in this dead block.
-      SmallVector<Instruction *, 4> DeadInstructions;
-      for (auto &PN : BB->phis())
-        DeadInstructions.push_back(&PN);
+      SmallVector<Instruction *, 4> DeadInstructions(
+          llvm::make_pointer_range(BB->phis()));
 
-      if (auto *LandingPad = dyn_cast<LandingPadInst>(BB->getFirstNonPHI()))
+      if (auto *LandingPad = dyn_cast<LandingPadInst>(BB->getFirstNonPHIIt()))
         DeadInstructions.emplace_back(LandingPad);
 
       for (Instruction *I : DeadInstructions) {
-        SE.forgetBlockAndLoopDispositions(I);
+        SE.forgetValue(I);
         I->replaceAllUsesWith(PoisonValue::get(I->getType()));
         I->eraseFromParent();
       }
@@ -547,6 +558,12 @@ public:
 
     if (HasIrreducibleCFG) {
       LLVM_DEBUG(dbgs() << "Loops with irreducible CFG are not supported!\n");
+      return false;
+    }
+
+    if (HasIndirectEntry) {
+      LLVM_DEBUG(dbgs() << "Loops which can be entered indirectly are not"
+                           " supported!\n");
       return false;
     }
 
@@ -733,53 +750,4 @@ PreservedAnalyses LoopSimplifyCFGPass::run(Loop &L, LoopAnalysisManager &AM,
   if (AR.MSSA)
     PA.preserve<MemorySSAAnalysis>();
   return PA;
-}
-
-namespace {
-class LoopSimplifyCFGLegacyPass : public LoopPass {
-public:
-  static char ID; // Pass ID, replacement for typeid
-  LoopSimplifyCFGLegacyPass() : LoopPass(ID) {
-    initializeLoopSimplifyCFGLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-
-  bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-    if (skipLoop(L))
-      return false;
-
-    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-    ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-    auto *MSSAA = getAnalysisIfAvailable<MemorySSAWrapperPass>();
-    std::optional<MemorySSAUpdater> MSSAU;
-    if (MSSAA)
-      MSSAU = MemorySSAUpdater(&MSSAA->getMSSA());
-    if (MSSAA && VerifyMemorySSA)
-      MSSAU->getMemorySSA()->verifyMemorySSA();
-    bool DeleteCurrentLoop = false;
-    bool Changed = simplifyLoopCFG(*L, DT, LI, SE, MSSAU ? &*MSSAU : nullptr,
-                                   DeleteCurrentLoop);
-    if (DeleteCurrentLoop)
-      LPM.markLoopAsDeleted(*L);
-    return Changed;
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addPreserved<MemorySSAWrapperPass>();
-    AU.addPreserved<DependenceAnalysisWrapperPass>();
-    getLoopAnalysisUsage(AU);
-  }
-};
-} // end namespace
-
-char LoopSimplifyCFGLegacyPass::ID = 0;
-INITIALIZE_PASS_BEGIN(LoopSimplifyCFGLegacyPass, "loop-simplifycfg",
-                      "Simplify loop CFG", false, false)
-INITIALIZE_PASS_DEPENDENCY(LoopPass)
-INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
-INITIALIZE_PASS_END(LoopSimplifyCFGLegacyPass, "loop-simplifycfg",
-                    "Simplify loop CFG", false, false)
-
-Pass *llvm::createLoopSimplifyCFGPass() {
-  return new LoopSimplifyCFGLegacyPass();
 }
