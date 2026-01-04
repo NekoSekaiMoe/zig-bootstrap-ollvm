@@ -10,7 +10,7 @@ to find and inspect the patch diffs.
 
  * LLVM, LLD, Clang 21.1.8 with aosp r574158 patches and ollvm patches
  * zlib 1.3.1
- * zstd 1.5.2
+ * zstd 1.5.7-dev
  * zig 0.16.0-dev
 
 For other versions, check the git tags of this repository.

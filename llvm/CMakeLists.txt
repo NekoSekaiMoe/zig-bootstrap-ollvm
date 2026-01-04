@@ -492,10 +492,6 @@ set(LLVM_UTILS_INSTALL_DIR "${LLVM_TOOLS_INSTALL_DIR}" CACHE STRING
     "Path to install LLVM utilities (enabled by LLVM_INSTALL_UTILS=ON) (defaults to LLVM_TOOLS_INSTALL_DIR)")
 mark_as_advanced(LLVM_UTILS_INSTALL_DIR)
 
-set(LLVM_EXAMPLES_INSTALL_DIR "examples" CACHE STRING
-    "Path for examples subdirectory (enabled by LLVM_BUILD_EXAMPLES=ON) (defaults to 'examples')")
-mark_as_advanced(LLVM_EXAMPLES_INSTALL_DIR)
-
 # They are used as destination of target generators.
 set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin)
 set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib${LLVM_LIBDIR_SUFFIX})
@@ -516,7 +512,6 @@ set(LLVM_BINARY_DIR       ${CMAKE_CURRENT_BINARY_DIR}  ) # --prefix
 
 # Note: LLVM_CMAKE_DIR does not include generated files
 set(LLVM_CMAKE_DIR ${LLVM_MAIN_SRC_DIR}/cmake/modules)
-set(LLVM_EXAMPLES_BINARY_DIR ${LLVM_BINARY_DIR}/examples)
 set(LLVM_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 # List of all targets to be built by default:
@@ -863,7 +858,6 @@ option(LLVM_BUILD_RUNTIMES
 
 option(LLVM_BUILD_RUNTIME
   "Build the LLVM runtime libraries." ON)
-option(LLVM_INCLUDE_EXAMPLES "Generate build targets for the LLVM examples" ON)
 
 option(LLVM_INSTALL_GTEST
   "Install the llvm gtest library.  This should be on if you want to do
@@ -1344,10 +1338,6 @@ endif()
 
 if( LLVM_INCLUDE_RUNTIMES )
   add_subdirectory(runtimes)
-endif()
-
-if( LLVM_INCLUDE_EXAMPLES )
-  add_subdirectory(examples)
 endif()
 
 add_subdirectory(cmake/modules)
