@@ -1,24 +1,17 @@
 pub const ArrayHashMap = array_hash_map.ArrayHashMap;
 pub const ArrayHashMapUnmanaged = array_hash_map.ArrayHashMapUnmanaged;
-pub const ArrayList = @import("array_list.zig").ArrayList;
-pub const ArrayListAligned = @import("array_list.zig").ArrayListAligned;
-pub const ArrayListAlignedUnmanaged = @import("array_list.zig").ArrayListAlignedUnmanaged;
-pub const ArrayListUnmanaged = @import("array_list.zig").ArrayListUnmanaged;
 pub const AutoArrayHashMap = array_hash_map.AutoArrayHashMap;
 pub const AutoArrayHashMapUnmanaged = array_hash_map.AutoArrayHashMapUnmanaged;
 pub const AutoHashMap = hash_map.AutoHashMap;
 pub const AutoHashMapUnmanaged = hash_map.AutoHashMapUnmanaged;
 pub const BitStack = @import("BitStack.zig");
-pub const BoundedArray = @import("bounded_array.zig").BoundedArray;
-pub const BoundedArrayAligned = @import("bounded_array.zig").BoundedArrayAligned;
 pub const Build = @import("Build.zig");
 pub const BufMap = @import("buf_map.zig").BufMap;
 pub const BufSet = @import("buf_set.zig").BufSet;
-/// Deprecated: use `process.Child`.
-pub const ChildProcess = @import("child_process.zig").ChildProcess;
 pub const StaticStringMap = static_string_map.StaticStringMap;
 pub const StaticStringMapWithEql = static_string_map.StaticStringMapWithEql;
-pub const DoublyLinkedList = @import("linked_list.zig").DoublyLinkedList;
+pub const Deque = @import("deque.zig").Deque;
+pub const DoublyLinkedList = @import("DoublyLinkedList.zig");
 pub const DynLib = @import("dynamic_library.zig").DynLib;
 pub const DynamicBitSet = bit_set.DynamicBitSet;
 pub const DynamicBitSetUnmanaged = bit_set.DynamicBitSetUnmanaged;
@@ -27,32 +20,42 @@ pub const EnumMap = enums.EnumMap;
 pub const EnumSet = enums.EnumSet;
 pub const HashMap = hash_map.HashMap;
 pub const HashMapUnmanaged = hash_map.HashMapUnmanaged;
-pub const Ini = @import("Ini.zig");
+pub const Io = @import("Io.zig");
 pub const MultiArrayList = @import("multi_array_list.zig").MultiArrayList;
-pub const PackedIntArray = @import("packed_int_array.zig").PackedIntArray;
-pub const PackedIntArrayEndian = @import("packed_int_array.zig").PackedIntArrayEndian;
-pub const PackedIntSlice = @import("packed_int_array.zig").PackedIntSlice;
-pub const PackedIntSliceEndian = @import("packed_int_array.zig").PackedIntSliceEndian;
 pub const PriorityQueue = @import("priority_queue.zig").PriorityQueue;
 pub const PriorityDequeue = @import("priority_dequeue.zig").PriorityDequeue;
 pub const Progress = @import("Progress.zig");
 pub const Random = @import("Random.zig");
-pub const RingBuffer = @import("RingBuffer.zig");
-pub const SegmentedList = @import("segmented_list.zig").SegmentedList;
 pub const SemanticVersion = @import("SemanticVersion.zig");
-pub const SinglyLinkedList = @import("linked_list.zig").SinglyLinkedList;
+pub const SinglyLinkedList = @import("SinglyLinkedList.zig");
 pub const StaticBitSet = bit_set.StaticBitSet;
 pub const StringHashMap = hash_map.StringHashMap;
 pub const StringHashMapUnmanaged = hash_map.StringHashMapUnmanaged;
 pub const StringArrayHashMap = array_hash_map.StringArrayHashMap;
 pub const StringArrayHashMapUnmanaged = array_hash_map.StringArrayHashMapUnmanaged;
-/// deprecated: use `DoublyLinkedList`.
-pub const TailQueue = DoublyLinkedList;
 pub const Target = @import("Target.zig");
 pub const Thread = @import("Thread.zig");
 pub const Treap = @import("treap.zig").Treap;
 pub const Tz = tz.Tz;
 pub const Uri = @import("Uri.zig");
+
+/// A contiguous, growable list of items in memory. This is a wrapper around a
+/// slice of `T` values.
+///
+/// The same allocator must be used throughout its entire lifetime. Initialize
+/// directly with `empty` or `initCapacity`, and deinitialize with `deinit` or
+/// `toOwnedSlice`.
+pub fn ArrayList(comptime T: type) type {
+    return array_list.Aligned(T, null);
+}
+pub const array_list = @import("array_list.zig");
+
+/// Deprecated; use `array_list.Aligned`.
+pub const ArrayListAligned = array_list.Aligned;
+/// Deprecated; use `array_list.Aligned`.
+pub const ArrayListAlignedUnmanaged = array_list.Aligned;
+/// Deprecated; use `ArrayList`.
+pub const ArrayListUnmanaged = ArrayList;
 
 pub const array_hash_map = @import("array_hash_map.zig");
 pub const atomic = @import("atomic.zig");
@@ -68,7 +71,6 @@ pub const debug = @import("debug.zig");
 pub const dwarf = @import("dwarf.zig");
 pub const elf = @import("elf.zig");
 pub const enums = @import("enums.zig");
-pub const fifo = @import("fifo.zig");
 pub const fmt = @import("fmt.zig");
 pub const fs = @import("fs.zig");
 pub const gpu = @import("gpu.zig");
@@ -76,7 +78,6 @@ pub const hash = @import("hash.zig");
 pub const hash_map = @import("hash_map.zig");
 pub const heap = @import("heap.zig");
 pub const http = @import("http.zig");
-pub const io = @import("io.zig");
 pub const json = @import("json.zig");
 pub const leb = @import("leb128.zig");
 pub const log = @import("log.zig");
@@ -84,15 +85,12 @@ pub const macho = @import("macho.zig");
 pub const math = @import("math.zig");
 pub const mem = @import("mem.zig");
 pub const meta = @import("meta.zig");
-pub const net = @import("net.zig");
 pub const os = @import("os.zig");
 pub const once = @import("once.zig").once;
-pub const packed_int_array = @import("packed_int_array.zig");
 pub const pdb = @import("pdb.zig");
+pub const pie = @import("pie.zig");
 pub const posix = @import("posix.zig");
 pub const process = @import("process.zig");
-/// Deprecated: use `Random` instead.
-pub const rand = Random;
 pub const sort = @import("sort.zig");
 pub const simd = @import("simd.zig");
 pub const ascii = @import("ascii.zig");
@@ -105,6 +103,7 @@ pub const valgrind = @import("valgrind.zig");
 pub const wasm = @import("wasm.zig");
 pub const zig = @import("zig.zig");
 pub const zip = @import("zip.zig");
+pub const zon = @import("zon.zig");
 pub const start = @import("start.zig");
 
 const root = @import("root");
@@ -125,10 +124,17 @@ pub const Options = struct {
 
     logFn: fn (
         comptime message_level: log.Level,
-        comptime scope: @TypeOf(.enum_literal),
+        comptime scope: @EnumLiteral(),
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
+
+    /// Overrides `std.heap.page_size_min`.
+    page_size_min: ?usize = null,
+    /// Overrides `std.heap.page_size_max`.
+    page_size_max: ?usize = null,
+    /// Overrides default implementation for determining OS page size at runtime.
+    queryPageSize: fn () usize = heap.defaultQueryPageSize,
 
     fmt_max_depth: usize = fmt.default_max_depth,
 
@@ -138,19 +144,6 @@ pub const Options = struct {
 
     crypto_fork_safety: bool = true,
 
-    /// By default Zig disables SIGPIPE by setting a "no-op" handler for it.  Set this option
-    /// to `true` to prevent that.
-    ///
-    /// Note that we use a "no-op" handler instead of SIG_IGN because it will not be inherited by
-    /// any child process.
-    ///
-    /// SIGPIPE is triggered when a process attempts to write to a broken pipe. By default, SIGPIPE
-    /// will terminate the process instead of exiting.  It doesn't trigger the panic handler so in many
-    /// cases it's unclear why the process was terminated.  By capturing SIGPIPE instead, functions that
-    /// write to broken pipes will return the EPIPE error (error.BrokenPipe) and the program can handle
-    /// it like any other error.
-    keep_sigpipe: bool = false,
-
     /// By default, std.http.Client will support HTTPS connections.  Set this option to `true` to
     /// disable TLS support.
     ///
@@ -158,7 +151,28 @@ pub const Options = struct {
     /// make a HTTPS connection.
     http_disable_tls: bool = false,
 
+    /// This enables `std.http.Client` to log ssl secrets to the file specified by the SSLKEYLOGFILE
+    /// env var.  Creating such a log file allows other programs with access to that file to decrypt
+    /// all `std.http.Client` traffic made by this program.
+    http_enable_ssl_key_log_file: bool = @import("builtin").mode == .Debug,
+
     side_channels_mitigations: crypto.SideChannelsMitigations = crypto.default_side_channels_mitigations,
+
+    /// Whether to allow capturing and writing stack traces. This affects the following functions:
+    /// * `debug.captureCurrentStackTrace`
+    /// * `debug.writeCurrentStackTrace`
+    /// * `debug.dumpCurrentStackTrace`
+    /// * `debug.writeStackTrace`
+    /// * `debug.dumpStackTrace`
+    ///
+    /// Stack traces can generally be collected and printed when debug info is stripped, but are
+    /// often less useful since they usually cannot be mapped to source locations and/or have bad
+    /// source locations. The stack tracing logic can also be quite large, which may be undesirable,
+    /// particularly in ReleaseSmall.
+    ///
+    /// If this is `false`, then captured stack traces will always be empty, and attempts to write
+    /// stack traces will just print an error to the relevant `Io.Writer` and return.
+    allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

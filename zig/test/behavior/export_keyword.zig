@@ -9,6 +9,8 @@ const builtin = @import("builtin");
 // and generates code
 const vram = @as([*]volatile u8, @ptrFromInt(0x20000000))[0..0x8000];
 export fn writeToVRam() void {
+    if (builtin.zig_backend == .stage2_riscv64) return;
+
     vram[0] = 'X';
 }
 
@@ -17,18 +19,20 @@ const PackedStruct = packed struct {
     b: u8,
 };
 const PackedUnion = packed union {
-    a: u8,
+    a: packed struct(u32) {
+        a: u8,
+        b: u24 = 0,
+    },
     b: u32,
 };
 
 test "packed struct, enum, union parameters in extern function" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     testPackedStuff(&(PackedStruct{
         .a = 1,
         .b = 2,
-    }), &(PackedUnion{ .a = 1 }));
+    }), &(PackedUnion{ .a = .{ .a = 1 } }));
 }
 
 export fn testPackedStuff(a: *const PackedStruct, b: *const PackedUnion) void {
@@ -36,4 +40,19 @@ export fn testPackedStuff(a: *const PackedStruct, b: *const PackedUnion) void {
         a;
         b;
     }
+}
+
+test "export function alias" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    _ = struct {
+        fn foo_internal() callconv(.c) u32 {
+            return 123;
+        }
+        export const foo_exported = foo_internal;
+    };
+    const Import = struct {
+        extern fn foo_exported() u32;
+    };
+    try expect(Import.foo_exported() == 123);
 }

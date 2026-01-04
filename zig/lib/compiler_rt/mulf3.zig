@@ -6,8 +6,8 @@ const common = @import("./common.zig");
 /// Ported from:
 /// https://github.com/llvm/llvm-project/blob/2ffb1b0413efa9a24eb3c49e710e36f92e2cb50b/compiler-rt/lib/builtins/fp_mul_impl.inc
 pub inline fn mulf3(comptime T: type, a: T, b: T) T {
-    @setRuntimeSafety(builtin.is_test);
-    const typeWidth = @typeInfo(T).Float.bits;
+    @setRuntimeSafety(common.test_safety);
+    const typeWidth = @typeInfo(T).float.bits;
     const significandBits = math.floatMantissaBits(T);
     const fractionalBits = math.floatFractionalBits(T);
     const exponentBits = math.floatExponentBits(T);
@@ -16,7 +16,7 @@ pub inline fn mulf3(comptime T: type, a: T, b: T) T {
 
     // ZSignificand is large enough to contain the significand, including an explicit integer bit
     const ZSignificand = PowerOfTwoSignificandZ(T);
-    const ZSignificandBits = @typeInfo(ZSignificand).Int.bits;
+    const ZSignificandBits = @typeInfo(ZSignificand).int.bits;
 
     const roundBit = (1 << (ZSignificandBits - 1));
     const signBit = (@as(Z, 1) << (significandBits + exponentBits));
@@ -163,8 +163,8 @@ pub inline fn mulf3(comptime T: type, a: T, b: T) T {
 ///
 /// This is analogous to an shr version of `@shlWithOverflow`
 fn wideShrWithTruncation(comptime Z: type, hi: *Z, lo: *Z, count: u32) bool {
-    @setRuntimeSafety(builtin.is_test);
-    const typeWidth = @typeInfo(Z).Int.bits;
+    @setRuntimeSafety(common.test_safety);
+    const typeWidth = @typeInfo(Z).int.bits;
     var inexact = false;
     if (count < typeWidth) {
         inexact = (lo.* << @intCast(typeWidth -% count)) != 0;

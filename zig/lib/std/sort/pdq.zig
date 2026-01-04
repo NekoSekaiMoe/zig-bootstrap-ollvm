@@ -203,7 +203,7 @@ fn partitionEqual(a: usize, b: usize, pivot: usize, context: anytype) usize {
 ///
 /// returns `true` if the slice is sorted at the end. This function is `O(n)` worst-case.
 fn partialInsertionSort(a: usize, b: usize, context: anytype) bool {
-    @setCold(true);
+    @branchHint(.cold);
 
     // maximum number of adjacent out-of-order pairs that will get shifted
     const max_steps = 5;
@@ -227,7 +227,7 @@ fn partialInsertionSort(a: usize, b: usize, context: anytype) bool {
         // shift the smaller element to the left.
         if (i - a >= 2) {
             var j = i - 1;
-            while (j >= 1) : (j -= 1) {
+            while (j > a) : (j -= 1) {
                 if (!context.lessThan(j, j - 1)) break;
                 context.swap(j, j - 1);
             }
@@ -247,7 +247,7 @@ fn partialInsertionSort(a: usize, b: usize, context: anytype) bool {
 }
 
 fn breakPatterns(a: usize, b: usize, context: anytype) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     const len = b - a;
     if (len < 8) return;
@@ -268,7 +268,7 @@ fn breakPatterns(a: usize, b: usize, context: anytype) void {
     }
 }
 
-/// choses a pivot in `items[a..b]`.
+/// chooses a pivot in `items[a..b]`.
 /// swaps likely_sorted when `items[a..b]` seems to be already sorted.
 fn chosePivot(a: usize, b: usize, pivot: *usize, context: anytype) Hint {
     // minimum length for using the Tukey's ninther method
@@ -326,5 +326,52 @@ fn reverseRange(a: usize, b: usize, context: anytype) void {
         context.swap(i, j);
         i += 1;
         j -= 1;
+    }
+}
+
+test "pdqContext respects arbitrary range boundaries" {
+    // Regression test for issue #25250
+    // pdqsort should never access indices outside the specified [a, b) range
+    var data: [2000]i32 = @splat(0);
+
+    // Fill with data that triggers the partialInsertionSort path
+    for (0..data.len) |i| {
+        data[i] = @intCast(@mod(@as(i32, @intCast(i)) * 7, 100));
+    }
+
+    const TestContext = struct {
+        items: []i32,
+        range_start: usize,
+        range_end: usize,
+
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            // Assert indices are within the expected range
+            testing.expect(a >= ctx.range_start and a < ctx.range_end) catch @panic("index a out of range");
+            testing.expect(b >= ctx.range_start and b < ctx.range_end) catch @panic("index b out of range");
+            return ctx.items[a] < ctx.items[b];
+        }
+
+        pub fn swap(ctx: @This(), a: usize, b: usize) void {
+            // Assert indices are within the expected range
+            testing.expect(a >= ctx.range_start and a < ctx.range_end) catch @panic("index a out of range");
+            testing.expect(b >= ctx.range_start and b < ctx.range_end) catch @panic("index b out of range");
+            mem.swap(i32, &ctx.items[a], &ctx.items[b]);
+        }
+    };
+
+    // Test sorting a sub-range that doesn't start at 0
+    const start = 1118;
+    const end = 1764;
+    const ctx = TestContext{
+        .items = &data,
+        .range_start = start,
+        .range_end = end,
+    };
+
+    pdqContext(start, end, ctx);
+
+    // Verify the range is sorted
+    for ((start + 1)..end) |i| {
+        try testing.expect(data[i - 1] <= data[i]);
     }
 }

@@ -1,13 +1,13 @@
-const std = @import("std.zig");
 const builtin = @import("builtin");
-const io = std.io;
+
+const std = @import("std.zig");
+const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
 const debug = std.debug;
 const panic = std.debug.panic;
 const assert = debug.assert;
 const log = std.log;
-const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
 const Allocator = mem.Allocator;
 const Target = std.Target;
@@ -16,10 +16,15 @@ const EnvMap = std.process.EnvMap;
 const File = fs.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Build = @This();
+const ArrayList = std.ArrayList;
 
 pub const Cache = @import("Build/Cache.zig");
 pub const Step = @import("Build/Step.zig");
 pub const Module = @import("Build/Module.zig");
+pub const Watch = @import("Build/Watch.zig");
+pub const Fuzz = @import("Build/Fuzz.zig");
+pub const WebServer = @import("Build/WebServer.zig");
+pub const abi = @import("Build/abi.zig");
 
 /// Shared state among all Build instances.
 graph: *Graph,
@@ -28,7 +33,7 @@ uninstall_tls: TopLevelStep,
 allocator: Allocator,
 user_input_options: UserInputOptionsMap,
 available_options_map: AvailableOptionsMap,
-available_options_list: ArrayList(AvailableOption),
+available_options_list: std.array_list.Managed(AvailableOption),
 verbose: bool,
 verbose_link: bool,
 verbose_cc: bool,
@@ -48,17 +53,16 @@ exe_dir: []const u8,
 h_dir: []const u8,
 install_path: []const u8,
 sysroot: ?[]const u8 = null,
-search_prefixes: std.ArrayListUnmanaged([]const u8),
+search_prefixes: ArrayList([]const u8),
 libc_file: ?[]const u8 = null,
-installed_files: ArrayList(InstalledFile),
 /// Path to the directory containing build.zig.
 build_root: Cache.Directory,
 cache_root: Cache.Directory,
-zig_lib_dir: ?LazyPath,
 pkg_config_pkg_list: ?(PkgConfigError![]const PkgConfigPkg) = null,
-args: ?[][]const u8 = null,
+args: ?[]const []const u8 = null,
 debug_log_scopes: []const []const u8 = &.{},
 debug_compile_errors: bool = false,
+debug_incremental: bool = false,
 debug_pkg_config: bool = false,
 /// Number of stack frames captured when a `StackTrace` is recorded for debug purposes,
 /// in particular at `Step` creation.
@@ -79,25 +83,23 @@ enable_wine: bool = false,
 /// this will be the directory $glibc-build-dir/install/glibcs
 /// Given the example of the aarch64 target, this is the directory
 /// that contains the path `aarch64-linux-gnu/lib/ld-linux-aarch64.so.1`.
-glibc_runtimes_dir: ?[]const u8 = null,
-
-/// Deprecated. Use `b.graph.host`.
-host: ResolvedTarget,
+/// Also works for dynamic musl.
+libc_runtimes_dir: ?[]const u8 = null,
 
 dep_prefix: []const u8 = "",
 
 modules: std.StringArrayHashMap(*Module),
 
 named_writefiles: std.StringArrayHashMap(*Step.WriteFile),
-/// A map from build root dirs to the corresponding `*Dependency`. This is shared with all child
-/// `Build`s.
-initialized_deps: *InitializedDepMap,
+named_lazy_paths: std.StringArrayHashMap(LazyPath),
 /// The hash of this instance's package. `""` means that this is the root package.
 pkg_hash: []const u8,
 /// A mapping from dependency names to package hashes.
 available_deps: AvailableDeps,
 
 release_mode: ReleaseMode,
+
+build_id: ?std.zig.BuildId = null,
 
 pub const ReleaseMode = enum {
     off,
@@ -110,16 +112,24 @@ pub const ReleaseMode = enum {
 /// Shared state among all Build instances.
 /// Settings that are here rather than in Build are not configurable per-package.
 pub const Graph = struct {
+    io: Io,
     arena: Allocator,
-    system_library_options: std.StringArrayHashMapUnmanaged(SystemLibraryMode) = .{},
+    system_library_options: std.StringArrayHashMapUnmanaged(SystemLibraryMode) = .empty,
     system_package_mode: bool = false,
+    debug_compiler_runtime_libs: bool = false,
     cache: Cache,
     zig_exe: [:0]const u8,
     env_map: EnvMap,
     global_cache_root: Cache.Directory,
-    needed_lazy_dependencies: std.StringArrayHashMapUnmanaged(void) = .{},
+    zig_lib_directory: Cache.Directory,
+    needed_lazy_dependencies: std.StringArrayHashMapUnmanaged(void) = .empty,
     /// Information about the native target. Computed before build() is invoked.
     host: ResolvedTarget,
+    incremental: ?bool = null,
+    random_seed: u32 = 0,
+    dependency_cache: InitializedDepMap = .empty,
+    allow_so_scripts: ?bool = null,
+    time_report: bool,
 };
 
 const AvailableDeps = []const struct { []const u8, []const u8 };
@@ -139,7 +149,7 @@ const SystemLibraryMode = enum {
     declared_enabled,
 };
 
-const InitializedDepMap = std.HashMap(InitializedDepKey, *Dependency, InitializedDepContext, std.hash_map.default_max_load_percentage);
+const InitializedDepMap = std.HashMapUnmanaged(InitializedDepKey, *Dependency, InitializedDepContext, std.hash_map.default_max_load_percentage);
 const InitializedDepKey = struct {
     build_root_string: []const u8,
     user_input_options: UserInputOptionsMap,
@@ -178,7 +188,7 @@ pub const RunError = error{
     ExitCodeFailure,
     ProcessTerminated,
     ExecNotSupported,
-} || std.ChildProcess.SpawnError;
+} || std.process.Child.SpawnError;
 
 pub const PkgConfigError = error{
     PkgConfigCrashed,
@@ -199,7 +209,7 @@ const AvailableOption = struct {
     name: []const u8,
     type_id: TypeId,
     description: []const u8,
-    /// If the `type_id` is `enum` this provides the list of enum options
+    /// If the `type_id` is `enum` or `enum_list` this provides the list of enum options
     enum_options: ?[]const []const u8,
 };
 
@@ -212,8 +222,10 @@ const UserInputOption = struct {
 const UserValue = union(enum) {
     flag: void,
     scalar: []const u8,
-    list: ArrayList([]const u8),
+    list: std.array_list.Managed([]const u8),
     map: StringHashMap(*const UserValue),
+    lazy_path: LazyPath,
+    lazy_path_list: std.array_list.Managed(LazyPath),
 };
 
 const TypeId = enum {
@@ -221,9 +233,12 @@ const TypeId = enum {
     int,
     float,
     @"enum",
+    enum_list,
     string,
     list,
     build_id,
+    lazy_path,
+    lazy_path_list,
 };
 
 const TopLevelStep = struct {
@@ -244,10 +259,8 @@ pub fn create(
     build_root: Cache.Directory,
     cache_root: Cache.Directory,
     available_deps: AvailableDeps,
-) !*Build {
+) error{OutOfMemory}!*Build {
     const arena = graph.arena;
-    const initialized_deps = try arena.create(InitializedDepMap);
-    initialized_deps.* = InitializedDepMap.initContext(arena, .{ .allocator = arena });
 
     const b = try arena.create(Build);
     b.* = .{
@@ -266,18 +279,17 @@ pub fn create(
         .allocator = arena,
         .user_input_options = UserInputOptionsMap.init(arena),
         .available_options_map = AvailableOptionsMap.init(arena),
-        .available_options_list = ArrayList(AvailableOption).init(arena),
+        .available_options_list = std.array_list.Managed(AvailableOption).init(arena),
         .top_level_steps = .{},
         .default_step = undefined,
-        .search_prefixes = .{},
+        .search_prefixes = .empty,
         .install_prefix = undefined,
         .lib_dir = undefined,
         .exe_dir = undefined,
         .h_dir = undefined,
         .dest_dir = graph.env_map.get("DESTDIR"),
-        .installed_files = ArrayList(InstalledFile).init(arena),
         .install_tls = .{
-            .step = Step.init(.{
+            .step = .init(.{
                 .id = TopLevelStep.base_id,
                 .name = "install",
                 .owner = b,
@@ -285,7 +297,7 @@ pub fn create(
             .description = "Copy build artifacts to prefix path",
         },
         .uninstall_tls = .{
-            .step = Step.init(.{
+            .step = .init(.{
                 .id = TopLevelStep.base_id,
                 .name = "uninstall",
                 .owner = b,
@@ -293,13 +305,11 @@ pub fn create(
             }),
             .description = "Remove build artifacts from prefix path",
         },
-        .zig_lib_dir = null,
         .install_path = undefined,
         .args = null,
-        .host = graph.host,
-        .modules = std.StringArrayHashMap(*Module).init(arena),
-        .named_writefiles = std.StringArrayHashMap(*Step.WriteFile).init(arena),
-        .initialized_deps = initialized_deps,
+        .modules = .init(arena),
+        .named_writefiles = .init(arena),
+        .named_lazy_paths = .init(arena),
         .pkg_hash = "",
         .available_deps = available_deps,
         .release_mode = .off,
@@ -317,7 +327,7 @@ fn createChild(
     pkg_hash: []const u8,
     pkg_deps: AvailableDeps,
     user_input_options: UserInputOptionsMap,
-) !*Build {
+) error{OutOfMemory}!*Build {
     const child = try createChildOnly(parent, dep_name, build_root, pkg_hash, pkg_deps, user_input_options);
     try determineAndApplyInstallPrefix(child);
     return child;
@@ -330,14 +340,14 @@ fn createChildOnly(
     pkg_hash: []const u8,
     pkg_deps: AvailableDeps,
     user_input_options: UserInputOptionsMap,
-) !*Build {
+) error{OutOfMemory}!*Build {
     const allocator = parent.allocator;
     const child = try allocator.create(Build);
     child.* = .{
         .graph = parent.graph,
         .allocator = allocator,
         .install_tls = .{
-            .step = Step.init(.{
+            .step = .init(.{
                 .id = TopLevelStep.base_id,
                 .name = "install",
                 .owner = child,
@@ -345,7 +355,7 @@ fn createChildOnly(
             .description = "Copy build artifacts to prefix path",
         },
         .uninstall_tls = .{
-            .step = Step.init(.{
+            .step = .init(.{
                 .id = TopLevelStep.base_id,
                 .name = "uninstall",
                 .owner = child,
@@ -355,7 +365,7 @@ fn createChildOnly(
         },
         .user_input_options = user_input_options,
         .available_options_map = AvailableOptionsMap.init(allocator),
-        .available_options_list = ArrayList(AvailableOption).init(allocator),
+        .available_options_list = std.array_list.Managed(AvailableOption).init(allocator),
         .verbose = parent.verbose,
         .verbose_link = parent.verbose_link,
         .verbose_cc = parent.verbose_cc,
@@ -377,24 +387,22 @@ fn createChildOnly(
         .sysroot = parent.sysroot,
         .search_prefixes = parent.search_prefixes,
         .libc_file = parent.libc_file,
-        .installed_files = ArrayList(InstalledFile).init(allocator),
         .build_root = build_root,
         .cache_root = parent.cache_root,
-        .zig_lib_dir = parent.zig_lib_dir,
         .debug_log_scopes = parent.debug_log_scopes,
         .debug_compile_errors = parent.debug_compile_errors,
+        .debug_incremental = parent.debug_incremental,
         .debug_pkg_config = parent.debug_pkg_config,
         .enable_darling = parent.enable_darling,
         .enable_qemu = parent.enable_qemu,
         .enable_rosetta = parent.enable_rosetta,
         .enable_wasmtime = parent.enable_wasmtime,
         .enable_wine = parent.enable_wine,
-        .glibc_runtimes_dir = parent.glibc_runtimes_dir,
-        .host = parent.host,
+        .libc_runtimes_dir = parent.libc_runtimes_dir,
         .dep_prefix = parent.fmt("{s}{s}.", .{ parent.dep_prefix, dep_name }),
-        .modules = std.StringArrayHashMap(*Module).init(allocator),
-        .named_writefiles = std.StringArrayHashMap(*Step.WriteFile).init(allocator),
-        .initialized_deps = parent.initialized_deps,
+        .modules = .init(allocator),
+        .named_writefiles = .init(allocator),
+        .named_lazy_paths = .init(allocator),
         .pkg_hash = pkg_hash,
         .available_deps = pkg_deps,
         .release_mode = parent.release_mode,
@@ -405,88 +413,180 @@ fn createChildOnly(
     return child;
 }
 
-fn userInputOptionsFromArgs(allocator: Allocator, args: anytype) UserInputOptionsMap {
-    var user_input_options = UserInputOptionsMap.init(allocator);
-    inline for (@typeInfo(@TypeOf(args)).Struct.fields) |field| {
-        const v = @field(args, field.name);
-        const T = @TypeOf(v);
-        switch (T) {
-            Target.Query => {
-                user_input_options.put(field.name, .{
-                    .name = field.name,
-                    .value = .{ .scalar = v.zigTriple(allocator) catch @panic("OOM") },
-                    .used = false,
-                }) catch @panic("OOM");
-                user_input_options.put("cpu", .{
-                    .name = "cpu",
-                    .value = .{ .scalar = v.serializeCpuAlloc(allocator) catch @panic("OOM") },
-                    .used = false,
-                }) catch @panic("OOM");
-            },
-            ResolvedTarget => {
-                user_input_options.put(field.name, .{
-                    .name = field.name,
-                    .value = .{ .scalar = v.query.zigTriple(allocator) catch @panic("OOM") },
-                    .used = false,
-                }) catch @panic("OOM");
-                user_input_options.put("cpu", .{
-                    .name = "cpu",
-                    .value = .{ .scalar = v.query.serializeCpuAlloc(allocator) catch @panic("OOM") },
-                    .used = false,
-                }) catch @panic("OOM");
-            },
-            []const u8 => {
-                user_input_options.put(field.name, .{
-                    .name = field.name,
-                    .value = .{ .scalar = v },
-                    .used = false,
-                }) catch @panic("OOM");
-            },
-            []const []const u8 => {
-                var list = ArrayList([]const u8).initCapacity(allocator, v.len) catch @panic("OOM");
-                list.appendSliceAssumeCapacity(v);
-
-                user_input_options.put(field.name, .{
-                    .name = field.name,
-                    .value = .{ .list = list },
-                    .used = false,
-                }) catch @panic("OOM");
-            },
-            else => switch (@typeInfo(T)) {
-                .Bool => {
-                    user_input_options.put(field.name, .{
-                        .name = field.name,
-                        .value = .{ .scalar = if (v) "true" else "false" },
-                        .used = false,
-                    }) catch @panic("OOM");
-                },
-                .Enum, .EnumLiteral => {
-                    user_input_options.put(field.name, .{
-                        .name = field.name,
-                        .value = .{ .scalar = @tagName(v) },
-                        .used = false,
-                    }) catch @panic("OOM");
-                },
-                .Int => {
-                    user_input_options.put(field.name, .{
-                        .name = field.name,
-                        .value = .{ .scalar = std.fmt.allocPrint(allocator, "{d}", .{v}) catch @panic("OOM") },
-                        .used = false,
-                    }) catch @panic("OOM");
-                },
-                else => @compileError("option '" ++ field.name ++ "' has unsupported type: " ++ @typeName(T)),
-            },
-        }
+fn userInputOptionsFromArgs(arena: Allocator, args: anytype) UserInputOptionsMap {
+    var map = UserInputOptionsMap.init(arena);
+    inline for (@typeInfo(@TypeOf(args)).@"struct".fields) |field| {
+        if (field.type == @TypeOf(null)) continue;
+        addUserInputOptionFromArg(arena, &map, field, field.type, @field(args, field.name));
     }
+    return map;
+}
 
-    return user_input_options;
+fn addUserInputOptionFromArg(
+    arena: Allocator,
+    map: *UserInputOptionsMap,
+    field: std.builtin.Type.StructField,
+    comptime T: type,
+    /// If null, the value won't be added, but `T` will still be type-checked.
+    maybe_value: ?T,
+) void {
+    switch (T) {
+        Target.Query => return if (maybe_value) |v| {
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .scalar = v.zigTriple(arena) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+            map.put("cpu", .{
+                .name = "cpu",
+                .value = .{ .scalar = v.serializeCpuAlloc(arena) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        ResolvedTarget => return if (maybe_value) |v| {
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .scalar = v.query.zigTriple(arena) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+            map.put("cpu", .{
+                .name = "cpu",
+                .value = .{ .scalar = v.query.serializeCpuAlloc(arena) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        std.zig.BuildId => return if (maybe_value) |v| {
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .scalar = std.fmt.allocPrint(arena, "{f}", .{v}) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        LazyPath => return if (maybe_value) |v| {
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .lazy_path = v.dupeInner(arena) },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        []const LazyPath => return if (maybe_value) |v| {
+            var list = std.array_list.Managed(LazyPath).initCapacity(arena, v.len) catch @panic("OOM");
+            for (v) |lp| list.appendAssumeCapacity(lp.dupeInner(arena));
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .lazy_path_list = list },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        []const u8 => return if (maybe_value) |v| {
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .scalar = arena.dupe(u8, v) catch @panic("OOM") },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        []const []const u8 => return if (maybe_value) |v| {
+            var list = std.array_list.Managed([]const u8).initCapacity(arena, v.len) catch @panic("OOM");
+            for (v) |s| list.appendAssumeCapacity(arena.dupe(u8, s) catch @panic("OOM"));
+            map.put(field.name, .{
+                .name = field.name,
+                .value = .{ .list = list },
+                .used = false,
+            }) catch @panic("OOM");
+        },
+        else => switch (@typeInfo(T)) {
+            .bool => return if (maybe_value) |v| {
+                map.put(field.name, .{
+                    .name = field.name,
+                    .value = .{ .scalar = if (v) "true" else "false" },
+                    .used = false,
+                }) catch @panic("OOM");
+            },
+            .@"enum", .enum_literal => return if (maybe_value) |v| {
+                map.put(field.name, .{
+                    .name = field.name,
+                    .value = .{ .scalar = @tagName(v) },
+                    .used = false,
+                }) catch @panic("OOM");
+            },
+            .comptime_int, .int => return if (maybe_value) |v| {
+                map.put(field.name, .{
+                    .name = field.name,
+                    .value = .{ .scalar = std.fmt.allocPrint(arena, "{d}", .{v}) catch @panic("OOM") },
+                    .used = false,
+                }) catch @panic("OOM");
+            },
+            .comptime_float, .float => return if (maybe_value) |v| {
+                map.put(field.name, .{
+                    .name = field.name,
+                    .value = .{ .scalar = std.fmt.allocPrint(arena, "{x}", .{v}) catch @panic("OOM") },
+                    .used = false,
+                }) catch @panic("OOM");
+            },
+            .pointer => |ptr_info| switch (ptr_info.size) {
+                .one => switch (@typeInfo(ptr_info.child)) {
+                    .array => |array_info| {
+                        addUserInputOptionFromArg(
+                            arena,
+                            map,
+                            field,
+                            @Pointer(.slice, .{ .@"const" = true }, array_info.child, null),
+                            maybe_value orelse null,
+                        );
+                        return;
+                    },
+                    else => {},
+                },
+                .slice => switch (@typeInfo(ptr_info.child)) {
+                    .@"enum" => return if (maybe_value) |v| {
+                        var list = std.array_list.Managed([]const u8).initCapacity(arena, v.len) catch @panic("OOM");
+                        for (v) |tag| list.appendAssumeCapacity(@tagName(tag));
+                        map.put(field.name, .{
+                            .name = field.name,
+                            .value = .{ .list = list },
+                            .used = false,
+                        }) catch @panic("OOM");
+                    },
+                    else => {
+                        addUserInputOptionFromArg(
+                            arena,
+                            map,
+                            field,
+                            @Pointer(ptr_info.size, .{ .@"const" = true }, ptr_info.child, null),
+                            maybe_value orelse null,
+                        );
+                        return;
+                    },
+                },
+                else => {},
+            },
+            .null => unreachable,
+            .optional => |info| switch (@typeInfo(info.child)) {
+                .optional => {},
+                else => {
+                    addUserInputOptionFromArg(
+                        arena,
+                        map,
+                        field,
+                        info.child,
+                        maybe_value orelse null,
+                    );
+                    return;
+                },
+            },
+            else => {},
+        },
+    }
+    @compileError("option '" ++ field.name ++ "' has unsupported type: " ++ @typeName(field.type));
 }
 
 const OrderedUserValue = union(enum) {
     flag: void,
     scalar: []const u8,
-    list: ArrayList([]const u8),
-    map: ArrayList(Pair),
+    list: std.array_list.Managed([]const u8),
+    map: std.array_list.Managed(Pair),
+    lazy_path: LazyPath,
+    lazy_path_list: std.array_list.Managed(LazyPath),
 
     const Pair = struct {
         name: []const u8,
@@ -497,6 +597,7 @@ const OrderedUserValue = union(enum) {
     };
 
     fn hash(val: OrderedUserValue, hasher: *std.hash.Wyhash) void {
+        hasher.update(&std.mem.toBytes(std.meta.activeTag(val)));
         switch (val) {
             .flag => {},
             .scalar => |scalar| hasher.update(scalar),
@@ -507,11 +608,36 @@ const OrderedUserValue = union(enum) {
                 hasher.update(map_entry.name);
                 map_entry.value.hash(hasher);
             },
+            .lazy_path => |lp| hashLazyPath(lp, hasher),
+            .lazy_path_list => |lp_list| for (lp_list.items) |lp| {
+                hashLazyPath(lp, hasher);
+            },
         }
     }
 
-    fn mapFromUnordered(allocator: Allocator, unordered: std.StringHashMap(*const UserValue)) ArrayList(Pair) {
-        var ordered = ArrayList(Pair).init(allocator);
+    fn hashLazyPath(lp: LazyPath, hasher: *std.hash.Wyhash) void {
+        switch (lp) {
+            .src_path => |sp| {
+                hasher.update(sp.owner.pkg_hash);
+                hasher.update(sp.sub_path);
+            },
+            .generated => |gen| {
+                hasher.update(gen.file.step.owner.pkg_hash);
+                hasher.update(std.mem.asBytes(&gen.up));
+                hasher.update(gen.sub_path);
+            },
+            .cwd_relative => |rel_path| {
+                hasher.update(rel_path);
+            },
+            .dependency => |dep| {
+                hasher.update(dep.dependency.builder.pkg_hash);
+                hasher.update(dep.sub_path);
+            },
+        }
+    }
+
+    fn mapFromUnordered(allocator: Allocator, unordered: std.StringHashMap(*const UserValue)) std.array_list.Managed(Pair) {
+        var ordered = std.array_list.Managed(Pair).init(allocator);
         var it = unordered.iterator();
         while (it.next()) |entry| {
             ordered.append(.{
@@ -530,6 +656,8 @@ const OrderedUserValue = union(enum) {
             .scalar => |scalar| .{ .scalar = scalar },
             .list => |list| .{ .list = list },
             .map => |map| .{ .map = OrderedUserValue.mapFromUnordered(allocator, map) },
+            .lazy_path => |lp| .{ .lazy_path = lp },
+            .lazy_path_list => |list| .{ .lazy_path_list = list },
         };
     }
 };
@@ -560,7 +688,7 @@ const OrderedUserInputOption = struct {
 // The hash should be consistent with the same values given a different order.
 // This function takes a user input map, orders it, then hashes the contents.
 fn hashUserInputOptionsMap(allocator: Allocator, user_input_options: UserInputOptionsMap, hasher: *std.hash.Wyhash) void {
-    var ordered = ArrayList(OrderedUserInputOption).init(allocator);
+    var ordered = std.array_list.Managed(OrderedUserInputOption).init(allocator);
     var it = user_input_options.iterator();
     while (it.next()) |entry|
         ordered.append(OrderedUserInputOption.fromUnordered(allocator, entry.value_ptr.*)) catch @panic("OOM");
@@ -572,7 +700,7 @@ fn hashUserInputOptionsMap(allocator: Allocator, user_input_options: UserInputOp
         user_option.hash(hasher);
 }
 
-fn determineAndApplyInstallPrefix(b: *Build) !void {
+fn determineAndApplyInstallPrefix(b: *Build) error{OutOfMemory}!void {
     // Create an installation directory local to this package. This will be used when
     // dependant packages require a standard prefix, such as include directories for C headers.
     var hash = b.graph.cache.hash;
@@ -636,24 +764,10 @@ pub fn addOptions(b: *Build) *Step.Options {
 
 pub const ExecutableOptions = struct {
     name: []const u8,
-    /// If you want the executable to run on the same computer as the one
-    /// building the package, pass the `host` field of the package's `Build`
-    /// instance.
-    target: ResolvedTarget,
-    root_source_file: ?LazyPath = null,
+    root_module: *Module,
     version: ?std.SemanticVersion = null,
-    optimize: std.builtin.OptimizeMode = .Debug,
-    code_model: std.builtin.CodeModel = .default,
     linkage: ?std.builtin.LinkMode = null,
     max_rss: usize = 0,
-    link_libc: ?bool = null,
-    single_threaded: ?bool = null,
-    pic: ?bool = null,
-    strip: ?bool = null,
-    unwind_tables: ?bool = null,
-    omit_frame_pointer: ?bool = null,
-    sanitize_thread: ?bool = null,
-    error_tracing: ?bool = null,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
@@ -666,98 +780,47 @@ pub const ExecutableOptions = struct {
 };
 
 pub fn addExecutable(b: *Build, options: ExecutableOptions) *Step.Compile {
-    return Step.Compile.create(b, .{
+    return .create(b, .{
         .name = options.name,
-        .root_module = .{
-            .root_source_file = options.root_source_file,
-            .target = options.target,
-            .optimize = options.optimize,
-            .link_libc = options.link_libc,
-            .single_threaded = options.single_threaded,
-            .pic = options.pic,
-            .strip = options.strip,
-            .unwind_tables = options.unwind_tables,
-            .omit_frame_pointer = options.omit_frame_pointer,
-            .sanitize_thread = options.sanitize_thread,
-            .error_tracing = options.error_tracing,
-            .code_model = options.code_model,
-        },
+        .root_module = options.root_module,
         .version = options.version,
         .kind = .exe,
         .linkage = options.linkage,
         .max_rss = options.max_rss,
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
+        .zig_lib_dir = options.zig_lib_dir,
         .win32_manifest = options.win32_manifest,
     });
 }
 
 pub const ObjectOptions = struct {
     name: []const u8,
-    root_source_file: ?LazyPath = null,
-    /// To choose the same computer as the one building the package, pass the
-    /// `host` field of the package's `Build` instance.
-    target: ResolvedTarget,
-    code_model: std.builtin.CodeModel = .default,
-    optimize: std.builtin.OptimizeMode,
+    root_module: *Module,
     max_rss: usize = 0,
-    link_libc: ?bool = null,
-    single_threaded: ?bool = null,
-    pic: ?bool = null,
-    strip: ?bool = null,
-    unwind_tables: ?bool = null,
-    omit_frame_pointer: ?bool = null,
-    sanitize_thread: ?bool = null,
-    error_tracing: ?bool = null,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
 };
 
 pub fn addObject(b: *Build, options: ObjectOptions) *Step.Compile {
-    return Step.Compile.create(b, .{
+    return .create(b, .{
         .name = options.name,
-        .root_module = .{
-            .root_source_file = options.root_source_file,
-            .target = options.target,
-            .optimize = options.optimize,
-            .link_libc = options.link_libc,
-            .single_threaded = options.single_threaded,
-            .pic = options.pic,
-            .strip = options.strip,
-            .unwind_tables = options.unwind_tables,
-            .omit_frame_pointer = options.omit_frame_pointer,
-            .sanitize_thread = options.sanitize_thread,
-            .error_tracing = options.error_tracing,
-            .code_model = options.code_model,
-        },
+        .root_module = options.root_module,
         .kind = .obj,
         .max_rss = options.max_rss,
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
+        .zig_lib_dir = options.zig_lib_dir,
     });
 }
 
-pub const SharedLibraryOptions = struct {
+pub const LibraryOptions = struct {
+    linkage: std.builtin.LinkMode = .static,
     name: []const u8,
-    /// To choose the same computer as the one building the package, pass the
-    /// `host` field of the package's `Build` instance.
-    target: ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    code_model: std.builtin.CodeModel = .default,
-    root_source_file: ?LazyPath = null,
+    root_module: *Module,
     version: ?std.SemanticVersion = null,
     max_rss: usize = 0,
-    link_libc: ?bool = null,
-    single_threaded: ?bool = null,
-    pic: ?bool = null,
-    strip: ?bool = null,
-    unwind_tables: ?bool = null,
-    omit_frame_pointer: ?bool = null,
-    sanitize_thread: ?bool = null,
-    error_tracing: ?bool = null,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
@@ -769,106 +832,34 @@ pub const SharedLibraryOptions = struct {
     win32_manifest: ?LazyPath = null,
 };
 
-pub fn addSharedLibrary(b: *Build, options: SharedLibraryOptions) *Step.Compile {
-    return Step.Compile.create(b, .{
+pub fn addLibrary(b: *Build, options: LibraryOptions) *Step.Compile {
+    return .create(b, .{
         .name = options.name,
-        .root_module = .{
-            .target = options.target,
-            .optimize = options.optimize,
-            .root_source_file = options.root_source_file,
-            .link_libc = options.link_libc,
-            .single_threaded = options.single_threaded,
-            .pic = options.pic,
-            .strip = options.strip,
-            .unwind_tables = options.unwind_tables,
-            .omit_frame_pointer = options.omit_frame_pointer,
-            .sanitize_thread = options.sanitize_thread,
-            .error_tracing = options.error_tracing,
-            .code_model = options.code_model,
-        },
+        .root_module = options.root_module,
         .kind = .lib,
-        .linkage = .dynamic,
+        .linkage = options.linkage,
         .version = options.version,
         .max_rss = options.max_rss,
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
+        .zig_lib_dir = options.zig_lib_dir,
         .win32_manifest = options.win32_manifest,
-    });
-}
-
-pub const StaticLibraryOptions = struct {
-    name: []const u8,
-    root_source_file: ?LazyPath = null,
-    /// To choose the same computer as the one building the package, pass the
-    /// `host` field of the package's `Build` instance.
-    target: ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    code_model: std.builtin.CodeModel = .default,
-    version: ?std.SemanticVersion = null,
-    max_rss: usize = 0,
-    link_libc: ?bool = null,
-    single_threaded: ?bool = null,
-    pic: ?bool = null,
-    strip: ?bool = null,
-    unwind_tables: ?bool = null,
-    omit_frame_pointer: ?bool = null,
-    sanitize_thread: ?bool = null,
-    error_tracing: ?bool = null,
-    use_llvm: ?bool = null,
-    use_lld: ?bool = null,
-    zig_lib_dir: ?LazyPath = null,
-};
-
-pub fn addStaticLibrary(b: *Build, options: StaticLibraryOptions) *Step.Compile {
-    return Step.Compile.create(b, .{
-        .name = options.name,
-        .root_module = .{
-            .target = options.target,
-            .optimize = options.optimize,
-            .root_source_file = options.root_source_file,
-            .link_libc = options.link_libc,
-            .single_threaded = options.single_threaded,
-            .pic = options.pic,
-            .strip = options.strip,
-            .unwind_tables = options.unwind_tables,
-            .omit_frame_pointer = options.omit_frame_pointer,
-            .sanitize_thread = options.sanitize_thread,
-            .error_tracing = options.error_tracing,
-            .code_model = options.code_model,
-        },
-        .kind = .lib,
-        .linkage = .static,
-        .version = options.version,
-        .max_rss = options.max_rss,
-        .use_llvm = options.use_llvm,
-        .use_lld = options.use_lld,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
     });
 }
 
 pub const TestOptions = struct {
     name: []const u8 = "test",
-    root_source_file: LazyPath,
-    target: ?ResolvedTarget = null,
-    optimize: std.builtin.OptimizeMode = .Debug,
-    version: ?std.SemanticVersion = null,
+    root_module: *Module,
     max_rss: usize = 0,
-    /// deprecated: use `.filters = &.{filter}` instead of `.filter = filter`.
-    filter: ?[]const u8 = null,
     filters: []const []const u8 = &.{},
-    test_runner: ?LazyPath = null,
-    link_libc: ?bool = null,
-    single_threaded: ?bool = null,
-    pic: ?bool = null,
-    strip: ?bool = null,
-    unwind_tables: ?bool = null,
-    omit_frame_pointer: ?bool = null,
-    sanitize_thread: ?bool = null,
-    error_tracing: ?bool = null,
+    test_runner: ?Step.Compile.TestRunner = null,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
+    /// Emits an object file instead of a test binary.
+    /// The object must be linked separately.
+    /// Usually used in conjunction with a custom `test_runner`.
+    emit_object: bool = false,
 };
 
 /// Creates an executable containing unit tests.
@@ -880,33 +871,16 @@ pub const TestOptions = struct {
 /// two steps are separated because they are independently configured and
 /// cached.
 pub fn addTest(b: *Build, options: TestOptions) *Step.Compile {
-    return Step.Compile.create(b, .{
+    return .create(b, .{
         .name = options.name,
-        .kind = .@"test",
-        .root_module = .{
-            .root_source_file = options.root_source_file,
-            .target = options.target orelse b.host,
-            .optimize = options.optimize,
-            .link_libc = options.link_libc,
-            .single_threaded = options.single_threaded,
-            .pic = options.pic,
-            .strip = options.strip,
-            .unwind_tables = options.unwind_tables,
-            .omit_frame_pointer = options.omit_frame_pointer,
-            .sanitize_thread = options.sanitize_thread,
-            .error_tracing = options.error_tracing,
-        },
+        .kind = if (options.emit_object) .test_obj else .@"test",
+        .root_module = options.root_module,
         .max_rss = options.max_rss,
-        .filters = if (options.filter != null and options.filters.len > 0) filters: {
-            const filters = b.allocator.alloc([]const u8, 1 + options.filters.len) catch @panic("OOM");
-            filters[0] = b.dupe(options.filter.?);
-            for (filters[1..], options.filters) |*dest, source| dest.* = b.dupe(source);
-            break :filters filters;
-        } else b.dupeStrings(if (options.filter) |filter| &.{filter} else options.filters),
+        .filters = b.dupeStrings(options.filters),
         .test_runner = options.test_runner,
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
+        .zig_lib_dir = options.zig_lib_dir,
     });
 }
 
@@ -920,21 +894,6 @@ pub const AssemblyOptions = struct {
     max_rss: usize = 0,
     zig_lib_dir: ?LazyPath = null,
 };
-
-pub fn addAssembly(b: *Build, options: AssemblyOptions) *Step.Compile {
-    const obj_step = Step.Compile.create(b, .{
-        .name = options.name,
-        .kind = .obj,
-        .root_module = .{
-            .target = options.target,
-            .optimize = options.optimize,
-        },
-        .max_rss = options.max_rss,
-        .zig_lib_dir = options.zig_lib_dir orelse b.zig_lib_dir,
-    });
-    obj_step.addAssemblyFile(options.source_file);
-    return obj_step;
-}
 
 /// This function creates a module and adds it to the package's module set, making
 /// it available to other packages which depend on this one.
@@ -970,11 +929,61 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
     // It doesn't have to be native. We catch that if you actually try to run it.
     // Consider that this is declarative; the run step may not be run unless a user
     // option is supplied.
-    const run_step = Step.Run.create(b, b.fmt("run {s}", .{exe.name}));
-    run_step.addArtifactArg(exe);
 
-    if (exe.kind == .@"test" and exe.test_server_mode) {
-        run_step.enableTestRunnerMode();
+    // Avoid the common case of the step name looking like "run test test".
+    const step_name = if (exe.kind.isTest() and mem.eql(u8, exe.name, "test"))
+        b.fmt("run {s}", .{@tagName(exe.kind)})
+    else
+        b.fmt("run {s} {s}", .{ @tagName(exe.kind), exe.name });
+
+    const run_step = Step.Run.create(b, step_name);
+    run_step.producer = exe;
+    if (exe.kind == .@"test") {
+        if (exe.exec_cmd_args) |exec_cmd_args| {
+            for (exec_cmd_args) |cmd_arg| {
+                if (cmd_arg) |arg| {
+                    run_step.addArg(arg);
+                } else {
+                    run_step.addArtifactArg(exe);
+                }
+            }
+        } else {
+            run_step.addArtifactArg(exe);
+        }
+
+        const test_server_mode: bool = s: {
+            if (exe.test_runner) |r| break :s r.mode == .server;
+            if (exe.use_llvm == false) {
+                // The default test runner does not use the server protocol if the selected backend
+                // is too immature to support it. Keep this logic in sync with `need_simple` in the
+                // default test runner implementation.
+                switch (exe.rootModuleTarget().cpu.arch) {
+                    // stage2_aarch64
+                    .aarch64,
+                    .aarch64_be,
+                    // stage2_powerpc
+                    .powerpc,
+                    .powerpcle,
+                    .powerpc64,
+                    .powerpc64le,
+                    // stage2_riscv64
+                    .riscv64,
+                    => break :s false,
+
+                    else => {},
+                }
+            }
+            break :s true;
+        };
+        if (test_server_mode) {
+            run_step.enableTestRunnerMode();
+        } else if (exe.test_runner == null) {
+            // If a test runner does not use the `std.zig.Server` protocol, it can instead
+            // communicate failure via its exit code.
+            run_step.expectExitCode(0);
+        }
+    } else {
+        run_step.addArtifactArg(exe);
     }
 
     return run_step;
@@ -1001,7 +1010,11 @@ pub fn addConfigHeader(
 
 /// Allocator.dupe without the need to handle out of memory.
 pub fn dupe(b: *Build, bytes: []const u8) []u8 {
-    return b.allocator.dupe(u8, bytes) catch @panic("OOM");
+    return dupeInner(b.allocator, bytes);
+}
+
+pub fn dupeInner(allocator: std.mem.Allocator, bytes: []const u8) []u8 {
+    return allocator.dupe(u8, bytes) catch @panic("OOM");
 }
 
 /// Duplicates an array of strings without the need to handle out of memory.
@@ -1013,7 +1026,11 @@ pub fn dupeStrings(b: *Build, strings: []const []const u8) [][]u8 {
 
 /// Duplicates a path and converts all slashes to the OS's canonical path separator.
 pub fn dupePath(b: *Build, bytes: []const u8) []u8 {
-    const the_copy = b.dupe(bytes);
+    return dupePathInner(b.allocator, bytes);
+}
+
+fn dupePathInner(allocator: std.mem.Allocator, bytes: []const u8) []u8 {
+    const the_copy = dupeInner(allocator, bytes);
     for (the_copy) |*byte| {
         switch (byte.*) {
             '/', '\\' => byte.* = fs.path.sep,
@@ -1035,12 +1052,24 @@ pub fn addNamedWriteFiles(b: *Build, name: []const u8) *Step.WriteFile {
     return wf;
 }
 
+pub fn addNamedLazyPath(b: *Build, name: []const u8, lp: LazyPath) void {
+    b.named_lazy_paths.put(b.dupe(name), lp.dupe(b)) catch @panic("OOM");
+}
+
 pub fn addWriteFiles(b: *Build) *Step.WriteFile {
     return Step.WriteFile.create(b);
 }
 
-pub fn addRemoveDirTree(b: *Build, dir_path: []const u8) *Step.RemoveDir {
+pub fn addUpdateSourceFiles(b: *Build) *Step.UpdateSourceFiles {
+    return Step.UpdateSourceFiles.create(b);
+}
+
+pub fn addRemoveDirTree(b: *Build, dir_path: LazyPath) *Step.RemoveDir {
     return Step.RemoveDir.create(b, dir_path);
+}
+
+pub fn addFail(b: *Build, error_msg: []const u8) *Step.Fail {
+    return Step.Fail.create(b, error_msg);
 }
 
 pub fn addFmt(b: *Build, options: Step.Fmt.Options) *Step.Fmt {
@@ -1059,20 +1088,13 @@ pub fn getUninstallStep(b: *Build) *Step {
     return &b.uninstall_tls.step;
 }
 
-fn makeUninstall(uninstall_step: *Step, prog_node: *std.Progress.Node) anyerror!void {
-    _ = prog_node;
+fn makeUninstall(uninstall_step: *Step, options: Step.MakeOptions) anyerror!void {
+    _ = options;
     const uninstall_tls: *TopLevelStep = @fieldParentPtr("step", uninstall_step);
     const b: *Build = @fieldParentPtr("uninstall_tls", uninstall_tls);
 
-    for (b.installed_files.items) |installed_file| {
-        const full_path = b.getInstallPath(installed_file.dir, installed_file.path);
-        if (b.verbose) {
-            log.info("rm {s}", .{full_path});
-        }
-        fs.cwd().deleteTree(full_path) catch {};
-    }
-
-    // TODO remove empty directories
+    _ = b;
+    @panic("TODO implement https://github.com/ziglang/zig/issues/14943");
 }
 
 /// Creates a configuration option to be passed to the build.zig script.
@@ -1084,9 +1106,10 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
     const name = b.dupe(name_raw);
     const description = b.dupe(description_raw);
     const type_id = comptime typeToEnum(T);
-    const enum_options = if (type_id == .@"enum") blk: {
-        const fields = comptime std.meta.fields(T);
-        var options = ArrayList([]const u8).initCapacity(b.allocator, fields.len) catch @panic("OOM");
+    const enum_options = if (type_id == .@"enum" or type_id == .enum_list) blk: {
+        const EnumType = if (type_id == .enum_list) @typeInfo(T).pointer.child else T;
+        const fields = comptime std.meta.fields(EnumType);
+        var options = std.array_list.Managed([]const u8).initCapacity(b.allocator, fields.len) catch @panic("OOM");
 
         inline for (fields) |field| {
             options.appendAssumeCapacity(field.name);
@@ -1121,7 +1144,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
                     return null;
                 }
             },
-            .list, .map => {
+            .list, .map, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be a boolean, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1130,7 +1153,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
         },
         .int => switch (option_ptr.value) {
-            .flag, .list, .map => {
+            .flag, .list, .map, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be an integer, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1154,7 +1177,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
         },
         .float => switch (option_ptr.value) {
-            .flag, .map, .list => {
+            .flag, .map, .list, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be a float, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1171,7 +1194,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
         },
         .@"enum" => switch (option_ptr.value) {
-            .flag, .map, .list => {
+            .flag, .map, .list, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be an enum, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1189,7 +1212,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
         },
         .string => switch (option_ptr.value) {
-            .flag, .list, .map => {
+            .flag, .list, .map, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be a string, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1199,7 +1222,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             .scalar => |s| return s,
         },
         .build_id => switch (option_ptr.value) {
-            .flag, .map, .list => {
+            .flag, .map, .list, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be an enum, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1217,7 +1240,7 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
         },
         .list => switch (option_ptr.value) {
-            .flag, .map => {
+            .flag, .map, .lazy_path, .lazy_path_list => {
                 log.err("Expected -D{s} to be a list, but received a {s}.", .{
                     name, @tagName(option_ptr.value),
                 });
@@ -1229,13 +1252,74 @@ pub fn option(b: *Build, comptime T: type, name_raw: []const u8, description_raw
             },
             .list => |lst| return lst.items,
         },
+        .enum_list => switch (option_ptr.value) {
+            .flag, .map, .lazy_path, .lazy_path_list => {
+                log.err("Expected -D{s} to be a list, but received a {s}.", .{
+                    name, @tagName(option_ptr.value),
+                });
+                b.markInvalidUserInput();
+                return null;
+            },
+            .scalar => |s| {
+                const Child = @typeInfo(T).pointer.child;
+                const value = std.meta.stringToEnum(Child, s) orelse {
+                    log.err("Expected -D{s} to be of type {s}.", .{ name, @typeName(Child) });
+                    b.markInvalidUserInput();
+                    return null;
+                };
+                return b.allocator.dupe(Child, &[_]Child{value}) catch @panic("OOM");
+            },
+            .list => |lst| {
+                const Child = @typeInfo(T).pointer.child;
+                const new_list = b.allocator.alloc(Child, lst.items.len) catch @panic("OOM");
+                for (new_list, lst.items) |*new_item, str| {
+                    new_item.* = std.meta.stringToEnum(Child, str) orelse {
+                        log.err("Expected -D{s} to be of type {s}.", .{ name, @typeName(Child) });
+                        b.markInvalidUserInput();
+                        b.allocator.free(new_list);
+                        return null;
+                    };
+                }
+                return new_list;
+            },
+        },
+        .lazy_path => switch (option_ptr.value) {
+            .scalar => |s| return .{ .cwd_relative = s },
+            .lazy_path => |lp| return lp,
+            .flag, .map, .list, .lazy_path_list => {
+                log.err("Expected -D{s} to be a path, but received a {s}.", .{
+                    name, @tagName(option_ptr.value),
+                });
+                b.markInvalidUserInput();
+                return null;
+            },
+        },
+        .lazy_path_list => switch (option_ptr.value) {
+            .scalar => |s| return b.allocator.dupe(LazyPath, &[_]LazyPath{.{ .cwd_relative = s }}) catch @panic("OOM"),
+            .lazy_path => |lp| return b.allocator.dupe(LazyPath, &[_]LazyPath{lp}) catch @panic("OOM"),
+            .list => |lst| {
+                const new_list = b.allocator.alloc(LazyPath, lst.items.len) catch @panic("OOM");
+                for (new_list, lst.items) |*new_item, str| {
+                    new_item.* = .{ .cwd_relative = str };
+                }
+                return new_list;
+            },
+            .lazy_path_list => |lp_list| return lp_list.items,
+            .flag, .map => {
+                log.err("Expected -D{s} to be a path, but received a {s}.", .{
+                    name, @tagName(option_ptr.value),
+                });
+                b.markInvalidUserInput();
+                return null;
+            },
+        },
     }
 }
 
 pub fn step(b: *Build, name: []const u8, description: []const u8) *Step {
     const step_info = b.allocator.create(TopLevelStep) catch @panic("OOM");
     step_info.* = .{
-        .step = Step.init(.{
+        .step = .init(.{
             .id = TopLevelStep.base_id,
             .name = name,
             .owner = b,
@@ -1361,13 +1445,18 @@ pub fn standardTargetOptionsQueryOnly(b: *Build, args: StandardTargetOptionsArgs
         "cpu",
         "Target CPU features to add or subtract",
     );
+    const ofmt = b.option(
+        []const u8,
+        "ofmt",
+        "Target object format",
+    );
     const dynamic_linker = b.option(
         []const u8,
         "dynamic-linker",
         "Path to interpreter on the target system",
     );
 
-    if (maybe_triple == null and mcpu == null and dynamic_linker == null)
+    if (maybe_triple == null and mcpu == null and ofmt == null and dynamic_linker == null)
         return args.default_target;
 
     const triple = maybe_triple orelse "native";
@@ -1375,6 +1464,7 @@ pub fn standardTargetOptionsQueryOnly(b: *Build, args: StandardTargetOptionsArgs
     const selected_target = parseTargetQuery(.{
         .arch_os_abi = triple,
         .cpu_features = mcpu,
+        .object_format = ofmt,
         .dynamic_linker = dynamic_linker,
     }) catch |err| switch (err) {
         error.ParseFailed => {
@@ -1404,7 +1494,7 @@ pub fn standardTargetOptionsQueryOnly(b: *Build, args: StandardTargetOptionsArgs
     return args.default_target;
 }
 
-pub fn addUserInputOption(b: *Build, name_raw: []const u8, value_raw: []const u8) !bool {
+pub fn addUserInputOption(b: *Build, name_raw: []const u8, value_raw: []const u8) error{OutOfMemory}!bool {
     const name = b.dupe(name_raw);
     const value = b.dupe(value_raw);
     const gop = try b.user_input_options.getOrPut(name);
@@ -1421,7 +1511,7 @@ pub fn addUserInputOption(b: *Build, name_raw: []const u8, value_raw: []const u8
     switch (gop.value_ptr.value) {
         .scalar => |s| {
             // turn it into a list
-            var list = ArrayList([]const u8).init(b.allocator);
+            var list = std.array_list.Managed([]const u8).init(b.allocator);
             try list.append(s);
             try list.append(value);
             try b.user_input_options.put(name, .{
@@ -1448,11 +1538,15 @@ pub fn addUserInputOption(b: *Build, name_raw: []const u8, value_raw: []const u8
             log.warn("TODO maps as command line arguments is not implemented yet.", .{});
             return true;
         },
+        .lazy_path, .lazy_path_list => {
+            log.warn("the lazy path value type isn't added from the CLI, but somehow '{s}' is a .{f}", .{ name, std.zig.fmtId(@tagName(gop.value_ptr.value)) });
+            return true;
+        },
     }
     return false;
 }
 
-pub fn addUserInputFlag(b: *Build, name_raw: []const u8) !bool {
+pub fn addUserInputFlag(b: *Build, name_raw: []const u8) error{OutOfMemory}!bool {
     const name = b.dupe(name_raw);
     const gop = try b.user_input_options.getOrPut(name);
     if (!gop.found_existing) {
@@ -1470,10 +1564,15 @@ pub fn addUserInputFlag(b: *Build, name_raw: []const u8) !bool {
             log.err("Flag '-D{s}' conflicts with option '-D{s}={s}'.", .{ name, name, s });
             return true;
         },
-        .list, .map => {
+        .list, .map, .lazy_path_list => {
             log.err("Flag '-D{s}' conflicts with multiple options of the same name.", .{name});
             return true;
         },
+        .lazy_path => |lp| {
+            log.err("Flag '-D{s}' conflicts with option '-D{s}={s}'.", .{ name, name, lp.getDisplayName() });
+            return true;
+        },
+
         .flag => {},
     }
     return false;
@@ -1482,16 +1581,22 @@ pub fn addUserInputFlag(b: *Build, name_raw: []const u8) !bool {
 fn typeToEnum(comptime T: type) TypeId {
     return switch (T) {
         std.zig.BuildId => .build_id,
+        LazyPath => .lazy_path,
         else => return switch (@typeInfo(T)) {
-            .Int => .int,
-            .Float => .float,
-            .Bool => .bool,
-            .Enum => .@"enum",
-            else => switch (T) {
-                []const u8 => .string,
-                []const []const u8 => .list,
-                else => @compileError("Unsupported type: " ++ @typeName(T)),
+            .int => .int,
+            .float => .float,
+            .bool => .bool,
+            .@"enum" => .@"enum",
+            .pointer => |pointer| switch (pointer.child) {
+                u8 => .string,
+                []const u8 => .list,
+                LazyPath => .lazy_path_list,
+                else => switch (@typeInfo(pointer.child)) {
+                    .@"enum" => .enum_list,
+                    else => @compileError("Unsupported type: " ++ @typeName(T)),
+                },
             },
+            else => @compileError("Unsupported type: " ++ @typeName(T)),
         },
     };
 }
@@ -1511,20 +1616,6 @@ pub fn validateUserInputDidItFail(b: *Build) bool {
     }
 
     return b.invalid_user_input;
-}
-
-fn allocPrintCmd(ally: Allocator, opt_cwd: ?[]const u8, argv: []const []const u8) ![]u8 {
-    var buf = ArrayList(u8).init(ally);
-    if (opt_cwd) |cwd| try buf.writer().print("cd {s} && ", .{cwd});
-    for (argv) |arg| {
-        try buf.writer().print("{s} ", .{arg});
-    }
-    return buf.toOwnedSlice();
-}
-
-fn printCmd(ally: Allocator, cwd: ?[]const u8, argv: []const []const u8) void {
-    const text = allocPrintCmd(ally, cwd, argv) catch @panic("OOM");
-    std.debug.print("{s}\n", .{text});
 }
 
 /// This creates the install step and adds it to the dependencies of the
@@ -1608,16 +1699,7 @@ pub fn addCheckFile(
     return Step.CheckFile.create(b, file_source, options);
 }
 
-/// deprecated: https://github.com/ziglang/zig/issues/14943
-pub fn pushInstalledFile(b: *Build, dir: InstallDir, dest_rel_path: []const u8) void {
-    const file = InstalledFile{
-        .dir = dir,
-        .path = dest_rel_path,
-    };
-    b.installed_files.append(file.dupe(b)) catch @panic("OOM");
-}
-
-pub fn truncateFile(b: *Build, dest_path: []const u8) !void {
+pub fn truncateFile(b: *Build, dest_path: []const u8) (fs.Dir.MakeError || fs.Dir.StatFileError)!void {
     if (b.verbose) {
         log.info("truncate {s}", .{dest_path});
     }
@@ -1671,20 +1753,47 @@ pub fn fmt(b: *Build, comptime format: []const u8, args: anytype) []u8 {
     return std.fmt.allocPrint(b.allocator, format, args) catch @panic("OOM");
 }
 
-pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const u8) ![]const u8 {
+fn supportedWindowsProgramExtension(ext: []const u8) bool {
+    inline for (@typeInfo(std.process.Child.WindowsExtension).@"enum".fields) |field| {
+        if (std.ascii.eqlIgnoreCase(ext, "." ++ field.name)) return true;
+    }
+    return false;
+}
+
+fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
+    if (fs.realpathAlloc(b.allocator, full_path)) |p| {
+        return p;
+    } else |err| switch (err) {
+        error.OutOfMemory => @panic("OOM"),
+        else => {},
+    }
+
+    if (builtin.os.tag == .windows) {
+        if (b.graph.env_map.get("PATHEXT")) |PATHEXT| {
+            var it = mem.tokenizeScalar(u8, PATHEXT, fs.path.delimiter);
+
+            while (it.next()) |ext| {
+                if (!supportedWindowsProgramExtension(ext)) continue;
+
+                return fs.realpathAlloc(b.allocator, b.fmt("{s}{s}", .{ full_path, ext })) catch |err| switch (err) {
+                    error.OutOfMemory => @panic("OOM"),
+                    else => continue,
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const u8) error{FileNotFound}![]const u8 {
     // TODO report error for ambiguous situations
-    const exe_extension = b.host.result.exeFileExt();
     for (b.search_prefixes.items) |search_prefix| {
         for (names) |name| {
             if (fs.path.isAbsolute(name)) {
                 return name;
             }
-            const full_path = b.pathJoin(&.{
-                search_prefix,
-                "bin",
-                b.fmt("{s}{s}", .{ name, exe_extension }),
-            });
-            return fs.realpathAlloc(b.allocator, full_path) catch continue;
+            return tryFindProgram(b, b.pathJoin(&.{ search_prefix, "bin", name })) orelse continue;
         }
     }
     if (b.graph.env_map.get("PATH")) |PATH| {
@@ -1694,10 +1803,7 @@ pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const 
             }
             var it = mem.tokenizeScalar(u8, PATH, fs.path.delimiter);
             while (it.next()) |p| {
-                const full_path = b.pathJoin(&.{
-                    p, b.fmt("{s}{s}", .{ name, exe_extension }),
-                });
-                return fs.realpathAlloc(b.allocator, full_path) catch continue;
+                return tryFindProgram(b, b.pathJoin(&.{ p, name })) orelse continue;
             }
         }
     }
@@ -1706,10 +1812,7 @@ pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const 
             return name;
         }
         for (paths) |p| {
-            const full_path = b.pathJoin(&.{
-                p, b.fmt("{s}{s}", .{ name, exe_extension }),
-            });
-            return fs.realpathAlloc(b.allocator, full_path) catch continue;
+            return tryFindProgram(b, b.pathJoin(&.{ p, name })) orelse continue;
         }
     }
     return error.FileNotFound;
@@ -1719,23 +1822,27 @@ pub fn runAllowFail(
     b: *Build,
     argv: []const []const u8,
     out_code: *u8,
-    stderr_behavior: std.ChildProcess.StdIo,
+    stderr_behavior: std.process.Child.StdIo,
 ) RunError![]u8 {
     assert(argv.len != 0);
 
     if (!process.can_spawn)
         return error.ExecNotSupported;
 
+    const io = b.graph.io;
+
     const max_output_size = 400 * 1024;
-    var child = std.ChildProcess.init(argv, b.allocator);
+    var child = std.process.Child.init(argv, b.allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = stderr_behavior;
     child.env_map = &b.graph.env_map;
 
+    try Step.handleVerbose2(b, null, child.env_map, argv);
     try child.spawn();
 
-    const stdout = child.stdout.?.reader().readAllAlloc(b.allocator, max_output_size) catch {
+    var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
+    const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {
         return error.ReadFailure;
     };
     errdefer b.allocator.free(stdout);
@@ -1762,14 +1869,14 @@ pub fn runAllowFail(
 pub fn run(b: *Build, argv: []const []const u8) []u8 {
     if (!process.can_spawn) {
         std.debug.print("unable to spawn the following command: cannot spawn child process\n{s}\n", .{
-            try allocPrintCmd(b.allocator, null, argv),
+            try Step.allocPrintCmd(b.allocator, null, argv),
         });
         process.exit(1);
     }
 
     var code: u8 = undefined;
     return b.runAllowFail(argv, &code, .Inherit) catch |err| {
-        const printed_cmd = allocPrintCmd(b.allocator, null, argv) catch @panic("OOM");
+        const printed_cmd = Step.allocPrintCmd(b.allocator, null, argv) catch @panic("OOM");
         std.debug.print("unable to spawn the following command: {s}\n{s}\n", .{
             @errorName(err), printed_cmd,
         });
@@ -1826,6 +1933,12 @@ pub const Dependency = struct {
         };
     }
 
+    pub fn namedLazyPath(d: *Dependency, name: []const u8) LazyPath {
+        return d.builder.named_lazy_paths.get(name) orelse {
+            panic("unable to find named lazypath '{s}'", .{name});
+        };
+    }
+
     pub fn path(d: *Dependency, sub_path: []const u8) LazyPath {
         return .{
             .dependency = .{
@@ -1849,7 +1962,7 @@ inline fn findImportPkgHashOrFatal(b: *Build, comptime asking_build_zig: type, c
     const build_runner = @import("root");
     const deps = build_runner.dependencies;
 
-    const b_pkg_hash, const b_pkg_deps = comptime for (@typeInfo(deps.packages).Struct.decls) |decl| {
+    const b_pkg_hash, const b_pkg_deps = comptime for (@typeInfo(deps.packages).@"struct".decls) |decl| {
         const pkg_hash = decl.name;
         const pkg = @field(deps.packages, pkg_hash);
         if (@hasDecl(pkg, "build_zig") and pkg.build_zig == asking_build_zig) break .{ pkg_hash, pkg.deps };
@@ -1887,7 +2000,7 @@ pub fn lazyDependency(b: *Build, name: []const u8, args: anytype) ?*Dependency {
     const deps = build_runner.dependencies;
     const pkg_hash = findPkgHashOrFatal(b, name);
 
-    inline for (@typeInfo(deps.packages).Struct.decls) |decl| {
+    inline for (@typeInfo(deps.packages).@"struct".decls) |decl| {
         if (mem.eql(u8, decl.name, pkg_hash)) {
             const pkg = @field(deps.packages, decl.name);
             const available = !@hasDecl(pkg, "available") or pkg.available;
@@ -1907,7 +2020,7 @@ pub fn dependency(b: *Build, name: []const u8, args: anytype) *Dependency {
     const deps = build_runner.dependencies;
     const pkg_hash = findPkgHashOrFatal(b, name);
 
-    inline for (@typeInfo(deps.packages).Struct.decls) |decl| {
+    inline for (@typeInfo(deps.packages).@"struct".decls) |decl| {
         if (mem.eql(u8, decl.name, pkg_hash)) {
             const pkg = @field(deps.packages, decl.name);
             if (@hasDecl(pkg, "available")) {
@@ -1937,7 +2050,7 @@ pub inline fn lazyImport(
     const deps = build_runner.dependencies;
     const pkg_hash = findImportPkgHashOrFatal(b, asking_build_zig, dep_name);
 
-    inline for (@typeInfo(deps.packages).Struct.decls) |decl| {
+    inline for (@typeInfo(deps.packages).@"struct".decls) |decl| {
         if (comptime mem.eql(u8, decl.name, pkg_hash)) {
             const pkg = @field(deps.packages, decl.name);
             const available = !@hasDecl(pkg, "available") or pkg.available;
@@ -1966,7 +2079,7 @@ pub fn dependencyFromBuildZig(
     const deps = build_runner.dependencies;
 
     find_dep: {
-        const pkg, const pkg_hash = inline for (@typeInfo(deps.packages).Struct.decls) |decl| {
+        const pkg, const pkg_hash = inline for (@typeInfo(deps.packages).@"struct".decls) |decl| {
             const pkg_hash = decl.name;
             const pkg = @field(deps.packages, pkg_hash);
             if (@hasDecl(pkg, "build_zig") and pkg.build_zig == build_zig) break .{ pkg, pkg_hash };
@@ -1978,26 +2091,21 @@ pub fn dependencyFromBuildZig(
     }
 
     const full_path = b.pathFromRoot("build.zig.zon");
-    debug.panic("'{}' is not a build.zig struct of a dependecy in '{s}'", .{ build_zig, full_path });
+    debug.panic("'{}' is not a build.zig struct of a dependency in '{s}'", .{ build_zig, full_path });
 }
 
 fn userValuesAreSame(lhs: UserValue, rhs: UserValue) bool {
+    if (std.meta.activeTag(lhs) != rhs) return false;
     switch (lhs) {
         .flag => {},
         .scalar => |lhs_scalar| {
-            const rhs_scalar = switch (rhs) {
-                .scalar => |scalar| scalar,
-                else => return false,
-            };
+            const rhs_scalar = rhs.scalar;
 
             if (!std.mem.eql(u8, lhs_scalar, rhs_scalar))
                 return false;
         },
         .list => |lhs_list| {
-            const rhs_list = switch (rhs) {
-                .list => |list| list,
-                else => return false,
-            };
+            const rhs_list = rhs.list;
 
             if (lhs_list.items.len != rhs_list.items.len)
                 return false;
@@ -2008,10 +2116,7 @@ fn userValuesAreSame(lhs: UserValue, rhs: UserValue) bool {
             }
         },
         .map => |lhs_map| {
-            const rhs_map = switch (rhs) {
-                .map => |map| map,
-                else => return false,
-            };
+            const rhs_map = rhs.map;
 
             if (lhs_map.count() != rhs_map.count())
                 return false;
@@ -2023,8 +2128,51 @@ fn userValuesAreSame(lhs: UserValue, rhs: UserValue) bool {
                     return false;
             }
         },
+        .lazy_path => |lhs_lp| {
+            const rhs_lp = rhs.lazy_path;
+            return userLazyPathsAreTheSame(lhs_lp, rhs_lp);
+        },
+        .lazy_path_list => |lhs_lp_list| {
+            const rhs_lp_list = rhs.lazy_path_list;
+            if (lhs_lp_list.items.len != rhs_lp_list.items.len) return false;
+            for (lhs_lp_list.items, rhs_lp_list.items) |lhs_lp, rhs_lp| {
+                if (!userLazyPathsAreTheSame(lhs_lp, rhs_lp)) return false;
+            }
+            return true;
+        },
     }
 
+    return true;
+}
+
+fn userLazyPathsAreTheSame(lhs_lp: LazyPath, rhs_lp: LazyPath) bool {
+    if (std.meta.activeTag(lhs_lp) != rhs_lp) return false;
+    switch (lhs_lp) {
+        .src_path => |lhs_sp| {
+            const rhs_sp = rhs_lp.src_path;
+
+            if (lhs_sp.owner != rhs_sp.owner) return false;
+            if (std.mem.eql(u8, lhs_sp.sub_path, rhs_sp.sub_path)) return false;
+        },
+        .generated => |lhs_gen| {
+            const rhs_gen = rhs_lp.generated;
+
+            if (lhs_gen.file != rhs_gen.file) return false;
+            if (lhs_gen.up != rhs_gen.up) return false;
+            if (std.mem.eql(u8, lhs_gen.sub_path, rhs_gen.sub_path)) return false;
+        },
+        .cwd_relative => |lhs_rel_path| {
+            const rhs_rel_path = rhs_lp.cwd_relative;
+
+            if (!std.mem.eql(u8, lhs_rel_path, rhs_rel_path)) return false;
+        },
+        .dependency => |lhs_dep| {
+            const rhs_dep = rhs_lp.dependency;
+
+            if (lhs_dep.dependency != rhs_dep.dependency) return false;
+            if (!std.mem.eql(u8, lhs_dep.sub_path, rhs_dep.sub_path)) return false;
+        },
+    }
     return true;
 }
 
@@ -2038,10 +2186,10 @@ fn dependencyInner(
     args: anytype,
 ) *Dependency {
     const user_input_options = userInputOptionsFromArgs(b.allocator, args);
-    if (b.initialized_deps.get(.{
+    if (b.graph.dependency_cache.getContext(.{
         .build_root_string = build_root_string,
         .user_input_options = user_input_options,
-    })) |dep|
+    }, .{ .allocator = b.graph.arena })) |dep|
         return dep;
 
     const build_root: std.Build.Cache.Directory = .{
@@ -2059,24 +2207,24 @@ fn dependencyInner(
         sub_builder.runBuild(bz) catch @panic("unhandled error");
 
         if (sub_builder.validateUserInputDidItFail()) {
-            std.debug.dumpCurrentStackTrace(@returnAddress());
+            std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
         }
     }
 
     const dep = b.allocator.create(Dependency) catch @panic("OOM");
     dep.* = .{ .builder = sub_builder };
 
-    b.initialized_deps.put(.{
+    b.graph.dependency_cache.putContext(b.graph.arena, .{
         .build_root_string = build_root_string,
         .user_input_options = user_input_options,
-    }, dep) catch @panic("OOM");
+    }, dep, .{ .allocator = b.graph.arena }) catch @panic("OOM");
     return dep;
 }
 
 pub fn runBuild(b: *Build, build_zig: anytype) anyerror!void {
-    switch (@typeInfo(@typeInfo(@TypeOf(build_zig.build)).Fn.return_type.?)) {
-        .Void => build_zig.build(b),
-        .ErrorUnion => try build_zig.build(b),
+    switch (@typeInfo(@typeInfo(@TypeOf(build_zig.build)).@"fn".return_type.?)) {
+        .void => build_zig.build(b),
+        .error_union => try build_zig.build(b),
         else => @compileError("expected return type of build to be 'void' or '!void'"),
     }
 }
@@ -2087,15 +2235,25 @@ pub const GeneratedFile = struct {
     /// The step that generates the file
     step: *Step,
 
-    /// The path to the generated file. Must be either absolute or relative to the build root.
+    /// The path to the generated file. Must be either absolute or relative to the build runner cwd.
     /// This value must be set in the `fn make()` of the `step` and must not be `null` afterwards.
     path: ?[]const u8 = null,
 
+    /// Deprecated, see `getPath2`.
     pub fn getPath(gen: GeneratedFile) []const u8 {
-        return gen.step.owner.pathFromRoot(gen.path orelse std.debug.panic(
+        return gen.step.owner.pathFromCwd(gen.path orelse std.debug.panic(
             "getPath() was called on a GeneratedFile that wasn't built yet. Is there a missing Step dependency on step '{s}'?",
             .{gen.step.name},
         ));
+    }
+
+    pub fn getPath2(gen: GeneratedFile, src_builder: *Build, asking_step: ?*Step) []const u8 {
+        return gen.path orelse {
+            const w, const ttyconf = debug.lockStderrWriter(&.{});
+            dumpBadGetPathHelp(gen.step, w, ttyconf, src_builder, asking_step) catch {};
+            debug.unlockStderrWriter();
+            @panic("misconfigured build script");
+        };
     }
 };
 
@@ -2225,22 +2383,26 @@ pub const LazyPath = union(enum) {
     }
 
     pub fn path(lazy_path: LazyPath, b: *Build, sub_path: []const u8) LazyPath {
+        return lazy_path.join(b.allocator, sub_path) catch @panic("OOM");
+    }
+
+    pub fn join(lazy_path: LazyPath, arena: Allocator, sub_path: []const u8) Allocator.Error!LazyPath {
         return switch (lazy_path) {
             .src_path => |src| .{ .src_path = .{
                 .owner = src.owner,
-                .sub_path = b.pathResolve(&.{ src.sub_path, sub_path }),
+                .sub_path = try fs.path.resolve(arena, &.{ src.sub_path, sub_path }),
             } },
             .generated => |gen| .{ .generated = .{
                 .file = gen.file,
                 .up = gen.up,
-                .sub_path = b.pathResolve(&.{ gen.sub_path, sub_path }),
+                .sub_path = try fs.path.resolve(arena, &.{ gen.sub_path, sub_path }),
             } },
             .cwd_relative => |cwd_relative| .{
-                .cwd_relative = b.pathResolve(&.{ cwd_relative, sub_path }),
+                .cwd_relative = try fs.path.resolve(arena, &.{ cwd_relative, sub_path }),
             },
             .dependency => |dep| .{ .dependency = .{
                 .dependency = dep.dependency,
-                .sub_path = b.pathResolve(&.{ dep.sub_path, sub_path }),
+                .sub_path = try fs.path.resolve(arena, &.{ dep.sub_path, sub_path }),
             } },
         };
     }
@@ -2264,36 +2426,51 @@ pub const LazyPath = union(enum) {
         }
     }
 
-    /// Returns an absolute path.
-    /// Intended to be used during the make phase only.
+    /// Deprecated, see `getPath3`.
     pub fn getPath(lazy_path: LazyPath, src_builder: *Build) []const u8 {
         return getPath2(lazy_path, src_builder, null);
     }
 
-    /// Returns an absolute path.
+    /// Deprecated, see `getPath3`.
+    pub fn getPath2(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) []const u8 {
+        const p = getPath3(lazy_path, src_builder, asking_step);
+        return src_builder.pathResolve(&.{ p.root_dir.path orelse ".", p.sub_path });
+    }
+
     /// Intended to be used during the make phase only.
     ///
     /// `asking_step` is only used for debugging purposes; it's the step being
     /// run that is asking for the path.
-    pub fn getPath2(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) []const u8 {
+    pub fn getPath3(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) Cache.Path {
         switch (lazy_path) {
-            .src_path => |sp| return sp.owner.pathFromRoot(sp.sub_path),
-            .cwd_relative => |p| return src_builder.pathFromCwd(p),
+            .src_path => |sp| return .{
+                .root_dir = sp.owner.build_root,
+                .sub_path = sp.sub_path,
+            },
+            .cwd_relative => |sub_path| return .{
+                .root_dir = Cache.Directory.cwd(),
+                .sub_path = sub_path,
+            },
             .generated => |gen| {
-                var file_path: []const u8 = gen.file.step.owner.pathFromRoot(gen.file.path orelse {
-                    std.debug.getStderrMutex().lock();
-                    const stderr = std.io.getStdErr();
-                    dumpBadGetPathHelp(gen.file.step, stderr, src_builder, asking_step) catch {};
-                    std.debug.getStderrMutex().unlock();
-                    @panic("misconfigured build script");
-                });
+                // TODO make gen.file.path not be absolute and use that as the
+                // basis for not traversing up too many directories.
+
+                var file_path: Cache.Path = .{
+                    .root_dir = Cache.Directory.cwd(),
+                    .sub_path = gen.file.path orelse {
+                        const w, const ttyconf = debug.lockStderrWriter(&.{});
+                        dumpBadGetPathHelp(gen.file.step, w, ttyconf, src_builder, asking_step) catch {};
+                        debug.unlockStderrWriter();
+                        @panic("misconfigured build script");
+                    },
+                };
 
                 if (gen.up > 0) {
                     const cache_root_path = src_builder.cache_root.path orelse
                         (src_builder.cache_root.join(src_builder.allocator, &.{"."}) catch @panic("OOM"));
 
                     for (0..gen.up) |_| {
-                        if (mem.eql(u8, file_path, cache_root_path)) {
+                        if (mem.eql(u8, file_path.sub_path, cache_root_path)) {
                             // If we hit the cache root and there's still more to go,
                             // the script attempted to go too far.
                             dumpBadDirnameHelp(gen.file.step, asking_step,
@@ -2307,7 +2484,7 @@ pub const LazyPath = union(enum) {
                         // path is absolute.
                         // dirname will return null only if we're at root.
                         // Typically, we'll stop well before that at the cache root.
-                        file_path = fs.path.dirname(file_path) orelse {
+                        file_path.sub_path = fs.path.dirname(file_path.sub_path) orelse {
                             dumpBadDirnameHelp(gen.file.step, asking_step,
                                 \\dirname() reached root.
                                 \\No more directories left to go up.
@@ -2318,10 +2495,25 @@ pub const LazyPath = union(enum) {
                     }
                 }
 
-                return src_builder.pathResolve(&.{ file_path, gen.sub_path });
+                return file_path.join(src_builder.allocator, gen.sub_path) catch @panic("OOM");
             },
-            .dependency => |dep| return dep.dependency.builder.pathFromRoot(dep.sub_path),
+            .dependency => |dep| return .{
+                .root_dir = dep.dependency.builder.build_root,
+                .sub_path = dep.sub_path,
+            },
         }
+    }
+
+    pub fn basename(lazy_path: LazyPath, src_builder: *Build, asking_step: ?*Step) []const u8 {
+        return fs.path.basename(switch (lazy_path) {
+            .src_path => |sp| sp.sub_path,
+            .cwd_relative => |sub_path| sub_path,
+            .generated => |gen| if (gen.sub_path.len > 0)
+                gen.sub_path
+            else
+                gen.file.getPath2(src_builder, asking_step),
+            .dependency => |dep| dep.sub_path,
+        });
     }
 
     /// Copies the internal strings.
@@ -2329,18 +2521,25 @@ pub const LazyPath = union(enum) {
     /// The `b` parameter is only used for its allocator. All *Build instances
     /// share the same allocator.
     pub fn dupe(lazy_path: LazyPath, b: *Build) LazyPath {
+        return lazy_path.dupeInner(b.allocator);
+    }
+
+    fn dupeInner(lazy_path: LazyPath, allocator: std.mem.Allocator) LazyPath {
         return switch (lazy_path) {
             .src_path => |sp| .{ .src_path = .{
                 .owner = sp.owner,
                 .sub_path = sp.owner.dupePath(sp.sub_path),
             } },
-            .cwd_relative => |p| .{ .cwd_relative = b.dupePath(p) },
+            .cwd_relative => |p| .{ .cwd_relative = dupePathInner(allocator, p) },
             .generated => |gen| .{ .generated = .{
                 .file = gen.file,
                 .up = gen.up,
-                .sub_path = b.dupePath(gen.sub_path),
+                .sub_path = dupePathInner(allocator, gen.sub_path),
             } },
-            .dependency => |dep| .{ .dependency = dep },
+            .dependency => |dep| .{ .dependency = .{
+                .dependency = dep.dependency,
+                .sub_path = dupePathInner(allocator, dep.sub_path),
+            } },
         };
     }
 };
@@ -2351,44 +2550,40 @@ fn dumpBadDirnameHelp(
     comptime msg: []const u8,
     args: anytype,
 ) anyerror!void {
-    debug.getStderrMutex().lock();
-    defer debug.getStderrMutex().unlock();
+    const w, const tty_config = debug.lockStderrWriter(&.{});
+    defer debug.unlockStderrWriter();
 
-    const stderr = io.getStdErr();
-    const w = stderr.writer();
     try w.print(msg, args);
-
-    const tty_config = std.io.tty.detectConfig(stderr);
 
     if (fail_step) |s| {
         tty_config.setColor(w, .red) catch {};
-        try stderr.writeAll("    The step was created by this stack trace:\n");
+        try w.writeAll("    The step was created by this stack trace:\n");
         tty_config.setColor(w, .reset) catch {};
 
-        s.dump(stderr);
+        s.dump(w, tty_config);
     }
 
     if (asking_step) |as| {
         tty_config.setColor(w, .red) catch {};
-        try stderr.writer().print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
+        try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
         tty_config.setColor(w, .reset) catch {};
 
-        as.dump(stderr);
+        as.dump(w, tty_config);
     }
 
     tty_config.setColor(w, .red) catch {};
-    try stderr.writeAll("    Hope that helps. Proceeding to panic.\n");
+    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
     tty_config.setColor(w, .reset) catch {};
 }
 
 /// In this function the stderr mutex has already been locked.
 pub fn dumpBadGetPathHelp(
     s: *Step,
-    stderr: fs.File,
+    w: *std.Io.Writer,
+    tty_config: std.Io.tty.Config,
     src_builder: *Build,
     asking_step: ?*Step,
 ) anyerror!void {
-    const w = stderr.writer();
     try w.print(
         \\getPath() was called on a GeneratedFile that wasn't built yet.
         \\  source package path: {s}
@@ -2399,21 +2594,20 @@ pub fn dumpBadGetPathHelp(
         s.name,
     });
 
-    const tty_config = std.io.tty.detectConfig(stderr);
     tty_config.setColor(w, .red) catch {};
-    try stderr.writeAll("    The step was created by this stack trace:\n");
+    try w.writeAll("    The step was created by this stack trace:\n");
     tty_config.setColor(w, .reset) catch {};
 
-    s.dump(stderr);
+    s.dump(w, tty_config);
     if (asking_step) |as| {
         tty_config.setColor(w, .red) catch {};
-        try stderr.writer().print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
+        try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
         tty_config.setColor(w, .reset) catch {};
 
-        as.dump(stderr);
+        as.dump(w, tty_config);
     }
     tty_config.setColor(w, .red) catch {};
-    try stderr.writeAll("    Hope that helps. Proceeding to panic.\n");
+    try w.writeAll("    Hope that helps. Proceeding to panic.\n");
     tty_config.setColor(w, .reset) catch {};
 }
 
@@ -2435,26 +2629,13 @@ pub const InstallDir = union(enum) {
     }
 };
 
-pub const InstalledFile = struct {
-    dir: InstallDir,
-    path: []const u8,
-
-    /// Duplicates the installed file path and directory.
-    pub fn dupe(file: InstalledFile, builder: *Build) InstalledFile {
-        return .{
-            .dir = file.dir.dupe(builder),
-            .path = builder.dupe(file.path),
-        };
-    }
-};
-
 /// This function is intended to be called in the `configure` phase only.
 /// It returns an absolute directory path, which is potentially going to be a
 /// source of API breakage in the future, so keep that in mind when using this
 /// function.
 pub fn makeTempPath(b: *Build) []const u8 {
     const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ hex64(rand_int);
+    const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
     b.cache_root.handle.makePath(tmp_dir_sub_path) catch |err| {
         std.debug.print("unable to make tmp path '{s}': {s}\n", .{
@@ -2462,20 +2643,6 @@ pub fn makeTempPath(b: *Build) []const u8 {
         });
     };
     return result_path;
-}
-
-/// There are a few copies of this function in miscellaneous places. Would be nice to find
-/// a home for them.
-pub fn hex64(x: u64) [16]u8 {
-    const hex_charset = "0123456789abcdef";
-    var result: [16]u8 = undefined;
-    var i: usize = 0;
-    while (i < 8) : (i += 1) {
-        const byte: u8 = @truncate(x >> @as(u6, @intCast(8 * i)));
-        result[i * 2 + 0] = hex_charset[byte >> 4];
-        result[i * 2 + 1] = hex_charset[byte & 15];
-    }
-    return result;
 }
 
 /// A pair of target query and fully resolved target.
@@ -2494,9 +2661,10 @@ pub fn resolveTargetQuery(b: *Build, query: Target.Query) ResolvedTarget {
         // Hot path. This is faster than querying the native CPU and OS again.
         return b.graph.host;
     }
+    const io = b.graph.io;
     return .{
         .query = query,
-        .result = std.zig.system.resolveTargetQuery(query) catch
+        .result = std.zig.system.resolveTargetQuery(io, query) catch
             @panic("unable to resolve target query"),
     };
 }

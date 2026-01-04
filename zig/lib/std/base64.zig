@@ -1,10 +1,12 @@
-//! Base64 encoding/decoding.
+//! Base64 encoding/decoding as specified by
+//! [RFC 4648](https://datatracker.ietf.org/doc/html/rfc4648).
 
 const std = @import("std.zig");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 const testing = std.testing;
 const mem = std.mem;
+const window = mem.window;
 
 pub const Error = error{
     InvalidCharacter,
@@ -23,12 +25,15 @@ pub const Codecs = struct {
     Decoder: Base64Decoder,
 };
 
+/// The Base64 alphabet defined in
+/// [RFC 4648 section 4](https://datatracker.ietf.org/doc/html/rfc4648#section-4).
 pub const standard_alphabet_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".*;
 fn standardBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
     return Base64DecoderWithIgnore.init(standard_alphabet_chars, '=', ignore);
 }
 
-/// Standard Base64 codecs, with padding
+/// Standard Base64 codecs, with padding, as defined in
+/// [RFC 4648 section 4](https://datatracker.ietf.org/doc/html/rfc4648#section-4).
 pub const standard = Codecs{
     .alphabet_chars = standard_alphabet_chars,
     .pad_char = '=',
@@ -37,7 +42,8 @@ pub const standard = Codecs{
     .Decoder = Base64Decoder.init(standard_alphabet_chars, '='),
 };
 
-/// Standard Base64 codecs, without padding
+/// Standard Base64 codecs, without padding, as defined in
+/// [RFC 4648 section 3.2](https://datatracker.ietf.org/doc/html/rfc4648#section-3.2).
 pub const standard_no_pad = Codecs{
     .alphabet_chars = standard_alphabet_chars,
     .pad_char = null,
@@ -46,12 +52,15 @@ pub const standard_no_pad = Codecs{
     .Decoder = Base64Decoder.init(standard_alphabet_chars, null),
 };
 
+/// The URL-safe Base64 alphabet defined in
+/// [RFC 4648 section 5](https://datatracker.ietf.org/doc/html/rfc4648#section-5).
 pub const url_safe_alphabet_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".*;
 fn urlSafeBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
     return Base64DecoderWithIgnore.init(url_safe_alphabet_chars, null, ignore);
 }
 
-/// URL-safe Base64 codecs, with padding
+/// URL-safe Base64 codecs, with padding, as defined in
+/// [RFC 4648 section 5](https://datatracker.ietf.org/doc/html/rfc4648#section-5).
 pub const url_safe = Codecs{
     .alphabet_chars = url_safe_alphabet_chars,
     .pad_char = '=',
@@ -60,7 +69,8 @@ pub const url_safe = Codecs{
     .Decoder = Base64Decoder.init(url_safe_alphabet_chars, '='),
 };
 
-/// URL-safe Base64 codecs, without padding
+/// URL-safe Base64 codecs, without padding, as defined in
+/// [RFC 4648 section 3.2](https://datatracker.ietf.org/doc/html/rfc4648#section-3.2).
 pub const url_safe_no_pad = Codecs{
     .alphabet_chars = url_safe_alphabet_chars,
     .pad_char = null,
@@ -95,6 +105,15 @@ pub const Base64Encoder = struct {
         } else {
             const leftover = source_len % 3;
             return @divTrunc(source_len, 3) * 4 + @divTrunc(leftover * 4 + 2, 3);
+        }
+    }
+
+    pub fn encodeWriter(encoder: *const Base64Encoder, dest: *std.Io.Writer, source: []const u8) !void {
+        var chunker = window(u8, source, 3, 3);
+        while (chunker.next()) |chunk| {
+            var temp: [5]u8 = undefined;
+            const s = encoder.encode(&temp, chunk);
+            try dest.writeAll(s);
         }
     }
 
@@ -294,9 +313,9 @@ pub const Base64DecoderWithIgnore = struct {
         return result;
     }
 
-    /// Return the maximum possible decoded size for a given input length - The actual length may be less if the input includes padding.
-    /// `InvalidPadding` is returned if the input length is not valid.
-    pub fn calcSizeUpperBound(decoder_with_ignore: *const Base64DecoderWithIgnore, source_len: usize) Error!usize {
+    /// Return the maximum possible decoded size for a given input length - The actual length may be
+    /// less if the input includes padding or ignored characters.
+    pub fn calcSizeUpperBound(decoder_with_ignore: *const Base64DecoderWithIgnore, source_len: usize) usize {
         var result = source_len / 4 * 3;
         if (decoder_with_ignore.decoder.pad_char == null) {
             const leftover = source_len % 4;
@@ -477,9 +496,17 @@ fn testBase64UrlSafeNoPad() !void {
 fn testAllApis(codecs: Codecs, expected_decoded: []const u8, expected_encoded: []const u8) !void {
     // Base64Encoder
     {
+        // raw encode
         var buffer: [0x100]u8 = undefined;
         const encoded = codecs.Encoder.encode(&buffer, expected_decoded);
         try testing.expectEqualSlices(u8, expected_encoded, encoded);
+    }
+    {
+        // stream encode
+        var buffer: [0x100]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buffer);
+        try codecs.Encoder.encodeWriter(&writer, expected_decoded);
+        try testing.expectEqualSlices(u8, expected_encoded, writer.buffered());
     }
 
     // Base64Decoder
@@ -494,7 +521,7 @@ fn testAllApis(codecs: Codecs, expected_decoded: []const u8, expected_encoded: [
     {
         const decoder_ignore_nothing = codecs.decoderWithIgnore("");
         var buffer: [0x100]u8 = undefined;
-        const decoded = buffer[0..try decoder_ignore_nothing.calcSizeUpperBound(expected_encoded.len)];
+        const decoded = buffer[0..decoder_ignore_nothing.calcSizeUpperBound(expected_encoded.len)];
         const written = try decoder_ignore_nothing.decode(decoded, expected_encoded);
         try testing.expect(written <= decoded.len);
         try testing.expectEqualSlices(u8, expected_decoded, decoded[0..written]);
@@ -504,7 +531,7 @@ fn testAllApis(codecs: Codecs, expected_decoded: []const u8, expected_encoded: [
 fn testDecodeIgnoreSpace(codecs: Codecs, expected_decoded: []const u8, encoded: []const u8) !void {
     const decoder_ignore_space = codecs.decoderWithIgnore(" ");
     var buffer: [0x100]u8 = undefined;
-    const decoded = buffer[0..try decoder_ignore_space.calcSizeUpperBound(encoded.len)];
+    const decoded = buffer[0..decoder_ignore_space.calcSizeUpperBound(encoded.len)];
     const written = try decoder_ignore_space.decode(decoded, encoded);
     try testing.expectEqualSlices(u8, expected_decoded, decoded[0..written]);
 }

@@ -1,5 +1,5 @@
 /* Declarations for math functions.
-   Copyright (C) 1991-2023 Free Software Foundation, Inc.
+   Copyright (C) 1991-2025 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -87,20 +87,24 @@ __BEGIN_DECLS
 
 #ifdef __USE_ISOC99
 /* IEEE positive infinity.  */
-# if __GNUC_PREREQ (3, 3)
-#  define INFINITY (__builtin_inff ())
-# else
-#  define INFINITY HUGE_VALF
+# ifndef INFINITY
+#  if __GNUC_PREREQ (3, 3)
+#   define INFINITY (__builtin_inff ())
+#  else
+#   define INFINITY HUGE_VALF
+#  endif
 # endif
 
 /* IEEE Not A Number.  */
-# if __GNUC_PREREQ (3, 3)
-#  define NAN (__builtin_nanf (""))
-# else
+# ifndef NAN
+#  if __GNUC_PREREQ (3, 3)
+#   define NAN (__builtin_nanf (""))
+#  else
 /* This will raise an "invalid" exception outside static initializers,
    but is the best that can be done in ISO C while remaining a
    constant expression.  */
-#  define NAN (0.0f / 0.0f)
+#   define NAN (0.0f / 0.0f)
+#  endif
 # endif
 #endif /* __USE_ISOC99 */
 
@@ -114,37 +118,37 @@ __BEGIN_DECLS
 #endif
 #if (__HAVE_FLOAT16					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF16 (__builtin_nansf16 (""))
 #endif
 #if (__HAVE_FLOAT32					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF32 (__builtin_nansf32 (""))
 #endif
 #if (__HAVE_FLOAT64					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF64 (__builtin_nansf64 (""))
 #endif
 #if (__HAVE_FLOAT128					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF128 (__builtin_nansf128 (""))
 #endif
 #if (__HAVE_FLOAT32X					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF32X (__builtin_nansf32x (""))
 #endif
 #if (__HAVE_FLOAT64X					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF64X (__builtin_nansf64x (""))
 #endif
 #if (__HAVE_FLOAT128X					\
      && __GLIBC_USE (IEC_60559_TYPES_EXT)		\
-     && (defined __USE_GNU || !__GLIBC_USE (ISOC2X)))
+     && (defined __USE_GNU || !__GLIBC_USE (ISOC23)))
 # define SNANF128X (__builtin_nansf128x (""))
 #endif
 
@@ -214,7 +218,7 @@ typedef _Float128x double_t;
 #  define FP_ILOGBNAN	2147483647
 # endif
 #endif
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 # if __WORDSIZE == 32
 #  define __FP_LONG_MAX 0x7fffffffL
 # else
@@ -246,7 +250,7 @@ typedef _Float128x double_t;
 
 #include <bits/fp-fast.h>
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 /* Rounding direction macros for fromfp functions.  */
 enum
   {
@@ -268,42 +272,7 @@ enum
   };
 #endif
 
-/* The file <bits/mathcalls.h> contains the prototypes for all the
-   actual math functions.  These macros are used for those prototypes,
-   so we can easily declare each function as both `name' and `__name',
-   and can declare the float versions `namef' and `__namef'.  */
-
-#define __SIMD_DECL(function) __CONCAT (__DECL_SIMD_, function)
-
-#define __MATHCALL_VEC(function, suffix, args) 	\
-  __SIMD_DECL (__MATH_PRECNAME (function, suffix)) \
-  __MATHCALL (function, suffix, args)
-
-#define __MATHDECL_VEC(type, function,suffix, args) \
-  __SIMD_DECL (__MATH_PRECNAME (function, suffix)) \
-  __MATHDECL(type, function,suffix, args)
-
-#define __MATHCALL(function,suffix, args)	\
-  __MATHDECL (_Mdouble_,function,suffix, args)
-#define __MATHDECL(type, function,suffix, args) \
-  __MATHDECL_1(type, function,suffix, args); \
-  __MATHDECL_1(type, __CONCAT(__,function),suffix, args)
-#define __MATHCALLX(function,suffix, args, attrib)	\
-  __MATHDECLX (_Mdouble_,function,suffix, args, attrib)
-#define __MATHDECLX(type, function,suffix, args, attrib) \
-  __MATHDECL_1(type, function,suffix, args) __attribute__ (attrib); \
-  __MATHDECL_1(type, __CONCAT(__,function),suffix, args) __attribute__ (attrib)
-#define __MATHDECL_1_IMPL(type, function, suffix, args) \
-  extern type __MATH_PRECNAME(function,suffix) args __THROW
-#define __MATHDECL_1(type, function, suffix, args) \
-  __MATHDECL_1_IMPL(type, function, suffix, args)
-/* Ignore the alias by default.  The alias is only useful with
-   redirections.  */
-#define __MATHDECL_ALIAS(type, function, suffix, args, alias) \
-  __MATHDECL_1(type, function, suffix, args)
-
-#define __MATHREDIR(type, function, suffix, args, to) \
-  extern type __REDIRECT_NTH (__MATH_PRECNAME (function, suffix), args, to)
+#include <bits/mathcalls-macros.h>
 
 #define _Mdouble_		double
 #define __MATH_PRECNAME(name,r)	__CONCAT(name,r)
@@ -558,7 +527,7 @@ extern double __REDIRECT_NTH (nexttoward, (double __x, long double __y),
 #define __MATHCALL_NARROW(func, redir, nargs)	\
   __MATHCALL_NARROW_NORMAL (func, nargs)
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 
 # define _Mret_ float
 # define _Marg_ double
@@ -1051,7 +1020,7 @@ enum
 
 #endif /* Use ISO C99.  */
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 # include <bits/iscanonical.h>
 
 /* Return nonzero value if X is a signaling NaN.  */
@@ -1332,7 +1301,7 @@ iszero (__T __val)
 # endif
 #endif
 
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 /* An expression whose type has the widest of the evaluation formats
    of X and Y (which are of floating-point types).  */
 # if __FLT_EVAL_METHOD__ == 2 || __FLT_EVAL_METHOD__ > 64

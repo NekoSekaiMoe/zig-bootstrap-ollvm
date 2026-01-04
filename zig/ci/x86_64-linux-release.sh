@@ -5,40 +5,31 @@
 set -x
 set -e
 
-ARCH="$(uname -m)"
-TARGET="$ARCH-linux-musl"
+TARGET="x86_64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.12.0-dev.203+d3bc1cfc4"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v10.0.2-$ARCH-linux:$HOME/deps/qemu-linux-x86_64-8.2.1/bin:$PATH"
-
-# Make the `zig version` number consistent.
-# This will affect the cmake command below.
-git fetch --unshallow || true
-git fetch --tags
-
-# Test building from source without LLVM.
-git clean -fd
-rm -rf zig-out
-cc -o bootstrap bootstrap.c
-./bootstrap
-./zig2 build -Dno-lib
-./zig-out/bin/zig test test/behavior.zig
-
-export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
-export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
-
-rm -rf build-release
-mkdir build-release
-cd build-release
+export PATH="$HOME/deps/wasmtime-v38.0.3-x86_64-linux:$HOME/deps/qemu-linux-x86_64-10.1.1.1/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
 # fill up space on the hard drive for no reason.
 export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
 export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
+
+# Test building from source without LLVM.
+cc -o bootstrap bootstrap.c
+./bootstrap
+./zig2 build -Dno-lib
+./zig-out/bin/zig test test/behavior.zig
+
+mkdir build-release
+cd build-release
+
+export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
+export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
 
 cmake .. \
   -DCMAKE_INSTALL_PREFIX="stage3-release" \
@@ -57,14 +48,6 @@ unset CXX
 
 ninja install
 
-# TODO: move this to a build.zig step (check-fmt)
-echo "Looking for non-conforming code formatting..."
-stage3-release/bin/zig fmt --check .. \
-  --exclude ../test/cases/ \
-  --exclude ../doc/ \
-  --exclude ../build-debug \
-  --exclude ../build-release
-
 # simultaneously test building self-hosted without LLVM and with 32-bit arm
 stage3-release/bin/zig build \
   -Dtarget=arm-linux-musleabihf \
@@ -72,16 +55,15 @@ stage3-release/bin/zig build \
 
 stage3-release/bin/zig build test docs \
   --maxrss 21000000000 \
+  -Dlldb=$HOME/deps/lldb-zig/Release-e0a42bb34/bin/lldb \
   -fqemu \
   -fwasmtime \
   -Dstatic-llvm \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib"
-
-# Look for HTML errors.
-# TODO: move this to a build.zig flag (-Denable-tidy)
-tidy --drop-empty-elements no -qe "../zig-out/doc/langref.html"
+  --zig-lib-dir "$PWD/../lib" \
+  -Denable-superhtml \
+  --test-timeout 12m
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
@@ -102,12 +84,9 @@ diff stage3-release/bin/zig stage4-release/bin/zig
 # Ensure that updating the wasm binary from this commit will result in a viable build.
 stage3-release/bin/zig build update-zig1
 
-rm -rf ../build-new
 mkdir ../build-new
 cd ../build-new
 
-export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
-export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
 export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
 export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
 

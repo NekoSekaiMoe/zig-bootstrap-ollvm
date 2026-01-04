@@ -1,10 +1,9 @@
 const std = @import("../std.zig");
 const assert = std.debug.assert;
 
-pub const Rational = @import("big/rational.zig").Rational;
 pub const int = @import("big/int.zig");
 pub const Limb = usize;
-const limb_info = @typeInfo(Limb).Int;
+const limb_info = @typeInfo(Limb).int;
 pub const SignedLimb = std.meta.Int(.signed, limb_info.bits);
 pub const DoubleLimb = std.meta.Int(.unsigned, 2 * limb_info.bits);
 pub const HalfLimb = std.meta.Int(.unsigned, limb_info.bits / 2);
@@ -18,7 +17,6 @@ comptime {
 
 test {
     _ = int;
-    _ = Rational;
     _ = Limb;
     _ = SignedLimb;
     _ = DoubleLimb;

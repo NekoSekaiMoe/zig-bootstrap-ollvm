@@ -4,7 +4,7 @@ const windows = std.os.windows;
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
@@ -32,7 +32,7 @@ pub fn main() !void {
         }
         break :seed try std.fmt.parseUnsigned(u64, args[3], 10);
     };
-    var random = std.rand.DefaultPrng.init(seed);
+    var random = std.Random.DefaultPrng.init(seed);
     const rand = random.random();
 
     // If the seed was not given via the CLI, then output the
@@ -41,7 +41,7 @@ pub fn main() !void {
         std.debug.print("rand seed: {}\n", .{seed});
     }
 
-    var cmd_line_w_buf = std.ArrayList(u16).init(allocator);
+    var cmd_line_w_buf = std.array_list.Managed(u16).init(allocator);
     defer cmd_line_w_buf.deinit();
 
     var i: u64 = 0;
@@ -58,7 +58,7 @@ pub fn main() !void {
             std.debug.print(">>> found discrepancy <<<\n", .{});
             const cmd_line_wtf8 = try std.unicode.wtf16LeToWtf8Alloc(allocator, cmd_line_w);
             defer allocator.free(cmd_line_wtf8);
-            std.debug.print("\"{}\"\n\n", .{std.zig.fmtEscapes(cmd_line_wtf8)});
+            std.debug.print("\"{f}\"\n\n", .{std.zig.fmtString(cmd_line_wtf8)});
 
             errors += 1;
         }
@@ -72,7 +72,7 @@ pub fn main() !void {
     }
 }
 
-fn randomCommandLineW(allocator: Allocator, rand: std.rand.Random) ![:0]const u16 {
+fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
     const Choice = enum {
         backslash,
         quote,
@@ -84,7 +84,7 @@ fn randomCommandLineW(allocator: Allocator, rand: std.rand.Random) ![:0]const u1
     };
 
     const choices = rand.uintAtMostBiased(u16, 256);
-    var buf = try std.ArrayList(u16).initCapacity(allocator, choices);
+    var buf = try std.array_list.Managed(u16).initCapacity(allocator, choices);
     errdefer buf.deinit();
 
     for (0..choices) |_| {
@@ -138,7 +138,7 @@ fn spawnVerify(verify_path: [:0]const u16, cmd_line: [:0]const u16) !windows.DWO
             null,
             null,
             windows.TRUE,
-            0,
+            .{},
             null,
             null,
             &startup_info,

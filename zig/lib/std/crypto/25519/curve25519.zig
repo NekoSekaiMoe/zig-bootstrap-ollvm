@@ -15,12 +15,12 @@ pub const Curve25519 = struct {
     x: Fe,
 
     /// Decode a Curve25519 point from its compressed (X) coordinates.
-    pub inline fn fromBytes(s: [32]u8) Curve25519 {
+    pub fn fromBytes(s: [32]u8) Curve25519 {
         return .{ .x = Fe.fromBytes(s) };
     }
 
     /// Encode a Curve25519 point.
-    pub inline fn toBytes(p: Curve25519) [32]u8 {
+    pub fn toBytes(p: Curve25519) [32]u8 {
         return p.x.toBytes();
     }
 
@@ -102,6 +102,14 @@ pub const Curve25519 = struct {
     }
 
     /// Compute the Curve25519 equivalent to an Edwards25519 point.
+    ///
+    /// Note that the function doesn't check that the input point is
+    /// on the prime order group, e.g. that it is an Ed25519 public key
+    /// for which an Ed25519 secret key exists.
+    ///
+    /// If this is required, for example for compatibility with libsodium's strict
+    /// validation policy, the caller can call the `rejectUnexpectedSubgroup` function
+    /// on the input point before calling this function.
     pub fn fromEdwards25519(p: crypto.ecc.Edwards25519) IdentityElementError!Curve25519 {
         try p.clearCofactor().rejectIdentity();
         const one = crypto.ecc.Edwards25519.Fe.one;
@@ -116,9 +124,9 @@ test "curve25519" {
     const p = try Curve25519.basePoint.clampedMul(s);
     try p.rejectIdentity();
     var buf: [128]u8 = undefined;
-    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "{s}", .{std.fmt.fmtSliceHexUpper(&p.toBytes())}), "E6F2A4D1C28EE5C7AD0329268255A468AD407D2672824C0C0EB30EA6EF450145");
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "{X}", .{&p.toBytes()}), "E6F2A4D1C28EE5C7AD0329268255A468AD407D2672824C0C0EB30EA6EF450145");
     const q = try p.clampedMul(s);
-    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "{s}", .{std.fmt.fmtSliceHexUpper(&q.toBytes())}), "3614E119FFE55EC55B87D6B19971A9F4CBC78EFE80BEC55B96392BABCC712537");
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "{X}", .{&q.toBytes()}), "3614E119FFE55EC55B87D6B19971A9F4CBC78EFE80BEC55B96392BABCC712537");
 
     try Curve25519.rejectNonCanonical(s);
     s[31] |= 0x80;

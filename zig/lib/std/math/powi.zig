@@ -13,6 +13,7 @@ const testing = std.testing;
 /// Errors:
 ///  - Overflow: Integer overflow or Infinity
 ///  - Underflow: Absolute value of result smaller than 1
+///
 /// Edge case rules ordered by precedence:
 ///  - powi(T, x, 0)   = 1 unless T is i1, i0, u0
 ///  - powi(T, 0, x)   = 0 when x > 0
@@ -27,7 +28,7 @@ pub fn powi(comptime T: type, x: T, y: T) (error{
     Overflow,
     Underflow,
 }!T) {
-    const bit_size = @typeInfo(T).Int.bits;
+    const bit_size = @typeInfo(T).int.bits;
 
     // `y & 1 == 0` won't compile when `does_one_overflow`.
     const does_one_overflow = math.maxInt(T) < 1;

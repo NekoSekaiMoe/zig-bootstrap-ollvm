@@ -19,8 +19,11 @@ const Hash = struct {
     has_iterative_api: bool = true,
     has_crypto_api: bool = false,
     has_anytype_api: ?[]const comptime_int = null,
+    /// `final` value should be read from this field.
+    has_struct_api: ?[]const u8 = null,
     init_u8s: ?[]const u8 = null,
     init_u64: ?u64 = null,
+    init_default: bool = false,
 };
 
 const hashes = [_]Hash{
@@ -54,6 +57,8 @@ const hashes = [_]Hash{
     Hash{
         .ty = hash.Adler32,
         .name = "adler32",
+        .has_struct_api = "adler",
+        .init_default = true,
     },
     Hash{
         .ty = hash.crc.Crc32,
@@ -112,21 +117,29 @@ pub fn benchmarkHash(comptime H: anytype, bytes: usize, allocator: std.mem.Alloc
 
     const block_count = bytes / block_size;
 
-    var h = blk: {
+    var h: H.ty = blk: {
         if (H.init_u8s) |init| {
-            break :blk H.ty.init(init[0..H.ty.key_length]);
+            break :blk .init(init[0..H.ty.key_length]);
         }
         if (H.init_u64) |init| {
-            break :blk H.ty.init(init);
+            break :blk .init(init);
         }
-        break :blk H.ty.init();
+        if (H.init_default) {
+            break :blk .{};
+        }
+        break :blk .init();
     };
 
     var timer = try Timer.start();
     for (0..block_count) |i| {
         h.update(blocks[i * block_size ..][0..block_size]);
     }
-    const final = if (H.has_crypto_api) @as(u64, @truncate(h.finalInt())) else h.final();
+    const final = if (H.has_struct_api) |field_name|
+        @field(h, field_name)
+    else if (H.has_crypto_api)
+        @as(u64, @truncate(h.finalInt()))
+    else
+        h.final();
     std.mem.doNotOptimizeAway(final);
 
     const elapsed_ns = timer.read();
@@ -329,6 +342,7 @@ fn usage() void {
         \\  --count     [int]
         \\  --key-size  [int]
         \\  --iterative-only
+        \\  --small-key-only
         \\  --help
         \\
     , .{});
@@ -339,7 +353,9 @@ fn mode(comptime x: comptime_int) comptime_int {
 }
 
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
+    var stdout_buffer: [0x100]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     var buffer: [1024]u8 = undefined;
     var fixed = std.heap.FixedBufferAllocator.init(buffer[0..]);
@@ -349,6 +365,7 @@ pub fn main() !void {
     var count: usize = mode(128 * MiB);
     var key_size: ?usize = null;
     var seed: u32 = 0;
+    var test_small_key_only = false;
     var test_iterative_only = false;
     var test_arrays = false;
 
@@ -358,6 +375,7 @@ pub fn main() !void {
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--mode")) {
             try stdout.print("{}\n", .{builtin.mode});
+            try stdout.flush();
             return;
         } else if (std.mem.eql(u8, args[i], "--seed")) {
             i += 1;
@@ -395,10 +413,13 @@ pub fn main() !void {
             key_size = try std.fmt.parseUnsigned(usize, args[i], 10);
             if (key_size.? > block_size) {
                 try stdout.print("key_size cannot exceed block size of {}\n", .{block_size});
+                try stdout.flush();
                 std.process.exit(1);
             }
         } else if (std.mem.eql(u8, args[i], "--iterative-only")) {
             test_iterative_only = true;
+        } else if (std.mem.eql(u8, args[i], "--small-key-only")) {
+            test_small_key_only = true;
         } else if (std.mem.eql(u8, args[i], "--include-array")) {
             test_arrays = true;
         } else if (std.mem.eql(u8, args[i], "--help")) {
@@ -410,7 +431,14 @@ pub fn main() !void {
         }
     }
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    if (test_iterative_only and test_small_key_only) {
+        try stdout.print("Cannot use iterative-only and small-key-only together!\n", .{});
+        try stdout.flush();
+        usage();
+        std.process.exit(1);
+    }
+
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer std.testing.expect(gpa.deinit() == .ok) catch @panic("leak");
     const allocator = gpa.allocator();
 
@@ -418,13 +446,15 @@ pub fn main() !void {
         if (filter == null or std.mem.indexOf(u8, H.name, filter.?) != null) hash: {
             if (!test_iterative_only or H.has_iterative_api) {
                 try stdout.print("{s}\n", .{H.name});
+                try stdout.flush();
 
                 // Always reseed prior to every call so we are hashing the same buffer contents.
                 // This allows easier comparison between different implementations.
-                if (H.has_iterative_api) {
+                if (H.has_iterative_api and !test_small_key_only) {
                     prng.seed(seed);
                     const result = try benchmarkHash(H, count, allocator);
                     try stdout.print("   iterative: {:5} MiB/s [{x:0<16}]\n", .{ result.throughput / (1 * MiB), result.hash });
+                    try stdout.flush();
                 }
 
                 if (!test_iterative_only) {
@@ -437,6 +467,7 @@ pub fn main() !void {
                             result_small.throughput / size,
                             result_small.hash,
                         });
+                        try stdout.flush();
 
                         if (!test_arrays) break :hash;
                         if (H.has_anytype_api) |sizes| {
@@ -454,6 +485,7 @@ pub fn main() !void {
                                         result_ptr.throughput / (1 * MiB),
                                         result_ptr.hash,
                                     });
+                                    try stdout.flush();
                                 }
                             }
                         }
@@ -466,6 +498,7 @@ pub fn main() !void {
                             result_small.throughput / default_small_key_size,
                             result_small.hash,
                         });
+                        try stdout.flush();
 
                         if (!test_arrays) break :hash;
                         if (H.has_anytype_api) |sizes| {
@@ -478,6 +511,7 @@ pub fn main() !void {
                                     result.throughput / (1 * MiB),
                                     result.hash,
                                 });
+                                try stdout.flush();
                             }
                             try stdout.print("   array ptr: \n", .{});
                             inline for (sizes) |exact_size| {
@@ -488,6 +522,7 @@ pub fn main() !void {
                                     result.throughput / (1 * MiB),
                                     result.hash,
                                 });
+                                try stdout.flush();
                             }
                         }
                     }

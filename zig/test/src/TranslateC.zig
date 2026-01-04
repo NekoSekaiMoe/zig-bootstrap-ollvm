@@ -2,11 +2,12 @@ b: *std.Build,
 step: *std.Build.Step,
 test_index: usize,
 test_filters: []const []const u8,
+test_target_filters: []const []const u8,
 
 const TestCase = struct {
     name: []const u8,
-    sources: ArrayList(SourceFile),
-    expected_lines: ArrayList([]const u8),
+    sources: std.array_list.Managed(SourceFile),
+    expected_lines: std.array_list.Managed([]const u8),
     allow_warnings: bool,
     target: std.Target.Query = .{},
 
@@ -38,8 +39,8 @@ pub fn create(
     const tc = self.b.allocator.create(TestCase) catch unreachable;
     tc.* = TestCase{
         .name = name,
-        .sources = ArrayList(TestCase.SourceFile).init(self.b.allocator),
-        .expected_lines = ArrayList([]const u8).init(self.b.allocator),
+        .sources = std.array_list.Managed(TestCase.SourceFile).init(self.b.allocator),
+        .expected_lines = std.array_list.Managed([]const u8).init(self.b.allocator),
         .allow_warnings = allow_warnings,
     };
 
@@ -92,14 +93,26 @@ pub fn addCase(self: *TranslateCContext, case: *const TestCase) void {
         if (mem.indexOf(u8, annotated_case_name, test_filter)) |_| break;
     } else if (self.test_filters.len > 0) return;
 
+    const target = b.resolveTargetQuery(case.target);
+
+    if (self.test_target_filters.len > 0) {
+        const triple_txt = target.query.zigTriple(b.allocator) catch @panic("OOM");
+
+        for (self.test_target_filters) |filter| {
+            if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+        } else return;
+    }
+
     const write_src = b.addWriteFiles();
-    for (case.sources.items) |src_file| {
+    const first_src = case.sources.items[0];
+    const root_source_file = write_src.add(first_src.filename, first_src.source);
+    for (case.sources.items[1..]) |src_file| {
         _ = write_src.add(src_file.filename, src_file.source);
     }
 
     const translate_c = b.addTranslateC(.{
-        .root_source_file = write_src.files.items[0].getPath(),
-        .target = b.resolveTargetQuery(case.target),
+        .root_source_file = root_source_file,
+        .target = target,
         .optimize = .Debug,
     });
 
@@ -112,7 +125,6 @@ pub fn addCase(self: *TranslateCContext, case: *const TestCase) void {
 
 const TranslateCContext = @This();
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const fmt = std.fmt;
 const mem = std.mem;
 const fs = std.fs;

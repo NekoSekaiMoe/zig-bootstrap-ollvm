@@ -2,7 +2,6 @@ const std = @import("../../std.zig");
 const assert = std.debug.assert;
 const windows = std.os.windows;
 
-const WINAPI = windows.WINAPI;
 const OVERLAPPED = windows.OVERLAPPED;
 const WORD = windows.WORD;
 const DWORD = windows.DWORD;
@@ -676,51 +675,59 @@ pub const MSG = struct {
     pub const MAXIOVLEN = 16;
 };
 
-pub const AI = struct {
-    pub const PASSIVE = 1;
-    pub const CANONNAME = 2;
-    pub const NUMERICHOST = 4;
-    pub const NUMERICSERV = 8;
-    pub const DNS_ONLY = 16;
-    pub const ALL = 256;
-    pub const ADDRCONFIG = 1024;
-    pub const V4MAPPED = 2048;
-    pub const NON_AUTHORITATIVE = 16384;
-    pub const SECURE = 32768;
-    pub const RETURN_PREFERRED_NAMES = 65536;
-    pub const FQDN = 131072;
-    pub const FILESERVER = 262144;
-    pub const DISABLE_IDN_ENCODING = 524288;
-    pub const EXTENDED = 2147483648;
-    pub const RESOLUTION_HANDLE = 1073741824;
+pub const AI = packed struct(u32) {
+    PASSIVE: bool = false,
+    CANONNAME: bool = false,
+    NUMERICHOST: bool = false,
+    NUMERICSERV: bool = false,
+    DNS_ONLY: bool = false,
+    _5: u3 = 0,
+    ALL: bool = false,
+    _9: u1 = 0,
+    ADDRCONFIG: bool = false,
+    V4MAPPED: bool = false,
+    _12: u2 = 0,
+    NON_AUTHORITATIVE: bool = false,
+    SECURE: bool = false,
+    RETURN_PREFERRED_NAMES: bool = false,
+    FQDN: bool = false,
+    FILESERVER: bool = false,
+    DISABLE_IDN_ENCODING: bool = false,
+    _20: u10 = 0,
+    RESOLUTION_HANDLE: bool = false,
+    EXTENDED: bool = false,
 };
 
 pub const FIONBIO = -2147195266;
 pub const ADDRINFOEX_VERSION_2 = 2;
 pub const ADDRINFOEX_VERSION_3 = 3;
 pub const ADDRINFOEX_VERSION_4 = 4;
-pub const NS_ALL = 0;
-pub const NS_SAP = 1;
-pub const NS_NDS = 2;
-pub const NS_PEER_BROWSE = 3;
-pub const NS_SLP = 5;
-pub const NS_DHCP = 6;
-pub const NS_TCPIP_LOCAL = 10;
-pub const NS_TCPIP_HOSTS = 11;
-pub const NS_DNS = 12;
-pub const NS_NETBT = 13;
-pub const NS_WINS = 14;
-pub const NS_NLA = 15;
-pub const NS_NBP = 20;
-pub const NS_MS = 30;
-pub const NS_STDA = 31;
-pub const NS_NTDS = 32;
-pub const NS_EMAIL = 37;
-pub const NS_X500 = 40;
-pub const NS_NIS = 41;
-pub const NS_NISPLUS = 42;
-pub const NS_WRQ = 50;
-pub const NS_NETDES = 60;
+
+pub const NS = enum(u32) {
+    ALL = 0,
+    SAP = 1,
+    NDS = 2,
+    PEER_BROWSE = 3,
+    SLP = 5,
+    DHCP = 6,
+    TCPIP_LOCAL = 10,
+    TCPIP_HOSTS = 11,
+    DNS = 12,
+    NETBT = 13,
+    WINS = 14,
+    NLA = 15,
+    NBP = 20,
+    MS = 30,
+    STDA = 31,
+    NTDS = 32,
+    EMAIL = 37,
+    X500 = 40,
+    NIS = 41,
+    NISPLUS = 42,
+    WRQ = 50,
+    NETDES = 60,
+};
+
 pub const NI_NOFQDN = 1;
 pub const NI_NUMERICHOST = 2;
 pub const NI_NAMEREQD = 4;
@@ -954,14 +961,14 @@ pub const LPCONDITIONPROC = *const fn (
     lpCalleeData: *WSABUF,
     g: *u32,
     dwCallbackData: usize,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub const LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const fn (
     dwError: u32,
     cbTransferred: u32,
     lpOverlapped: *OVERLAPPED,
     dwFlags: u32,
-) callconv(WINAPI) void;
+) callconv(.winapi) void;
 
 pub const FLOWSPEC = extern struct {
     TokenRate: u32,
@@ -1068,8 +1075,8 @@ pub const sockproto = extern struct {
 };
 
 pub const linger = extern struct {
-    l_onoff: u16,
-    l_linger: u16,
+    onoff: u16,
+    linger: u16,
 };
 
 pub const WSANETWORKEVENTS = extern struct {
@@ -1077,31 +1084,18 @@ pub const WSANETWORKEVENTS = extern struct {
     iErrorCode: [10]i32,
 };
 
-pub const addrinfo = addrinfoa;
-
-pub const addrinfoa = extern struct {
-    flags: i32,
+pub const ADDRINFOEXW = extern struct {
+    flags: AI,
     family: i32,
     socktype: i32,
     protocol: i32,
     addrlen: usize,
-    canonname: ?[*:0]u8,
+    canonname: ?[*:0]u16,
     addr: ?*sockaddr,
-    next: ?*addrinfo,
-};
-
-pub const addrinfoexA = extern struct {
-    ai_flags: i32,
-    ai_family: i32,
-    ai_socktype: i32,
-    ai_protocol: i32,
-    ai_addrlen: usize,
-    ai_canonname: [*:0]u8,
-    ai_addr: *sockaddr,
-    ai_blob: *anyopaque,
-    ai_bloblen: usize,
-    ai_provider: *GUID,
-    ai_next: *addrinfoexA,
+    blob: ?*anyopaque,
+    bloblen: usize,
+    provider: ?*GUID,
+    next: ?*ADDRINFOEXW,
 };
 
 pub const sockaddr = extern struct {
@@ -1192,7 +1186,7 @@ pub const LPFN_TRANSMITFILE = *const fn (
     lpOverlapped: ?*OVERLAPPED,
     lpTransmitBuffers: ?*TRANSMIT_FILE_BUFFERS,
     dwReserved: u32,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub const LPFN_ACCEPTEX = *const fn (
     sListenSocket: SOCKET,
@@ -1203,7 +1197,7 @@ pub const LPFN_ACCEPTEX = *const fn (
     dwRemoteAddressLength: u32,
     lpdwBytesReceived: *u32,
     lpOverlapped: *OVERLAPPED,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub const LPFN_GETACCEPTEXSOCKADDRS = *const fn (
     lpOutputBuffer: *anyopaque,
@@ -1214,7 +1208,7 @@ pub const LPFN_GETACCEPTEXSOCKADDRS = *const fn (
     LocalSockaddrLength: *i32,
     RemoteSockaddr: **sockaddr,
     RemoteSockaddrLength: *i32,
-) callconv(WINAPI) void;
+) callconv(.winapi) void;
 
 pub const LPFN_WSASENDMSG = *const fn (
     s: SOCKET,
@@ -1223,7 +1217,7 @@ pub const LPFN_WSASENDMSG = *const fn (
     lpNumberOfBytesSent: ?*u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub const LPFN_WSARECVMSG = *const fn (
     s: SOCKET,
@@ -1231,12 +1225,12 @@ pub const LPFN_WSARECVMSG = *const fn (
     lpdwNumberOfBytesRecv: ?*u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub const LPSERVICE_CALLBACK_PROC = *const fn (
     lParam: LPARAM,
     hAsyncTaskHandle: HANDLE,
-) callconv(WINAPI) void;
+) callconv(.winapi) void;
 
 pub const SERVICE_ASYNC_INFO = extern struct {
     lpServiceCallbackProc: LPSERVICE_CALLBACK_PROC,
@@ -1248,7 +1242,7 @@ pub const LPLOOKUPSERVICE_COMPLETION_ROUTINE = *const fn (
     dwError: u32,
     dwBytes: u32,
     lpOverlapped: *OVERLAPPED,
-) callconv(WINAPI) void;
+) callconv(.winapi) void;
 
 pub const fd_set = extern struct {
     fd_count: u32,
@@ -1264,134 +1258,109 @@ pub const hostent = extern struct {
 };
 
 pub const timeval = extern struct {
-    tv_sec: LONG,
-    tv_usec: LONG,
+    sec: LONG,
+    usec: LONG,
 };
 
-// https://docs.microsoft.com/en-au/windows/win32/winsock/windows-sockets-error-codes-2
+/// https://docs.microsoft.com/en-au/windows/win32/winsock/windows-sockets-error-codes-2
 pub const WinsockError = enum(u16) {
     /// Specified event object handle is invalid.
     /// An application attempts to use an event object, but the specified handle is not valid.
-    WSA_INVALID_HANDLE = 6,
-
+    INVALID_HANDLE = 6,
     /// Insufficient memory available.
     /// An application used a Windows Sockets function that directly maps to a Windows function.
     /// The Windows function is indicating a lack of required memory resources.
-    WSA_NOT_ENOUGH_MEMORY = 8,
-
+    NOT_ENOUGH_MEMORY = 8,
     /// One or more parameters are invalid.
     /// An application used a Windows Sockets function which directly maps to a Windows function.
     /// The Windows function is indicating a problem with one or more parameters.
-    WSA_INVALID_PARAMETER = 87,
-
+    INVALID_PARAMETER = 87,
     /// Overlapped operation aborted.
     /// An overlapped operation was canceled due to the closure of the socket, or the execution of the SIO_FLUSH command in WSAIoctl.
-    WSA_OPERATION_ABORTED = 995,
-
+    OPERATION_ABORTED = 995,
     /// Overlapped I/O event object not in signaled state.
     /// The application has tried to determine the status of an overlapped operation which is not yet completed.
     /// Applications that use WSAGetOverlappedResult (with the fWait flag set to FALSE) in a polling mode to determine when an overlapped operation has completed, get this error code until the operation is complete.
-    WSA_IO_INCOMPLETE = 996,
-
+    IO_INCOMPLETE = 996,
     /// The application has initiated an overlapped operation that cannot be completed immediately.
     /// A completion indication will be given later when the operation has been completed.
-    WSA_IO_PENDING = 997,
-
+    IO_PENDING = 997,
     /// Interrupted function call.
     /// A blocking operation was interrupted by a call to WSACancelBlockingCall.
-    WSAEINTR = 10004,
-
+    EINTR = 10004,
     /// File handle is not valid.
     /// The file handle supplied is not valid.
-    WSAEBADF = 10009,
-
+    EBADF = 10009,
     /// Permission denied.
     /// An attempt was made to access a socket in a way forbidden by its access permissions.
     /// An example is using a broadcast address for sendto without broadcast permission being set using setsockopt(SO.BROADCAST).
     /// Another possible reason for the WSAEACCES error is that when the bind function is called (on Windows NT 4.0 with SP4 and later), another application, service, or kernel mode driver is bound to the same address with exclusive access.
     /// Such exclusive access is a new feature of Windows NT 4.0 with SP4 and later, and is implemented by using the SO.EXCLUSIVEADDRUSE option.
-    WSAEACCES = 10013,
-
+    EACCES = 10013,
     /// Bad address.
     /// The system detected an invalid pointer address in attempting to use a pointer argument of a call.
     /// This error occurs if an application passes an invalid pointer value, or if the length of the buffer is too small.
     /// For instance, if the length of an argument, which is a sockaddr structure, is smaller than the sizeof(sockaddr).
-    WSAEFAULT = 10014,
-
+    EFAULT = 10014,
     /// Invalid argument.
     /// Some invalid argument was supplied (for example, specifying an invalid level to the setsockopt function).
     /// In some instances, it also refers to the current state of the socket—for instance, calling accept on a socket that is not listening.
-    WSAEINVAL = 10022,
-
+    EINVAL = 10022,
     /// Too many open files.
     /// Too many open sockets. Each implementation may have a maximum number of socket handles available, either globally, per process, or per thread.
-    WSAEMFILE = 10024,
-
+    EMFILE = 10024,
     /// Resource temporarily unavailable.
     /// This error is returned from operations on nonblocking sockets that cannot be completed immediately, for example recv when no data is queued to be read from the socket.
     /// It is a nonfatal error, and the operation should be retried later.
     /// It is normal for WSAEWOULDBLOCK to be reported as the result from calling connect on a nonblocking SOCK.STREAM socket, since some time must elapse for the connection to be established.
-    WSAEWOULDBLOCK = 10035,
-
+    EWOULDBLOCK = 10035,
     /// Operation now in progress.
     /// A blocking operation is currently executing.
     /// Windows Sockets only allows a single blocking operation—per- task or thread—to be outstanding, and if any other function call is made (whether or not it references that or any other socket) the function fails with the WSAEINPROGRESS error.
-    WSAEINPROGRESS = 10036,
-
+    EINPROGRESS = 10036,
     /// Operation already in progress.
     /// An operation was attempted on a nonblocking socket with an operation already in progress—that is, calling connect a second time on a nonblocking socket that is already connecting, or canceling an asynchronous request (WSAAsyncGetXbyY) that has already been canceled or completed.
-    WSAEALREADY = 10037,
-
+    EALREADY = 10037,
     /// Socket operation on nonsocket.
     /// An operation was attempted on something that is not a socket.
     /// Either the socket handle parameter did not reference a valid socket, or for select, a member of an fd_set was not valid.
-    WSAENOTSOCK = 10038,
-
+    ENOTSOCK = 10038,
     /// Destination address required.
     /// A required address was omitted from an operation on a socket.
     /// For example, this error is returned if sendto is called with the remote address of ADDR_ANY.
-    WSAEDESTADDRREQ = 10039,
-
+    EDESTADDRREQ = 10039,
     /// Message too long.
     /// A message sent on a datagram socket was larger than the internal message buffer or some other network limit, or the buffer used to receive a datagram was smaller than the datagram itself.
-    WSAEMSGSIZE = 10040,
-
+    EMSGSIZE = 10040,
     /// Protocol wrong type for socket.
     /// A protocol was specified in the socket function call that does not support the semantics of the socket type requested.
     /// For example, the ARPA Internet UDP protocol cannot be specified with a socket type of SOCK.STREAM.
-    WSAEPROTOTYPE = 10041,
-
+    EPROTOTYPE = 10041,
     /// Bad protocol option.
     /// An unknown, invalid or unsupported option or level was specified in a getsockopt or setsockopt call.
-    WSAENOPROTOOPT = 10042,
-
+    ENOPROTOOPT = 10042,
     /// Protocol not supported.
     /// The requested protocol has not been configured into the system, or no implementation for it exists.
     /// For example, a socket call requests a SOCK.DGRAM socket, but specifies a stream protocol.
-    WSAEPROTONOSUPPORT = 10043,
-
+    EPROTONOSUPPORT = 10043,
     /// Socket type not supported.
     /// The support for the specified socket type does not exist in this address family.
     /// For example, the optional type SOCK.RAW might be selected in a socket call, and the implementation does not support SOCK.RAW sockets at all.
-    WSAESOCKTNOSUPPORT = 10044,
-
+    ESOCKTNOSUPPORT = 10044,
     /// Operation not supported.
     /// The attempted operation is not supported for the type of object referenced.
     /// Usually this occurs when a socket descriptor to a socket that cannot support this operation is trying to accept a connection on a datagram socket.
-    WSAEOPNOTSUPP = 10045,
-
+    EOPNOTSUPP = 10045,
     /// Protocol family not supported.
     /// The protocol family has not been configured into the system or no implementation for it exists.
     /// This message has a slightly different meaning from WSAEAFNOSUPPORT.
     /// However, it is interchangeable in most cases, and all Windows Sockets functions that return one of these messages also specify WSAEAFNOSUPPORT.
-    WSAEPFNOSUPPORT = 10046,
-
+    EPFNOSUPPORT = 10046,
     /// Address family not supported by protocol family.
     /// An address incompatible with the requested protocol was used.
     /// All sockets are created with an associated address family (that is, AF.INET for Internet Protocols) and a generic protocol type (that is, SOCK.STREAM).
     /// This error is returned if an incorrect protocol is explicitly requested in the socket call, or if an address of the wrong family is used for a socket, for example, in sendto.
-    WSAEAFNOSUPPORT = 10047,
-
+    EAFNOSUPPORT = 10047,
     /// Address already in use.
     /// Typically, only one usage of each socket address (protocol/IP address/port) is permitted.
     /// This error occurs if an application attempts to bind a socket to an IP address/port that has already been used for an existing socket, or a socket that was not closed properly, or one that is still in the process of closing.
@@ -1399,115 +1368,91 @@ pub const WinsockError = enum(u16) {
     /// Client applications usually need not call bind at all—connect chooses an unused port automatically.
     /// When bind is called with a wildcard address (involving ADDR_ANY), a WSAEADDRINUSE error could be delayed until the specific address is committed.
     /// This could happen with a call to another function later, including connect, listen, WSAConnect, or WSAJoinLeaf.
-    WSAEADDRINUSE = 10048,
-
+    EADDRINUSE = 10048,
     /// Cannot assign requested address.
     /// The requested address is not valid in its context.
     /// This normally results from an attempt to bind to an address that is not valid for the local computer.
     /// This can also result from connect, sendto, WSAConnect, WSAJoinLeaf, or WSASendTo when the remote address or port is not valid for a remote computer (for example, address or port 0).
-    WSAEADDRNOTAVAIL = 10049,
-
+    EADDRNOTAVAIL = 10049,
     /// Network is down.
     /// A socket operation encountered a dead network.
     /// This could indicate a serious failure of the network system (that is, the protocol stack that the Windows Sockets DLL runs over), the network interface, or the local network itself.
-    WSAENETDOWN = 10050,
-
+    ENETDOWN = 10050,
     /// Network is unreachable.
     /// A socket operation was attempted to an unreachable network.
     /// This usually means the local software knows no route to reach the remote host.
-    WSAENETUNREACH = 10051,
-
+    ENETUNREACH = 10051,
     /// Network dropped connection on reset.
     /// The connection has been broken due to keep-alive activity detecting a failure while the operation was in progress.
     /// It can also be returned by setsockopt if an attempt is made to set SO.KEEPALIVE on a connection that has already failed.
-    WSAENETRESET = 10052,
-
+    ENETRESET = 10052,
     /// Software caused connection abort.
     /// An established connection was aborted by the software in your host computer, possibly due to a data transmission time-out or protocol error.
-    WSAECONNABORTED = 10053,
-
+    ECONNABORTED = 10053,
     /// Connection reset by peer.
     /// An existing connection was forcibly closed by the remote host.
     /// This normally results if the peer application on the remote host is suddenly stopped, the host is rebooted, the host or remote network interface is disabled, or the remote host uses a hard close (see setsockopt for more information on the SO.LINGER option on the remote socket).
     /// This error may also result if a connection was broken due to keep-alive activity detecting a failure while one or more operations are in progress.
     /// Operations that were in progress fail with WSAENETRESET. Subsequent operations fail with WSAECONNRESET.
-    WSAECONNRESET = 10054,
-
+    ECONNRESET = 10054,
     /// No buffer space available.
     /// An operation on a socket could not be performed because the system lacked sufficient buffer space or because a queue was full.
-    WSAENOBUFS = 10055,
-
+    ENOBUFS = 10055,
     /// Socket is already connected.
     /// A connect request was made on an already-connected socket.
     /// Some implementations also return this error if sendto is called on a connected SOCK.DGRAM socket (for SOCK.STREAM sockets, the to parameter in sendto is ignored) although other implementations treat this as a legal occurrence.
-    WSAEISCONN = 10056,
-
+    EISCONN = 10056,
     /// Socket is not connected.
     /// A request to send or receive data was disallowed because the socket is not connected and (when sending on a datagram socket using sendto) no address was supplied.
     /// Any other type of operation might also return this error—for example, setsockopt setting SO.KEEPALIVE if the connection has been reset.
-    WSAENOTCONN = 10057,
-
+    ENOTCONN = 10057,
     /// Cannot send after socket shutdown.
     /// A request to send or receive data was disallowed because the socket had already been shut down in that direction with a previous shutdown call.
     /// By calling shutdown a partial close of a socket is requested, which is a signal that sending or receiving, or both have been discontinued.
-    WSAESHUTDOWN = 10058,
-
+    ESHUTDOWN = 10058,
     /// Too many references.
     /// Too many references to some kernel object.
-    WSAETOOMANYREFS = 10059,
-
+    ETOOMANYREFS = 10059,
     /// Connection timed out.
     /// A connection attempt failed because the connected party did not properly respond after a period of time, or the established connection failed because the connected host has failed to respond.
-    WSAETIMEDOUT = 10060,
-
+    ETIMEDOUT = 10060,
     /// Connection refused.
     /// No connection could be made because the target computer actively refused it.
     /// This usually results from trying to connect to a service that is inactive on the foreign host—that is, one with no server application running.
-    WSAECONNREFUSED = 10061,
-
+    ECONNREFUSED = 10061,
     /// Cannot translate name.
     /// Cannot translate a name.
-    WSAELOOP = 10062,
-
+    ELOOP = 10062,
     /// Name too long.
     /// A name component or a name was too long.
-    WSAENAMETOOLONG = 10063,
-
+    ENAMETOOLONG = 10063,
     /// Host is down.
     /// A socket operation failed because the destination host is down. A socket operation encountered a dead host.
     /// Networking activity on the local host has not been initiated.
     /// These conditions are more likely to be indicated by the error WSAETIMEDOUT.
-    WSAEHOSTDOWN = 10064,
-
+    EHOSTDOWN = 10064,
     /// No route to host.
     /// A socket operation was attempted to an unreachable host. See WSAENETUNREACH.
-    WSAEHOSTUNREACH = 10065,
-
+    EHOSTUNREACH = 10065,
     /// Directory not empty.
     /// Cannot remove a directory that is not empty.
-    WSAENOTEMPTY = 10066,
-
+    ENOTEMPTY = 10066,
     /// Too many processes.
     /// A Windows Sockets implementation may have a limit on the number of applications that can use it simultaneously.
     /// WSAStartup may fail with this error if the limit has been reached.
-    WSAEPROCLIM = 10067,
-
+    EPROCLIM = 10067,
     /// User quota exceeded.
     /// Ran out of user quota.
-    WSAEUSERS = 10068,
-
+    EUSERS = 10068,
     /// Disk quota exceeded.
     /// Ran out of disk quota.
-    WSAEDQUOT = 10069,
-
+    EDQUOT = 10069,
     /// Stale file handle reference.
     /// The file handle reference is no longer available.
-    WSAESTALE = 10070,
-
+    ESTALE = 10070,
     /// Item is remote.
     /// The item is not available locally.
-    WSAEREMOTE = 10071,
-
+    EREMOTE = 10071,
     /// Network subsystem is unavailable.
     /// This error is returned by WSAStartup if the Windows Sockets implementation cannot function at this time because the underlying system it uses to provide network services is currently unavailable.
     /// Users should check:
@@ -1515,47 +1460,38 @@ pub const WinsockError = enum(u16) {
     ///   - That they are not trying to use more than one Windows Sockets implementation simultaneously.
     ///   - If there is more than one Winsock DLL on your system, be sure the first one in the path is appropriate for the network subsystem currently loaded.
     ///   - The Windows Sockets implementation documentation to be sure all necessary components are currently installed and configured correctly.
-    WSASYSNOTREADY = 10091,
-
+    SYSNOTREADY = 10091,
     /// Winsock.dll version out of range.
     /// The current Windows Sockets implementation does not support the Windows Sockets specification version requested by the application.
     /// Check that no old Windows Sockets DLL files are being accessed.
-    WSAVERNOTSUPPORTED = 10092,
-
+    VERNOTSUPPORTED = 10092,
     /// Successful WSAStartup not yet performed.
     /// Either the application has not called WSAStartup or WSAStartup failed.
     /// The application may be accessing a socket that the current active task does not own (that is, trying to share a socket between tasks), or WSACleanup has been called too many times.
-    WSANOTINITIALISED = 10093,
-
+    NOTINITIALISED = 10093,
     /// Graceful shutdown in progress.
     /// Returned by WSARecv and WSARecvFrom to indicate that the remote party has initiated a graceful shutdown sequence.
-    WSAEDISCON = 10101,
-
+    EDISCON = 10101,
     /// No more results.
     /// No more results can be returned by the WSALookupServiceNext function.
-    WSAENOMORE = 10102,
-
+    ENOMORE = 10102,
     /// Call has been canceled.
     /// A call to the WSALookupServiceEnd function was made while this call was still processing. The call has been canceled.
-    WSAECANCELLED = 10103,
-
+    ECANCELLED = 10103,
     /// Procedure call table is invalid.
     /// The service provider procedure call table is invalid.
     /// A service provider returned a bogus procedure table to Ws2_32.dll.
     /// This is usually caused by one or more of the function pointers being NULL.
-    WSAEINVALIDPROCTABLE = 10104,
-
+    EINVALIDPROCTABLE = 10104,
     /// Service provider is invalid.
     /// The requested service provider is invalid.
     /// This error is returned by the WSCGetProviderInfo and WSCGetProviderInfo32 functions if the protocol entry specified could not be found.
     /// This error is also returned if the service provider returned a version number other than 2.0.
-    WSAEINVALIDPROVIDER = 10105,
-
+    EINVALIDPROVIDER = 10105,
     /// Service provider failed to initialize.
     /// The requested service provider could not be loaded or initialized.
     /// This error is returned if either a service provider's DLL could not be loaded (LoadLibrary failed) or the provider's WSPStartup or NSPStartup function failed.
-    WSAEPROVIDERFAILEDINIT = 10106,
-
+    EPROVIDERFAILEDINIT = 10106,
     /// System call failure.
     /// A system call that should never fail has failed.
     /// This is a generic error code, returned under various conditions.
@@ -1563,157 +1499,120 @@ pub const WinsockError = enum(u16) {
     /// For example, if a call to WaitForMultipleEvents fails or one of the registry functions fails trying to manipulate the protocol/namespace catalogs.
     /// Returned when a provider does not return SUCCESS and does not provide an extended error code.
     /// Can indicate a service provider implementation error.
-    WSASYSCALLFAILURE = 10107,
-
+    SYSCALLFAILURE = 10107,
     /// Service not found.
     /// No such service is known. The service cannot be found in the specified name space.
-    WSASERVICE_NOT_FOUND = 10108,
-
+    SERVICE_NOT_FOUND = 10108,
     /// Class type not found.
     /// The specified class was not found.
-    WSATYPE_NOT_FOUND = 10109,
-
+    TYPE_NOT_FOUND = 10109,
     /// No more results.
     /// No more results can be returned by the WSALookupServiceNext function.
-    WSA_E_NO_MORE = 10110,
-
+    E_NO_MORE = 10110,
     /// Call was canceled.
     /// A call to the WSALookupServiceEnd function was made while this call was still processing. The call has been canceled.
-    WSA_E_CANCELLED = 10111,
-
+    E_CANCELLED = 10111,
     /// Database query was refused.
     /// A database query failed because it was actively refused.
-    WSAEREFUSED = 10112,
-
+    EREFUSED = 10112,
     /// Host not found.
     /// No such host is known. The name is not an official host name or alias, or it cannot be found in the database(s) being queried.
     /// This error may also be returned for protocol and service queries, and means that the specified name could not be found in the relevant database.
-    WSAHOST_NOT_FOUND = 11001,
-
+    HOST_NOT_FOUND = 11001,
     /// Nonauthoritative host not found.
     /// This is usually a temporary error during host name resolution and means that the local server did not receive a response from an authoritative server. A retry at some time later may be successful.
-    WSATRY_AGAIN = 11002,
-
+    TRY_AGAIN = 11002,
     /// This is a nonrecoverable error.
     /// This indicates that some sort of nonrecoverable error occurred during a database lookup.
     /// This may be because the database files (for example, BSD-compatible HOSTS, SERVICES, or PROTOCOLS files) could not be found, or a DNS request was returned by the server with a severe error.
-    WSANO_RECOVERY = 11003,
-
+    NO_RECOVERY = 11003,
     /// Valid name, no data record of requested type.
     /// The requested name is valid and was found in the database, but it does not have the correct associated data being resolved for.
     /// The usual example for this is a host name-to-address translation attempt (using gethostbyname or WSAAsyncGetHostByName) which uses the DNS (Domain Name Server).
     /// An MX record is returned but no A record—indicating the host itself exists, but is not directly reachable.
-    WSANO_DATA = 11004,
-
+    NO_DATA = 11004,
     /// QoS receivers.
     /// At least one QoS reserve has arrived.
-    WSA_QOS_RECEIVERS = 11005,
-
+    QOS_RECEIVERS = 11005,
     /// QoS senders.
     /// At least one QoS send path has arrived.
-    WSA_QOS_SENDERS = 11006,
-
+    QOS_SENDERS = 11006,
     /// No QoS senders.
     /// There are no QoS senders.
-    WSA_QOS_NO_SENDERS = 11007,
-
+    QOS_NO_SENDERS = 11007,
     /// QoS no receivers.
     /// There are no QoS receivers.
-    WSA_QOS_NO_RECEIVERS = 11008,
-
+    QOS_NO_RECEIVERS = 11008,
     /// QoS request confirmed.
     /// The QoS reserve request has been confirmed.
-    WSA_QOS_REQUEST_CONFIRMED = 11009,
-
+    QOS_REQUEST_CONFIRMED = 11009,
     /// QoS admission error.
     /// A QoS error occurred due to lack of resources.
-    WSA_QOS_ADMISSION_FAILURE = 11010,
-
+    QOS_ADMISSION_FAILURE = 11010,
     /// QoS policy failure.
     /// The QoS request was rejected because the policy system couldn't allocate the requested resource within the existing policy.
-    WSA_QOS_POLICY_FAILURE = 11011,
-
+    QOS_POLICY_FAILURE = 11011,
     /// QoS bad style.
     /// An unknown or conflicting QoS style was encountered.
-    WSA_QOS_BAD_STYLE = 11012,
-
+    QOS_BAD_STYLE = 11012,
     /// QoS bad object.
     /// A problem was encountered with some part of the filterspec or the provider-specific buffer in general.
-    WSA_QOS_BAD_OBJECT = 11013,
-
+    QOS_BAD_OBJECT = 11013,
     /// QoS traffic control error.
     /// An error with the underlying traffic control (TC) API as the generic QoS request was converted for local enforcement by the TC API.
     /// This could be due to an out of memory error or to an internal QoS provider error.
-    WSA_QOS_TRAFFIC_CTRL_ERROR = 11014,
-
+    QOS_TRAFFIC_CTRL_ERROR = 11014,
     /// QoS generic error.
     /// A general QoS error.
-    WSA_QOS_GENERIC_ERROR = 11015,
-
+    QOS_GENERIC_ERROR = 11015,
     /// QoS service type error.
     /// An invalid or unrecognized service type was found in the QoS flowspec.
-    WSA_QOS_ESERVICETYPE = 11016,
-
+    QOS_ESERVICETYPE = 11016,
     /// QoS flowspec error.
     /// An invalid or inconsistent flowspec was found in the QOS structure.
-    WSA_QOS_EFLOWSPEC = 11017,
-
+    QOS_EFLOWSPEC = 11017,
     /// Invalid QoS provider buffer.
     /// An invalid QoS provider-specific buffer.
-    WSA_QOS_EPROVSPECBUF = 11018,
-
+    QOS_EPROVSPECBUF = 11018,
     /// Invalid QoS filter style.
     /// An invalid QoS filter style was used.
-    WSA_QOS_EFILTERSTYLE = 11019,
-
+    QOS_EFILTERSTYLE = 11019,
     /// Invalid QoS filter type.
     /// An invalid QoS filter type was used.
-    WSA_QOS_EFILTERTYPE = 11020,
-
+    QOS_EFILTERTYPE = 11020,
     /// Incorrect QoS filter count.
     /// An incorrect number of QoS FILTERSPECs were specified in the FLOWDESCRIPTOR.
-    WSA_QOS_EFILTERCOUNT = 11021,
-
+    QOS_EFILTERCOUNT = 11021,
     /// Invalid QoS object length.
     /// An object with an invalid ObjectLength field was specified in the QoS provider-specific buffer.
-    WSA_QOS_EOBJLENGTH = 11022,
-
+    QOS_EOBJLENGTH = 11022,
     /// Incorrect QoS flow count.
     /// An incorrect number of flow descriptors was specified in the QoS structure.
-    WSA_QOS_EFLOWCOUNT = 11023,
-
+    QOS_EFLOWCOUNT = 11023,
     /// Unrecognized QoS object.
     /// An unrecognized object was found in the QoS provider-specific buffer.
-    WSA_QOS_EUNKOWNPSOBJ = 11024,
-
+    QOS_EUNKOWNPSOBJ = 11024,
     /// Invalid QoS policy object.
     /// An invalid policy object was found in the QoS provider-specific buffer.
-    WSA_QOS_EPOLICYOBJ = 11025,
-
+    QOS_EPOLICYOBJ = 11025,
     /// Invalid QoS flow descriptor.
     /// An invalid QoS flow descriptor was found in the flow descriptor list.
-    WSA_QOS_EFLOWDESC = 11026,
-
+    QOS_EFLOWDESC = 11026,
     /// Invalid QoS provider-specific flowspec.
     /// An invalid or inconsistent flowspec was found in the QoS provider-specific buffer.
-    WSA_QOS_EPSFLOWSPEC = 11027,
-
+    QOS_EPSFLOWSPEC = 11027,
     /// Invalid QoS provider-specific filterspec.
     /// An invalid FILTERSPEC was found in the QoS provider-specific buffer.
-    WSA_QOS_EPSFILTERSPEC = 11028,
-
+    QOS_EPSFILTERSPEC = 11028,
     /// Invalid QoS shape discard mode object.
     /// An invalid shape discard mode object was found in the QoS provider-specific buffer.
-    WSA_QOS_ESDMODEOBJ = 11029,
-
+    QOS_ESDMODEOBJ = 11029,
     /// Invalid QoS shaping rate object.
     /// An invalid shaping rate object was found in the QoS provider-specific buffer.
-    WSA_QOS_ESHAPERATEOBJ = 11030,
-
+    QOS_ESHAPERATEOBJ = 11030,
     /// Reserved policy QoS element type.
     /// A reserved policy element was found in the QoS provider-specific buffer.
-    WSA_QOS_RESERVED_PETYPE = 11031,
-
+    QOS_RESERVED_PETYPE = 11031,
     _,
 };
 
@@ -1721,41 +1620,41 @@ pub extern "ws2_32" fn accept(
     s: SOCKET,
     addr: ?*sockaddr,
     addrlen: ?*i32,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) SOCKET;
 
 pub extern "ws2_32" fn bind(
     s: SOCKET,
     name: *const sockaddr,
     namelen: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn closesocket(
     s: SOCKET,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn connect(
     s: SOCKET,
     name: *const sockaddr,
     namelen: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn ioctlsocket(
     s: SOCKET,
     cmd: i32,
     argp: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn getpeername(
     s: SOCKET,
     name: *sockaddr,
     namelen: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn getsockname(
     s: SOCKET,
     name: *sockaddr,
     namelen: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn getsockopt(
     s: SOCKET,
@@ -1763,39 +1662,39 @@ pub extern "ws2_32" fn getsockopt(
     optname: i32,
     optval: [*]u8,
     optlen: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn htonl(
     hostlong: u32,
-) callconv(WINAPI) u32;
+) callconv(.winapi) u32;
 
 pub extern "ws2_32" fn htons(
     hostshort: u16,
-) callconv(WINAPI) u16;
+) callconv(.winapi) u16;
 
 pub extern "ws2_32" fn inet_addr(
     cp: ?[*]const u8,
-) callconv(WINAPI) u32;
+) callconv(.winapi) u32;
 
 pub extern "ws2_32" fn listen(
     s: SOCKET,
     backlog: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn ntohl(
     netlong: u32,
-) callconv(WINAPI) u32;
+) callconv(.winapi) u32;
 
 pub extern "ws2_32" fn ntohs(
     netshort: u16,
-) callconv(WINAPI) u16;
+) callconv(.winapi) u16;
 
 pub extern "ws2_32" fn recv(
     s: SOCKET,
     buf: [*]u8,
     len: i32,
     flags: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn recvfrom(
     s: SOCKET,
@@ -1804,7 +1703,7 @@ pub extern "ws2_32" fn recvfrom(
     flags: i32,
     from: ?*sockaddr,
     fromlen: ?*i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn select(
     nfds: i32,
@@ -1812,23 +1711,23 @@ pub extern "ws2_32" fn select(
     writefds: ?*fd_set,
     exceptfds: ?*fd_set,
     timeout: ?*const timeval,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn send(
     s: SOCKET,
     buf: [*]const u8,
     len: i32,
     flags: u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn sendto(
     s: SOCKET,
     buf: [*]const u8,
     len: i32,
     flags: i32,
-    to: *const sockaddr,
+    to: ?*const sockaddr,
     tolen: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn setsockopt(
     s: SOCKET,
@@ -1836,37 +1735,37 @@ pub extern "ws2_32" fn setsockopt(
     optname: i32,
     optval: ?[*]const u8,
     optlen: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn shutdown(
     s: SOCKET,
     how: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn socket(
     af: i32,
     @"type": i32,
     protocol: i32,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) SOCKET;
 
 pub extern "ws2_32" fn WSAStartup(
     wVersionRequired: WORD,
     lpWSAData: *WSADATA,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
-pub extern "ws2_32" fn WSACleanup() callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSACleanup() callconv(.winapi) i32;
 
-pub extern "ws2_32" fn WSASetLastError(iError: i32) callconv(WINAPI) void;
+pub extern "ws2_32" fn WSASetLastError(iError: i32) callconv(.winapi) void;
 
-pub extern "ws2_32" fn WSAGetLastError() callconv(WINAPI) WinsockError;
+pub extern "ws2_32" fn WSAGetLastError() callconv(.winapi) WinsockError;
 
-pub extern "ws2_32" fn WSAIsBlocking() callconv(WINAPI) BOOL;
+pub extern "ws2_32" fn WSAIsBlocking() callconv(.winapi) BOOL;
 
-pub extern "ws2_32" fn WSAUnhookBlockingHook() callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSAUnhookBlockingHook() callconv(.winapi) i32;
 
-pub extern "ws2_32" fn WSASetBlockingHook(lpBlockFunc: FARPROC) callconv(WINAPI) FARPROC;
+pub extern "ws2_32" fn WSASetBlockingHook(lpBlockFunc: FARPROC) callconv(.winapi) FARPROC;
 
-pub extern "ws2_32" fn WSACancelBlockingCall() callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSACancelBlockingCall() callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAAsyncGetServByName(
     hWnd: HWND,
@@ -1875,7 +1774,7 @@ pub extern "ws2_32" fn WSAAsyncGetServByName(
     proto: ?[*:0]const u8,
     buf: [*]u8,
     buflen: i32,
-) callconv(WINAPI) HANDLE;
+) callconv(.winapi) HANDLE;
 
 pub extern "ws2_32" fn WSAAsyncGetServByPort(
     hWnd: HWND,
@@ -1884,7 +1783,7 @@ pub extern "ws2_32" fn WSAAsyncGetServByPort(
     proto: ?[*:0]const u8,
     buf: [*]u8,
     buflen: i32,
-) callconv(WINAPI) HANDLE;
+) callconv(.winapi) HANDLE;
 
 pub extern "ws2_32" fn WSAAsyncGetProtoByName(
     hWnd: HWND,
@@ -1892,7 +1791,7 @@ pub extern "ws2_32" fn WSAAsyncGetProtoByName(
     name: [*:0]const u8,
     buf: [*]u8,
     buflen: i32,
-) callconv(WINAPI) HANDLE;
+) callconv(.winapi) HANDLE;
 
 pub extern "ws2_32" fn WSAAsyncGetProtoByNumber(
     hWnd: HWND,
@@ -1900,16 +1799,16 @@ pub extern "ws2_32" fn WSAAsyncGetProtoByNumber(
     number: i32,
     buf: [*]u8,
     buflen: i32,
-) callconv(WINAPI) HANDLE;
+) callconv(.winapi) HANDLE;
 
-pub extern "ws2_32" fn WSACancelAsyncRequest(hAsyncTaskHandle: HANDLE) callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSACancelAsyncRequest(hAsyncTaskHandle: HANDLE) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAAsyncSelect(
     s: SOCKET,
     hWnd: HWND,
     wMsg: u32,
     lEvent: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAAccept(
     s: SOCKET,
@@ -1917,9 +1816,9 @@ pub extern "ws2_32" fn WSAAccept(
     addrlen: ?*i32,
     lpfnCondition: ?LPCONDITIONPROC,
     dwCallbackData: usize,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) SOCKET;
 
-pub extern "ws2_32" fn WSACloseEvent(hEvent: HANDLE) callconv(WINAPI) BOOL;
+pub extern "ws2_32" fn WSACloseEvent(hEvent: HANDLE) callconv(.winapi) BOOL;
 
 pub extern "ws2_32" fn WSAConnect(
     s: SOCKET,
@@ -1929,7 +1828,7 @@ pub extern "ws2_32" fn WSAConnect(
     lpCalleeData: ?*WSABUF,
     lpSQOS: ?*QOS,
     lpGQOS: ?*QOS,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAConnectByNameW(
     s: SOCKET,
@@ -1941,19 +1840,7 @@ pub extern "ws2_32" fn WSAConnectByNameW(
     RemoteAddress: ?*sockaddr,
     timeout: ?*const timeval,
     Reserved: *OVERLAPPED,
-) callconv(WINAPI) BOOL;
-
-pub extern "ws2_32" fn WSAConnectByNameA(
-    s: SOCKET,
-    nodename: [*:0]const u8,
-    servicename: [*:0]const u8,
-    LocalAddressLength: ?*u32,
-    LocalAddress: ?*sockaddr,
-    RemoteAddressLength: ?*u32,
-    RemoteAddress: ?*sockaddr,
-    timeout: ?*const timeval,
-    Reserved: *OVERLAPPED,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "ws2_32" fn WSAConnectByList(
     s: SOCKET,
@@ -1964,45 +1851,33 @@ pub extern "ws2_32" fn WSAConnectByList(
     RemoteAddress: ?*sockaddr,
     timeout: ?*const timeval,
     Reserved: *OVERLAPPED,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
-pub extern "ws2_32" fn WSACreateEvent() callconv(WINAPI) HANDLE;
-
-pub extern "ws2_32" fn WSADuplicateSocketA(
-    s: SOCKET,
-    dwProcessId: u32,
-    lpProtocolInfo: *WSAPROTOCOL_INFOA,
-) callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSACreateEvent() callconv(.winapi) HANDLE;
 
 pub extern "ws2_32" fn WSADuplicateSocketW(
     s: SOCKET,
     dwProcessId: u32,
     lpProtocolInfo: *WSAPROTOCOL_INFOW,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAEnumNetworkEvents(
     s: SOCKET,
     hEventObject: HANDLE,
     lpNetworkEvents: *WSANETWORKEVENTS,
-) callconv(WINAPI) i32;
-
-pub extern "ws2_32" fn WSAEnumProtocolsA(
-    lpiProtocols: ?*i32,
-    lpProtocolBuffer: ?*WSAPROTOCOL_INFOA,
-    lpdwBufferLength: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAEnumProtocolsW(
     lpiProtocols: ?*i32,
     lpProtocolBuffer: ?*WSAPROTOCOL_INFOW,
     lpdwBufferLength: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAEventSelect(
     s: SOCKET,
     hEventObject: HANDLE,
     lNetworkEvents: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAGetOverlappedResult(
     s: SOCKET,
@@ -2010,25 +1885,25 @@ pub extern "ws2_32" fn WSAGetOverlappedResult(
     lpcbTransfer: *u32,
     fWait: BOOL,
     lpdwFlags: *u32,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "ws2_32" fn WSAGetQOSByName(
     s: SOCKET,
     lpQOSName: *WSABUF,
     lpQOS: *QOS,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "ws2_32" fn WSAHtonl(
     s: SOCKET,
     hostlong: u32,
     lpnetlong: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAHtons(
     s: SOCKET,
     hostshort: u16,
     lpnetshort: *u16,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAIoctl(
     s: SOCKET,
@@ -2040,7 +1915,7 @@ pub extern "ws2_32" fn WSAIoctl(
     lpcbBytesReturned: *u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAJoinLeaf(
     s: SOCKET,
@@ -2051,19 +1926,19 @@ pub extern "ws2_32" fn WSAJoinLeaf(
     lpSQOS: ?*QOS,
     lpGQOS: ?*QOS,
     dwFlags: u32,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) SOCKET;
 
 pub extern "ws2_32" fn WSANtohl(
     s: SOCKET,
     netlong: u32,
     lphostlong: *u32,
-) callconv(WINAPI) u32;
+) callconv(.winapi) u32;
 
 pub extern "ws2_32" fn WSANtohs(
     s: SOCKET,
     netshort: u16,
     lphostshort: *u16,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSARecv(
     s: SOCKET,
@@ -2073,12 +1948,12 @@ pub extern "ws2_32" fn WSARecv(
     lpFlags: *u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSARecvDisconnect(
     s: SOCKET,
     lpInboundDisconnectData: ?*WSABUF,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSARecvFrom(
     s: SOCKET,
@@ -2090,9 +1965,9 @@ pub extern "ws2_32" fn WSARecvFrom(
     lpFromlen: ?*i32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
-pub extern "ws2_32" fn WSAResetEvent(hEvent: HANDLE) callconv(WINAPI) i32;
+pub extern "ws2_32" fn WSAResetEvent(hEvent: HANDLE) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSASend(
     s: SOCKET,
@@ -2102,7 +1977,7 @@ pub extern "ws2_32" fn WSASend(
     dwFlags: u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSASendMsg(
     s: SOCKET,
@@ -2111,20 +1986,12 @@ pub extern "ws2_32" fn WSASendMsg(
     lpNumberOfBytesSent: ?*u32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
-
-pub extern "ws2_32" fn WSARecvMsg(
-    s: SOCKET,
-    lpMsg: *WSAMSG,
-    lpdwNumberOfBytesRecv: ?*u32,
-    lpOverlapped: ?*OVERLAPPED,
-    lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSASendDisconnect(
     s: SOCKET,
     lpOutboundDisconnectData: ?*WSABUF,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSASendTo(
     s: SOCKET,
@@ -2136,20 +2003,11 @@ pub extern "ws2_32" fn WSASendTo(
     iToLen: i32,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRounte: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSASetEvent(
     hEvent: HANDLE,
-) callconv(WINAPI) BOOL;
-
-pub extern "ws2_32" fn WSASocketA(
-    af: i32,
-    @"type": i32,
-    protocol: i32,
-    lpProtocolInfo: ?*WSAPROTOCOL_INFOA,
-    g: u32,
-    dwFlags: u32,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) BOOL;
 
 pub extern "ws2_32" fn WSASocketW(
     af: i32,
@@ -2158,7 +2016,7 @@ pub extern "ws2_32" fn WSASocketW(
     lpProtocolInfo: ?*WSAPROTOCOL_INFOW,
     g: u32,
     dwFlags: u32,
-) callconv(WINAPI) SOCKET;
+) callconv(.winapi) SOCKET;
 
 pub extern "ws2_32" fn WSAWaitForMultipleEvents(
     cEvents: u32,
@@ -2166,15 +2024,7 @@ pub extern "ws2_32" fn WSAWaitForMultipleEvents(
     fWaitAll: BOOL,
     dwTimeout: u32,
     fAlertable: BOOL,
-) callconv(WINAPI) u32;
-
-pub extern "ws2_32" fn WSAAddressToStringA(
-    lpsaAddress: *sockaddr,
-    dwAddressLength: u32,
-    lpProtocolInfo: ?*WSAPROTOCOL_INFOA,
-    lpszAddressString: [*]u8,
-    lpdwAddressStringLength: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) u32;
 
 pub extern "ws2_32" fn WSAAddressToStringW(
     lpsaAddress: *sockaddr,
@@ -2182,15 +2032,7 @@ pub extern "ws2_32" fn WSAAddressToStringW(
     lpProtocolInfo: ?*WSAPROTOCOL_INFOW,
     lpszAddressString: [*]u16,
     lpdwAddressStringLength: *u32,
-) callconv(WINAPI) i32;
-
-pub extern "ws2_32" fn WSAStringToAddressA(
-    AddressString: [*:0]const u8,
-    AddressFamily: i32,
-    lpProtocolInfo: ?*WSAPROTOCOL_INFOA,
-    lpAddress: *sockaddr,
-    lpAddressLength: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAStringToAddressW(
     AddressString: [*:0]const u16,
@@ -2198,26 +2040,26 @@ pub extern "ws2_32" fn WSAStringToAddressW(
     lpProtocolInfo: ?*WSAPROTOCOL_INFOW,
     lpAddrses: *sockaddr,
     lpAddressLength: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAProviderConfigChange(
     lpNotificationHandle: *HANDLE,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAPoll(
     fdArray: [*]WSAPOLLFD,
     fds: u32,
     timeout: i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn WSARecvEx(
     s: SOCKET,
     buf: [*]u8,
     len: i32,
     flags: *i32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn TransmitFile(
     hSocket: SOCKET,
@@ -2227,7 +2069,7 @@ pub extern "mswsock" fn TransmitFile(
     lpOverlapped: ?*OVERLAPPED,
     lpTransmitBuffers: ?*TRANSMIT_FILE_BUFFERS,
     dwReserved: u32,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "mswsock" fn AcceptEx(
     sListenSocket: SOCKET,
@@ -2238,7 +2080,7 @@ pub extern "mswsock" fn AcceptEx(
     dwRemoteAddressLength: u32,
     lpdwBytesReceived: *u32,
     lpOverlapped: *OVERLAPPED,
-) callconv(WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "mswsock" fn GetAcceptExSockaddrs(
     lpOutputBuffer: *anyopaque,
@@ -2249,39 +2091,21 @@ pub extern "mswsock" fn GetAcceptExSockaddrs(
     LocalSockaddrLength: *i32,
     RemoteSockaddr: **sockaddr,
     RemoteSockaddrLength: *i32,
-) callconv(WINAPI) void;
+) callconv(.winapi) void;
 
 pub extern "ws2_32" fn WSAProviderCompleteAsyncCall(
     hAsyncCall: HANDLE,
     iRetCode: i32,
-) callconv(WINAPI) i32;
-
-pub extern "mswsock" fn EnumProtocolsA(
-    lpiProtocols: ?*i32,
-    lpProtocolBuffer: *anyopaque,
-    lpdwBufferLength: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn EnumProtocolsW(
     lpiProtocols: ?*i32,
     lpProtocolBuffer: *anyopaque,
     lpdwBufferLength: *u32,
-) callconv(WINAPI) i32;
-
-pub extern "mswsock" fn GetAddressByNameA(
-    dwNameSpace: u32,
-    lpServiceType: *GUID,
-    lpServiceName: ?[*:0]u8,
-    lpiProtocols: ?*i32,
-    dwResolution: u32,
-    lpServiceAsyncInfo: ?*SERVICE_ASYNC_INFO,
-    lpCsaddrBuffer: *anyopaque,
-    lpAliasBuffer: ?[*:0]const u8,
-    lpdwAliasBufferLength: *u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn GetAddressByNameW(
-    dwNameSpace: u32,
+    dwNameSpace: NS,
     lpServiceType: *GUID,
     lpServiceName: ?[*:0]u16,
     lpiProtocols: ?*i32,
@@ -2291,64 +2115,43 @@ pub extern "mswsock" fn GetAddressByNameW(
     ldwBufferLEngth: *u32,
     lpAliasBuffer: ?[*:0]u16,
     lpdwAliasBufferLength: *u32,
-) callconv(WINAPI) i32;
-
-pub extern "mswsock" fn GetTypeByNameA(
-    lpServiceName: [*:0]u8,
-    lpServiceType: *GUID,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn GetTypeByNameW(
     lpServiceName: [*:0]u16,
     lpServiceType: *GUID,
-) callconv(WINAPI) i32;
-
-pub extern "mswsock" fn GetNameByTypeA(
-    lpServiceType: *GUID,
-    lpServiceName: [*:0]u8,
-    dwNameLength: u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "mswsock" fn GetNameByTypeW(
     lpServiceType: *GUID,
     lpServiceName: [*:0]u16,
     dwNameLength: u32,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
-pub extern "ws2_32" fn getaddrinfo(
-    pNodeName: ?[*:0]const u8,
-    pServiceName: ?[*:0]const u8,
-    pHints: ?*const addrinfoa,
-    ppResult: *?*addrinfoa,
-) callconv(WINAPI) i32;
-
-pub extern "ws2_32" fn GetAddrInfoExA(
-    pName: ?[*:0]const u8,
-    pServiceName: ?[*:0]const u8,
-    dwNameSapce: u32,
+pub extern "ws2_32" fn GetAddrInfoExW(
+    pName: ?[*:0]const u16,
+    pServiceName: ?[*:0]const u16,
+    dwNameSpace: NS,
     lpNspId: ?*GUID,
-    hints: ?*const addrinfoexA,
-    ppResult: **addrinfoexA,
+    hints: ?*const ADDRINFOEXW,
+    ppResult: **ADDRINFOEXW,
     timeout: ?*timeval,
     lpOverlapped: ?*OVERLAPPED,
     lpCompletionRoutine: ?LPLOOKUPSERVICE_COMPLETION_ROUTINE,
-) callconv(WINAPI) i32;
+    lpNameHandle: ?*HANDLE,
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn GetAddrInfoExCancel(
     lpHandle: *HANDLE,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn GetAddrInfoExOverlappedResult(
     lpOverlapped: *OVERLAPPED,
-) callconv(WINAPI) i32;
+) callconv(.winapi) i32;
 
-pub extern "ws2_32" fn freeaddrinfo(
-    pAddrInfo: ?*addrinfoa,
-) callconv(WINAPI) void;
-
-pub extern "ws2_32" fn FreeAddrInfoEx(
-    pAddrInfoEx: ?*addrinfoexA,
-) callconv(WINAPI) void;
+pub extern "ws2_32" fn FreeAddrInfoExW(
+    pAddrInfoEx: ?*ADDRINFOEXW,
+) callconv(.winapi) void;
 
 pub extern "ws2_32" fn getnameinfo(
     pSockaddr: *const sockaddr,
@@ -2358,8 +2161,4 @@ pub extern "ws2_32" fn getnameinfo(
     pServiceBuffer: ?[*]u8,
     ServiceBufferName: u32,
     Flags: i32,
-) callconv(WINAPI) i32;
-
-pub extern "iphlpapi" fn if_nametoindex(
-    InterfaceName: [*:0]const u8,
-) callconv(WINAPI) u32;
+) callconv(.winapi) i32;

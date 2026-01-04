@@ -1,8 +1,10 @@
 const std = @import("std");
+const json = std.json;
 const mem = std.mem;
 const testing = std.testing;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
+const Writer = std.Io.Writer;
 
 const ObjectMap = @import("dynamic.zig").ObjectMap;
 const Array = @import("dynamic.zig").Array;
@@ -14,8 +16,7 @@ const parseFromTokenSource = @import("static.zig").parseFromTokenSource;
 const parseFromValueLeaky = @import("static.zig").parseFromValueLeaky;
 const ParseOptions = @import("static.zig").ParseOptions;
 
-const jsonReader = @import("scanner.zig").reader;
-const JsonReader = @import("scanner.zig").Reader;
+const Scanner = @import("Scanner.zig");
 
 test "json.parser.dynamic" {
     const s =
@@ -70,14 +71,10 @@ test "json.parser.dynamic" {
     try testing.expect(mem.eql(u8, large_int.number_string, "18446744073709551615"));
 }
 
-const writeStream = @import("./stringify.zig").writeStream;
 test "write json then parse it" {
     var out_buffer: [1000]u8 = undefined;
-
-    var fixed_buffer_stream = std.io.fixedBufferStream(&out_buffer);
-    const out_stream = fixed_buffer_stream.writer();
-    var jw = writeStream(out_stream, .{});
-    defer jw.deinit();
+    var fixed_writer: Writer = .fixed(&out_buffer);
+    var jw: json.Stringify = .{ .writer = &fixed_writer, .options = .{} };
 
     try jw.beginObject();
 
@@ -101,8 +98,8 @@ test "write json then parse it" {
 
     try jw.endObject();
 
-    fixed_buffer_stream = std.io.fixedBufferStream(fixed_buffer_stream.getWritten());
-    var json_reader = jsonReader(testing.allocator, fixed_buffer_stream.reader());
+    var fbs: std.Io.Reader = .fixed(fixed_writer.buffered());
+    var json_reader: Scanner.Reader = .init(testing.allocator, &fbs);
     defer json_reader.deinit();
     var parsed = try parseFromTokenSource(Value, testing.allocator, &json_reader, .{});
     defer parsed.deinit();
@@ -149,6 +146,19 @@ test "integer after float has proper type" {
     try std.testing.expect(parsed.object.get("ints").?.array.items[0] == .integer);
 }
 
+test "ParseOptions.parse_numbers prevents parsing when false" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const parsed = try parseFromSliceLeaky(Value, arena_allocator.allocator(),
+        \\{
+        \\  "float": 3.14,
+        \\  "int": 3
+        \\}
+    , .{ .parse_numbers = false });
+    try std.testing.expect(parsed.object.get("float").? == .number_string);
+    try std.testing.expect(parsed.object.get("int").? == .number_string);
+}
+
 test "escaped characters" {
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
@@ -181,6 +191,34 @@ test "escaped characters" {
     try testing.expectEqualSlices(u8, obj.get("surrogatepair").?.string, "😂");
 }
 
+test "Value with duplicate fields" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const doc =
+        \\{
+        \\  "abc": 0,
+        \\  "abc": 1
+        \\}
+    ;
+
+    try testing.expectError(error.DuplicateField, parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .@"error",
+    }));
+
+    const first = try parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .use_first,
+    });
+    try testing.expectEqual(@as(usize, 1), first.object.count());
+    try testing.expectEqual(@as(i64, 0), first.object.get("abc").?.integer);
+
+    const last = try parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .use_last,
+    });
+    try testing.expectEqual(@as(usize, 1), last.object.count());
+    try testing.expectEqual(@as(i64, 1), last.object.get("abc").?.integer);
+}
+
 test "Value.jsonStringify" {
     var vals = [_]Value{
         .{ .integer = 1 },
@@ -201,10 +239,9 @@ test "Value.jsonStringify" {
         .{ .object = obj },
     };
     var buffer: [0x1000]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buffer);
+    var fixed_writer: Writer = .fixed(&buffer);
 
-    var jw = writeStream(fbs.writer(), .{ .whitespace = .indent_1 });
-    defer jw.deinit();
+    var jw: json.Stringify = .{ .writer = &fixed_writer, .options = .{ .whitespace = .indent_1 } };
     try jw.write(array);
 
     const expected =
@@ -213,7 +250,7 @@ test "Value.jsonStringify" {
         \\ true,
         \\ 42,
         \\ 43,
-        \\ 4.2e1,
+        \\ 42,
         \\ "weeee",
         \\ [
         \\  1,
@@ -225,7 +262,7 @@ test "Value.jsonStringify" {
         \\ }
         \\]
     ;
-    try testing.expectEqualSlices(u8, expected, fbs.getWritten());
+    try testing.expectEqualStrings(expected, fixed_writer.buffered());
 }
 
 test "parseFromValue(std.json.Value,...)" {
@@ -293,8 +330,8 @@ test "polymorphic parsing" {
 test "long object value" {
     const value = "01234567890123456789";
     const doc = "{\"key\":\"" ++ value ++ "\"}";
-    var fbs = std.io.fixedBufferStream(doc);
-    var reader = smallBufferJsonReader(testing.allocator, fbs.reader());
+    var fbs: std.Io.Reader = .fixed(doc);
+    var reader = smallBufferJsonReader(testing.allocator, &fbs);
     defer reader.deinit();
     var parsed = try parseFromTokenSource(Value, testing.allocator, &reader, .{});
     defer parsed.deinit();
@@ -326,8 +363,8 @@ test "many object keys" {
         \\  "k5": "v5"
         \\}
     ;
-    var fbs = std.io.fixedBufferStream(doc);
-    var reader = smallBufferJsonReader(testing.allocator, fbs.reader());
+    var fbs: std.Io.Reader = .fixed(doc);
+    var reader = smallBufferJsonReader(testing.allocator, &fbs);
     defer reader.deinit();
     var parsed = try parseFromTokenSource(Value, testing.allocator, &reader, .{});
     defer parsed.deinit();
@@ -341,8 +378,8 @@ test "many object keys" {
 
 test "negative zero" {
     const doc = "-0";
-    var fbs = std.io.fixedBufferStream(doc);
-    var reader = smallBufferJsonReader(testing.allocator, fbs.reader());
+    var fbs: std.Io.Reader = .fixed(doc);
+    var reader = smallBufferJsonReader(testing.allocator, &fbs);
     defer reader.deinit();
     var parsed = try parseFromTokenSource(Value, testing.allocator, &reader, .{});
     defer parsed.deinit();
@@ -350,6 +387,6 @@ test "negative zero" {
     try testing.expect(std.math.isNegativeZero(parsed.value.float));
 }
 
-fn smallBufferJsonReader(allocator: Allocator, io_reader: anytype) JsonReader(16, @TypeOf(io_reader)) {
-    return JsonReader(16, @TypeOf(io_reader)).init(allocator, io_reader);
+fn smallBufferJsonReader(allocator: Allocator, io_reader: anytype) Scanner.Reader {
+    return .init(allocator, io_reader);
 }

@@ -1,150 +1,137 @@
+const builtin = @import("builtin");
 const std = @import("../../std.zig");
-const maxInt = std.math.maxInt;
-const linux = std.os.linux;
-const SYS = linux.SYS;
-const socklen_t = linux.socklen_t;
-const iovec = std.posix.iovec;
-const iovec_const = std.posix.iovec_const;
-const uid_t = linux.uid_t;
-const gid_t = linux.gid_t;
-const pid_t = linux.pid_t;
-const sockaddr = linux.sockaddr;
-const timespec = linux.timespec;
+const SYS = std.os.linux.SYS;
 
-pub fn syscall0(number: SYS) usize {
+pub fn syscall0(number: SYS) u32 {
     return asm volatile (
         \\ syscall
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
-        : "$1", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r4 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall_pipe(fd: *[2]i32) usize {
+pub fn syscall_pipe(fd: *[2]i32) u32 {
     return asm volatile (
-        \\ .set noat
-        \\ .set noreorder
         \\ syscall
-        \\ blez $7, 1f
-        \\ nop
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 2f
+        \\ subu $v0, $zero, $v0
         \\ b 2f
-        \\ subu $2, $0, $2
-        \\ 1:
-        \\ sw $2, 0($4)
-        \\ sw $3, 4($4)
-        \\ 2:
-        : [ret] "={$2}" (-> usize),
+        \\1:
+        \\ sw $v0, 0($a0)
+        \\ sw $v1, 4($a0)
+        \\2:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(SYS.pipe)),
           [fd] "{$4}" (fd),
-        : "$1", "$3", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall1(number: SYS, arg1: usize) usize {
+pub fn syscall1(number: SYS, arg1: u32) u32 {
     return asm volatile (
         \\ syscall
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
-        : "$1", "$3", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall2(number: SYS, arg1: usize, arg2: usize) usize {
+pub fn syscall2(number: SYS, arg1: u32, arg2: u32) u32 {
     return asm volatile (
         \\ syscall
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
-        : "$1", "$3", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall3(number: SYS, arg1: usize, arg2: usize, arg3: usize) usize {
+pub fn syscall3(number: SYS, arg1: u32, arg2: u32, arg3: u32) u32 {
     return asm volatile (
         \\ syscall
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
-        : "$1", "$3", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall4(number: SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize) usize {
+pub fn syscall4(number: SYS, arg1: u32, arg2: u32, arg3: u32, arg4: u32) u32 {
     return asm volatile (
         \\ syscall
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
           [arg4] "{$7}" (arg4),
-        : "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-pub fn syscall5(number: SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize) usize {
+// NOTE: The o32 calling convention requires the callee to reserve 16 bytes for
+// the first four arguments even though they're passed in $a0-$a3.
+
+pub fn syscall5(number: SYS, arg1: u32, arg2: u32, arg3: u32, arg4: u32, arg5: u32) u32 {
     return asm volatile (
-        \\ .set noat
         \\ subu $sp, $sp, 24
         \\ sw %[arg5], 16($sp)
         \\ syscall
         \\ addu $sp, $sp, 24
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
           [arg4] "{$7}" (arg4),
           [arg5] "r" (arg5),
-        : "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
-
-// NOTE: The o32 calling convention requires the callee to reserve 16 bytes for
-// the first four arguments even though they're passed in $a0-$a3.
 
 pub fn syscall6(
     number: SYS,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-    arg4: usize,
-    arg5: usize,
-    arg6: usize,
-) usize {
+    arg1: u32,
+    arg2: u32,
+    arg3: u32,
+    arg4: u32,
+    arg5: u32,
+    arg6: u32,
+) u32 {
     return asm volatile (
-        \\ .set noat
         \\ subu $sp, $sp, 24
         \\ sw %[arg5], 16($sp)
         \\ sw %[arg6], 20($sp)
         \\ syscall
         \\ addu $sp, $sp, 24
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
@@ -152,32 +139,31 @@ pub fn syscall6(
           [arg4] "{$7}" (arg4),
           [arg5] "r" (arg5),
           [arg6] "r" (arg6),
-        : "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
 pub fn syscall7(
     number: SYS,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-    arg4: usize,
-    arg5: usize,
-    arg6: usize,
-    arg7: usize,
-) usize {
+    arg1: u32,
+    arg2: u32,
+    arg3: u32,
+    arg4: u32,
+    arg5: u32,
+    arg6: u32,
+    arg7: u32,
+) u32 {
     return asm volatile (
-        \\ .set noat
         \\ subu $sp, $sp, 32
         \\ sw %[arg5], 16($sp)
         \\ sw %[arg6], 20($sp)
         \\ sw %[arg7], 24($sp)
         \\ syscall
         \\ addu $sp, $sp, 32
-        \\ blez $7, 1f
-        \\ subu $2, $0, $2
-        \\ 1:
-        : [ret] "={$2}" (-> usize),
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 1f
+        \\ subu $v0, $zero, $v0
+        \\1:
+        : [ret] "={$2}" (-> u32),
         : [number] "{$2}" (@intFromEnum(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
@@ -186,104 +172,65 @@ pub fn syscall7(
           [arg5] "r" (arg5),
           [arg6] "r" (arg6),
           [arg7] "r" (arg7),
-        : "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
-    );
+        : .{ .r1 = true, .r3 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
-const CloneFn = *const fn (arg: usize) callconv(.C) u8;
-
-/// This matches the libc clone function.
-pub extern fn clone(func: CloneFn, stack: usize, flags: u32, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
-
-pub fn restore() callconv(.Naked) noreturn {
+pub fn clone() callconv(.naked) u32 {
+    // __clone(func, stack, flags, arg, ptid, tls, ctid)
+    //         a0,   a1,    a2,    a3,  +0,   +4,  +8
+    //
+    // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
+    //         v0         a0,    a1,    a2,   a3,  +0
     asm volatile (
+        \\ # Save function pointer and argument pointer on new thread stack
+        \\ and $a1, $a1, -8
+        \\ subu $a1, $a1, 16
+        \\ sw $a0, 0($a1)
+        \\ sw $a3, 4($a1)
+        \\
+        \\ # Shuffle (fn,sp,fl,arg,ptid,tls,ctid) to (fl,sp,ptid,tls,ctid)
+        \\ move $a0, $a2
+        \\ lw $a2, 16($sp)
+        \\ lw $a3, 20($sp)
+        \\ lw $t1, 24($sp)
+        \\ subu $sp, $sp, 16
+        \\ sw $t1, 16($sp)
+        \\ li $v0, 4120 # SYS_clone
         \\ syscall
-        :
-        : [number] "{$2}" (@intFromEnum(SYS.sigreturn)),
-        : "$1", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
+        \\ beq $a3, $zero, 1f
+        \\ blez $v0, 2f
+        \\ subu $v0, $zero, $v0
+        \\ b 2f
+        \\1:
+        \\ beq $v0, $zero, 3f
+        \\2:
+        \\ addu $sp, $sp, 16
+        \\ jr $ra
+        \\3:
     );
-}
-
-pub fn restore_rt() callconv(.Naked) noreturn {
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\ .cfi_undefined $ra
+    );
     asm volatile (
+        \\ move $fp, $zero
+        \\ move $ra, $zero
+        \\
+        \\ lw $t9, 0($sp)
+        \\ lw $a0, 4($sp)
+        \\ jalr $t9
+        \\
+        \\ move $a0, $v0
+        \\ li $v0, 4001 # SYS_exit
         \\ syscall
-        :
-        : [number] "{$2}" (@intFromEnum(SYS.rt_sigreturn)),
-        : "$1", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", "$25", "hi", "lo", "memory"
     );
 }
-
-pub const F = struct {
-    pub const DUPFD = 0;
-    pub const GETFD = 1;
-    pub const SETFD = 2;
-    pub const GETFL = 3;
-    pub const SETFL = 4;
-
-    pub const SETOWN = 24;
-    pub const GETOWN = 23;
-    pub const SETSIG = 10;
-    pub const GETSIG = 11;
-
-    pub const GETLK = 33;
-    pub const SETLK = 34;
-    pub const SETLKW = 35;
-
-    pub const RDLCK = 0;
-    pub const WRLCK = 1;
-    pub const UNLCK = 2;
-
-    pub const SETOWN_EX = 15;
-    pub const GETOWN_EX = 16;
-
-    pub const GETOWNER_UIDS = 17;
-};
-
-pub const LOCK = struct {
-    pub const SH = 1;
-    pub const EX = 2;
-    pub const UN = 8;
-    pub const NB = 4;
-};
-
-pub const MMAP2_UNIT = 4096;
 
 pub const VDSO = struct {
-    pub const CGT_SYM = "__kernel_clock_gettime";
-    pub const CGT_VER = "LINUX_2.6.39";
+    pub const CGT_SYM = "__vdso_clock_gettime";
+    pub const CGT_VER = "LINUX_2.6";
 };
 
-pub const Flock = extern struct {
-    type: i16,
-    whence: i16,
-    __pad0: [4]u8,
-    start: off_t,
-    len: off_t,
-    pid: pid_t,
-    __unused: [4]u8,
-};
-
-pub const msghdr = extern struct {
-    name: ?*sockaddr,
-    namelen: socklen_t,
-    iov: [*]iovec,
-    iovlen: i32,
-    control: ?*anyopaque,
-    controllen: socklen_t,
-    flags: i32,
-};
-
-pub const msghdr_const = extern struct {
-    name: ?*const sockaddr,
-    namelen: socklen_t,
-    iov: [*]const iovec_const,
-    iovlen: i32,
-    control: ?*const anyopaque,
-    controllen: socklen_t,
-    flags: i32,
-};
-
-pub const blksize_t = i32;
+pub const blksize_t = u32;
 pub const nlink_t = u32;
 pub const time_t = i32;
 pub const mode_t = u32;
@@ -292,107 +239,34 @@ pub const ino_t = u64;
 pub const dev_t = u64;
 pub const blkcnt_t = i64;
 
-// The `stat` definition used by the Linux kernel.
+// The `stat64` definition used by the Linux kernel.
 pub const Stat = extern struct {
-    dev: u32,
-    __pad0: [3]u32, // Reserved for st_dev expansion
+    dev: dev_t,
+    __pad0: [2]u32, // -1 because our dev_t is u64 (kernel dev_t is really u32).
     ino: ino_t,
     mode: mode_t,
     nlink: nlink_t,
-    uid: uid_t,
-    gid: gid_t,
-    rdev: u32,
-    __pad1: [3]u32,
+    uid: std.os.linux.uid_t,
+    gid: std.os.linux.gid_t,
+    rdev: dev_t,
+    __pad1: [2]u32,
     size: off_t,
-    atim: timespec,
-    mtim: timespec,
-    ctim: timespec,
+    atim: std.os.linux.timespec,
+    mtim: std.os.linux.timespec,
+    ctim: std.os.linux.timespec,
     blksize: blksize_t,
     __pad3: u32,
     blocks: blkcnt_t,
-    __pad4: [14]usize,
 
-    pub fn atime(self: @This()) timespec {
+    pub fn atime(self: @This()) std.os.linux.timespec {
         return self.atim;
     }
 
-    pub fn mtime(self: @This()) timespec {
+    pub fn mtime(self: @This()) std.os.linux.timespec {
         return self.mtim;
     }
 
-    pub fn ctime(self: @This()) timespec {
+    pub fn ctime(self: @This()) std.os.linux.timespec {
         return self.ctim;
     }
-};
-
-pub const timeval = extern struct {
-    tv_sec: isize,
-    tv_usec: isize,
-};
-
-pub const timezone = extern struct {
-    tz_minuteswest: i32,
-    tz_dsttime: i32,
-};
-
-pub const Elf_Symndx = u32;
-
-pub const rlimit_resource = enum(c_int) {
-    /// Per-process CPU limit, in seconds.
-    CPU,
-
-    /// Largest file that can be created, in bytes.
-    FSIZE,
-
-    /// Maximum size of data segment, in bytes.
-    DATA,
-
-    /// Maximum size of stack segment, in bytes.
-    STACK,
-
-    /// Largest core file that can be created, in bytes.
-    CORE,
-
-    /// Number of open files.
-    NOFILE,
-
-    /// Address space limit.
-    AS,
-
-    /// Largest resident set size, in bytes.
-    /// This affects swapping; processes that are exceeding their
-    /// resident set size will be more likely to have physical memory
-    /// taken from them.
-    RSS,
-
-    /// Number of processes.
-    NPROC,
-
-    /// Locked-in-memory address space.
-    MEMLOCK,
-
-    /// Maximum number of file locks.
-    LOCKS,
-
-    /// Maximum number of pending signals.
-    SIGPENDING,
-
-    /// Maximum bytes in POSIX message queues.
-    MSGQUEUE,
-
-    /// Maximum nice priority allowed to raise to.
-    /// Nice levels 19 .. -20 correspond to 0 .. 39
-    /// values of this resource limit.
-    NICE,
-
-    /// Maximum realtime priority allowed for non-priviledged
-    /// processes.
-    RTPRIO,
-
-    /// Maximum CPU time in µs that a process scheduled under a real-time
-    /// scheduling policy may consume without making a blocking system
-    /// call before being forcibly descheduled.
-    RTTIME,
-
-    _,
 };

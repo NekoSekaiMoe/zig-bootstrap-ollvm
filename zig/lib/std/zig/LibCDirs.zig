@@ -15,11 +15,11 @@ pub const DarwinSdkLayout = enum {
 pub fn detect(
     arena: Allocator,
     zig_lib_dir: []const u8,
-    target: std.Target,
+    target: *const std.Target,
     is_native_abi: bool,
     link_libc: bool,
     libc_installation: ?*const LibCInstallation,
-) !LibCDirs {
+) LibCInstallation.FindError!LibCDirs {
     if (!link_libc) {
         return .{
             .libc_include_dir_list = &[0][]u8{},
@@ -69,7 +69,7 @@ pub fn detect(
     // On windows, instead of the native (mingw) abi, we want to check
     // for the MSVC abi as a fallback.
     const use_system_abi = if (builtin.os.tag == .windows)
-        target.abi == .msvc
+        target.abi == .msvc or target.abi == .itanium
     else
         is_native_abi;
 
@@ -88,9 +88,9 @@ pub fn detect(
     };
 }
 
-fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibCInstallation) !LibCDirs {
-    var list = try std.ArrayList([]const u8).initCapacity(arena, 5);
-    var framework_list = std.ArrayList([]const u8).init(arena);
+fn detectFromInstallation(arena: Allocator, target: *const std.Target, lci: *const LibCInstallation) !LibCDirs {
+    var list = try std.array_list.Managed([]const u8).initCapacity(arena, 5);
+    var framework_list = std.array_list.Managed([]const u8).init(arena);
 
     list.appendAssumeCapacity(lci.include_dir.?);
 
@@ -114,7 +114,7 @@ fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibC
         }
     }
     if (target.os.tag == .haiku) {
-        const include_dir_path = lci.include_dir orelse return error.LibCInstallationNotAvailable;
+        const include_dir_path = lci.include_dir.?;
         const os_dir = try std.fs.path.join(arena, &[_][]const u8{ include_dir_path, "os" });
         list.appendAssumeCapacity(os_dir);
         // Errors.h
@@ -127,7 +127,7 @@ fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibC
 
     var sysroot: ?[]const u8 = null;
 
-    if (target.isDarwin()) d: {
+    if (target.os.tag.isDarwin()) d: {
         const down1 = std.fs.path.dirname(lci.sys_include_dir.?) orelse break :d;
         const down2 = std.fs.path.dirname(down1) orelse break :d;
         try framework_list.append(try std.fs.path.join(arena, &.{ down2, "System", "Library", "Frameworks" }));
@@ -146,15 +146,15 @@ fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibC
 pub fn detectFromBuilding(
     arena: Allocator,
     zig_lib_dir: []const u8,
-    target: std.Target,
+    target: *const std.Target,
 ) !LibCDirs {
     const s = std.fs.path.sep_str;
 
-    if (target.isDarwin()) {
+    if (target.os.tag.isDarwin()) {
         const list = try arena.alloc([]const u8, 1);
         list[0] = try std.fmt.allocPrint(
             arena,
-            "{s}" ++ s ++ "libc" ++ s ++ "include" ++ s ++ "any-macos-any",
+            "{s}" ++ s ++ "libc" ++ s ++ "include" ++ s ++ "any-darwin-any",
             .{zig_lib_dir},
         );
         return .{
@@ -167,21 +167,26 @@ pub fn detectFromBuilding(
     }
 
     const generic_name = libCGenericName(target);
-    // Some architectures are handled by the same set of headers.
-    const arch_name = if (target.abi.isMusl())
+    // Some architecture families are handled by the same set of headers.
+    const arch_name = if (target.isMuslLibC() or target.isWasiLibC())
         std.zig.target.muslArchNameHeaders(target.cpu.arch)
-    else if (target.cpu.arch.isThumb())
-        // ARM headers are valid for Thumb too.
-        switch (target.cpu.arch) {
-            .thumb => "arm",
-            .thumbeb => "armeb",
-            else => unreachable,
-        }
+    else if (target.isGnuLibC())
+        std.zig.target.glibcArchNameHeaders(target.cpu.arch)
+    else if (target.isFreeBSDLibC())
+        std.zig.target.freebsdArchNameHeaders(target.cpu.arch)
+    else if (target.isNetBSDLibC())
+        std.zig.target.netbsdArchNameHeaders(target.cpu.arch)
     else
         @tagName(target.cpu.arch);
     const os_name = @tagName(target.os.tag);
-    // Musl's headers are ABI-agnostic and so they all have the "musl" ABI name.
-    const abi_name = if (target.abi.isMusl()) "musl" else @tagName(target.abi);
+    const abi_name = if (target.isMuslLibC())
+        std.zig.target.muslAbiNameHeaders(target.abi)
+    else if (target.isGnuLibC())
+        std.zig.target.glibcAbiNameHeaders(target.abi)
+    else if (target.isNetBSDLibC())
+        std.zig.target.netbsdAbiNameHeaders(target.abi)
+    else
+        @tagName(target.abi);
     const arch_include_dir = try std.fmt.allocPrint(
         arena,
         "{s}" ++ s ++ "libc" ++ s ++ "include" ++ s ++ "{s}-{s}-{s}",
@@ -192,7 +197,7 @@ pub fn detectFromBuilding(
         "{s}" ++ s ++ "libc" ++ s ++ "include" ++ s ++ "generic-{s}",
         .{ zig_lib_dir, generic_name },
     );
-    const generic_arch_name = target.osArchName();
+    const generic_arch_name = std.zig.target.osArchName(target);
     const arch_os_include_dir = try std.fmt.allocPrint(
         arena,
         "{s}" ++ s ++ "libc" ++ s ++ "include" ++ s ++ "{s}-{s}-any",
@@ -219,10 +224,12 @@ pub fn detectFromBuilding(
     };
 }
 
-fn libCGenericName(target: std.Target) [:0]const u8 {
+fn libCGenericName(target: *const std.Target) [:0]const u8 {
     switch (target.os.tag) {
         .windows => return "mingw",
-        .macos, .ios, .tvos, .watchos => return "darwin",
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => return "darwin",
+        .freebsd => return "freebsd",
+        .netbsd => return "netbsd",
         else => {},
     }
     switch (target.abi) {
@@ -232,44 +239,29 @@ fn libCGenericName(target: std.Target) [:0]const u8 {
         .gnueabi,
         .gnueabihf,
         .gnuf32,
-        .gnuf64,
         .gnusf,
         .gnux32,
-        .gnuilp32,
         => return "glibc",
         .musl,
+        .muslabin32,
+        .muslabi64,
         .musleabi,
         .musleabihf,
+        .muslf32,
+        .muslsf,
         .muslx32,
         .none,
+        .ohos,
+        .ohoseabi,
         => return "musl",
-        .code16,
         .eabi,
         .eabihf,
+        .ilp32,
         .android,
+        .androideabi,
         .msvc,
         .itanium,
-        .cygnus,
-        .coreclr,
         .simulator,
-        .macabi,
-        => unreachable,
-
-        .pixel,
-        .vertex,
-        .geometry,
-        .hull,
-        .domain,
-        .compute,
-        .library,
-        .raygeneration,
-        .intersection,
-        .anyhit,
-        .closesthit,
-        .miss,
-        .callable,
-        .mesh,
-        .amplification,
         => unreachable,
     }
 }

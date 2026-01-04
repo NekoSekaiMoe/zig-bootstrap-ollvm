@@ -1,5 +1,5 @@
 /* Definitions for POSIX memory map interface.  Linux generic version.
-   Copyright (C) 2001-2023 Free Software Foundation, Inc.
+   Copyright (C) 2001-2025 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -43,6 +43,7 @@
 #define MAP_PRIVATE	0x02		/* Changes are private.  */
 #define MAP_SHARED_VALIDATE	0x03	/* Share changes and validate
 					   extension flags.  */
+#define MAP_DROPPABLE	0x08		/* Zero memory under memory pressure.  */
 #define MAP_TYPE	0x0f		/* Mask for type of mapping.  */
 
 /* Other flags.  */
@@ -54,9 +55,28 @@
 # define MAP_ANONYMOUS	0x20		/* Don't use a file.  */
 #endif
 #define MAP_ANON	MAP_ANONYMOUS
-/* When MAP_HUGETLB is set bits [26:31] encode the log2 of the huge page size.  */
+
+/* When MAP_HUGETLB is set, bits [26:31] encode the log2 of the huge page size.
+   The following definitions are associated with this huge page size encoding.
+   It is responsibility of the application to know which sizes are supported on
+   the running system.  See mmap(2) man page for details.  */
+
 #define MAP_HUGE_SHIFT	26
 #define MAP_HUGE_MASK	0x3f
+
+#define MAP_HUGE_16KB	(14 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_64KB	(16 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_512KB	(19 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_1MB	(20 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_2MB	(21 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_8MB	(23 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_16MB	(24 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_32MB	(25 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_256MB	(28 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_512MB	(29 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_1GB	(30 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_2GB	(31 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_16GB	(34U << MAP_HUGE_SHIFT)
 
 /* Flags to `msync'.  */
 #define MS_ASYNC	1		/* Sync memory asynchronously.  */
@@ -93,6 +113,8 @@
 				    locked pages too.  */
 # define MADV_COLLAPSE    25	/* Synchronous hugepage collapse.  */
 # define MADV_HWPOISON	  100	/* Poison a page for testing.  */
+# define MADV_GUARD_INSTALL 102 /* Fatal signal on access to range */
+# define MADV_GUARD_REMOVE 103  /* Unguard range */
 #endif
 
 /* The POSIX people had to invent similar names for the same things.  */

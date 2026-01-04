@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer if (gpa.deinit() == .leak) @panic("found memory leaks");
     const allocator = gpa.allocator();
 
@@ -11,5 +11,8 @@ pub fn main() anyerror!void {
     const exe_path = it.next() orelse unreachable;
     const symlink_path = it.next() orelse unreachable;
 
-    try std.fs.cwd().symLink(exe_path, symlink_path, .{});
+    // If `exe_path` is relative to our cwd, we need to convert it to be relative to the dirname of `symlink_path`.
+    const exe_rel_path = try std.fs.path.relative(allocator, std.fs.path.dirname(symlink_path) orelse ".", exe_path);
+    defer allocator.free(exe_rel_path);
+    try std.fs.cwd().symLink(exe_rel_path, symlink_path, .{});
 }

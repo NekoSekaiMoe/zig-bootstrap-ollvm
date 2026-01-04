@@ -22,9 +22,13 @@ comptime {
 comptime {
     blk: for (@as([0]void, undefined)) |_| {}
 }
+comptime {
+    blk: switch (true) {
+        else => {},
+    }
+}
 
 // error
-// target=native
 //
 // :3:9: error: redefinition of label 'blk'
 // :2:5: note: previous definition here
@@ -35,3 +39,4 @@ comptime {
 // :17:5: error: unused block label
 // :20:5: error: unused while loop label
 // :23:5: error: unused for loop label
+// :26:5: error: unused switch label

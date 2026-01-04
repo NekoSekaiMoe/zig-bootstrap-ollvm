@@ -1,15 +1,8 @@
 //! Implementation of the IND-CCA2 post-quantum secure key encapsulation mechanism (KEM)
 //! ML-KEM (NIST FIPS-203 publication) and CRYSTALS-Kyber (v3.02/"draft00" CFRG draft).
 //!
-//! The schemes are not finalized yet, and are still subject to breaking changes.
-//!
-//! The Kyber namespace suffix (currently `_d00`) refers to the version currently
-//! implemented, in accordance with the draft.
-//! The ML-KEM namespace suffix (currently `_01`) refers to the NIST FIPS-203 draft
-//! published on August 24, 2023, with the unintentional transposition of Â having been reverted.
-//!
-//! Suffixes may not be updated if new versions of the documents only include editorial changes.
-//! The suffixes will be removed once the schemes are finalized.
+//! The namespace `d00` refers to the version currently implemented, in accordance with the CFRG draft.
+//! The `nist` namespace refers to the FIPS-203 publication.
 //!
 //! Quoting from the CFRG I-D:
 //!
@@ -112,19 +105,20 @@ const crypto = std.crypto;
 const errors = std.crypto.errors;
 const math = std.math;
 const mem = std.mem;
-const RndGen = std.Random.DefaultPrng;
 const sha3 = crypto.hash.sha3;
 
-// Q is the parameter q ≡ 3329 = 2¹¹ + 2¹⁰ + 2⁸ + 1.
+const RndGen = std.Random.DefaultPrng;
+
+// Q is the modulus q ≡ 3329 = 2¹¹ + 2¹⁰ + 2⁸ + 1
 const Q: i16 = 3329;
 
-// Montgomery R
+// Montgomery R = 2^16 mod Q (for Montgomery multiplication)
 const R: i32 = 1 << 16;
 
-// Parameter n, degree of polynomials.
+// N is the degree of polynomials (polynomial ring dimension)
 const N: usize = 256;
 
-// Size of "small" vectors used in encryption blinds.
+// eta2 is the size of "small" vectors used in encryption blinds
 const eta2: u8 = 2;
 
 const Params = struct {
@@ -148,7 +142,7 @@ const Params = struct {
     dv: u8,
 };
 
-pub const kyber_d00 = struct {
+pub const d00 = struct {
     pub const Kyber512 = Kyber(.{
         .name = "Kyber512",
         .k = 2,
@@ -174,7 +168,7 @@ pub const kyber_d00 = struct {
     });
 };
 
-pub const ml_kem_01 = struct {
+pub const nist = struct {
     pub const MLKem512 = Kyber(.{
         .name = "ML-KEM-512",
         .ml_kem = true,
@@ -204,12 +198,12 @@ pub const ml_kem_01 = struct {
 };
 
 const modes = [_]type{
-    kyber_d00.Kyber512,
-    kyber_d00.Kyber768,
-    kyber_d00.Kyber1024,
-    ml_kem_01.MLKem512,
-    ml_kem_01.MLKem768,
-    ml_kem_01.MLKem1024,
+    d00.Kyber512,
+    d00.Kyber768,
+    d00.Kyber1024,
+    nist.MLKem512,
+    nist.MLKem768,
+    nist.MLKem1024,
 };
 const h_length: usize = 32;
 const inner_seed_length: usize = 32;
@@ -222,7 +216,7 @@ fn Kyber(comptime p: Params) type {
         pub const ciphertext_length = Poly.compressedSize(p.du) * p.k + Poly.compressedSize(p.dv);
 
         const Self = @This();
-        const V = Vec(p.k);
+        const V = PolyVec(p.k);
         const M = Mat(p.k);
 
         /// Length (in bytes) of a shared secret.
@@ -248,7 +242,7 @@ fn Kyber(comptime p: Params) type {
             hpk: [h_length]u8, // H(pk)
 
             /// Size of a serialized representation of the key, in bytes.
-            pub const bytes_length = InnerPk.bytes_length;
+            pub const encoded_length = InnerPk.encoded_length;
 
             /// Generates a shared secret, and encapsulates it for the public key.
             /// If `seed` is `null`, a random seed is used. This is recommended.
@@ -296,14 +290,14 @@ fn Kyber(comptime p: Params) type {
             }
 
             /// Serializes the key into a byte array.
-            pub fn toBytes(pk: PublicKey) [bytes_length]u8 {
+            pub fn toBytes(pk: PublicKey) [encoded_length]u8 {
                 return pk.pk.toBytes();
             }
 
             /// Deserializes the key from a byte array.
-            pub fn fromBytes(buf: *const [bytes_length]u8) errors.NonCanonicalError!PublicKey {
+            pub fn fromBytes(buf: *const [encoded_length]u8) errors.NonCanonicalError!PublicKey {
                 var ret: PublicKey = undefined;
-                ret.pk = try InnerPk.fromBytes(buf[0..InnerPk.bytes_length]);
+                ret.pk = try InnerPk.fromBytes(buf[0..InnerPk.encoded_length]);
                 sha3.Sha3_256.hash(buf, &ret.hpk, .{});
                 return ret;
             }
@@ -317,8 +311,8 @@ fn Kyber(comptime p: Params) type {
             z: [shared_length]u8,
 
             /// Size of a serialized representation of the key, in bytes.
-            pub const bytes_length: usize =
-                InnerSk.bytes_length + InnerPk.bytes_length + h_length + shared_length;
+            pub const encoded_length: usize =
+                InnerSk.encoded_length + InnerPk.encoded_length + h_length + shared_length;
 
             /// Decapsulates the shared secret within ct using the private key.
             pub fn decaps(sk: SecretKey, ct: *const [ciphertext_length]u8) ![shared_length]u8 {
@@ -353,18 +347,18 @@ fn Kyber(comptime p: Params) type {
             }
 
             /// Serializes the key into a byte array.
-            pub fn toBytes(sk: SecretKey) [bytes_length]u8 {
+            pub fn toBytes(sk: SecretKey) [encoded_length]u8 {
                 return sk.sk.toBytes() ++ sk.pk.toBytes() ++ sk.hpk ++ sk.z;
             }
 
             /// Deserializes the key from a byte array.
-            pub fn fromBytes(buf: *const [bytes_length]u8) errors.NonCanonicalError!SecretKey {
+            pub fn fromBytes(buf: *const [encoded_length]u8) errors.NonCanonicalError!SecretKey {
                 var ret: SecretKey = undefined;
                 comptime var s: usize = 0;
-                ret.sk = InnerSk.fromBytes(buf[s .. s + InnerSk.bytes_length]);
-                s += InnerSk.bytes_length;
-                ret.pk = try InnerPk.fromBytes(buf[s .. s + InnerPk.bytes_length]);
-                s += InnerPk.bytes_length;
+                ret.sk = InnerSk.fromBytes(buf[s .. s + InnerSk.encoded_length]);
+                s += InnerSk.encoded_length;
+                ret.pk = try InnerPk.fromBytes(buf[s .. s + InnerPk.encoded_length]);
+                s += InnerPk.encoded_length;
                 ret.hpk = buf[s..][0..h_length].*;
                 s += h_length;
                 ret.z = buf[s..][0..shared_length].*;
@@ -377,17 +371,11 @@ fn Kyber(comptime p: Params) type {
             secret_key: SecretKey,
             public_key: PublicKey,
 
-            /// Create a new key pair.
-            /// If seed is null, a random seed will be generated.
-            /// If a seed is provided, the key pair will be determinsitic.
-            pub fn create(seed_: ?[seed_length]u8) !KeyPair {
-                const seed = seed_ orelse sk: {
-                    var random_seed: [seed_length]u8 = undefined;
-                    crypto.random.bytes(&random_seed);
-                    break :sk random_seed;
-                };
+            /// Deterministically derive a key pair from a cryptograpically secure secret seed.
+            ///
+            /// Except in tests, applications should generally call `generate()` instead of this function.
+            pub fn generateDeterministic(seed: [seed_length]u8) !KeyPair {
                 var ret: KeyPair = undefined;
-                ret.secret_key.z = seed[inner_seed_length..seed_length].*;
 
                 // Generate inner key
                 innerKeyFromSeed(
@@ -406,6 +394,18 @@ fn Kyber(comptime p: Params) type {
 
                 return ret;
             }
+
+            /// Generate a new, random key pair.
+            pub fn generate() KeyPair {
+                var random_seed: [seed_length]u8 = undefined;
+                while (true) {
+                    crypto.random.bytes(&random_seed);
+                    return generateDeterministic(random_seed) catch {
+                        @branchHint(.unlikely);
+                        continue;
+                    };
+                }
+            }
         };
 
         // Size of plaintexts of the in
@@ -418,7 +418,7 @@ fn Kyber(comptime p: Params) type {
             // Cached values
             aT: M,
 
-            const bytes_length = V.bytes_length + 32;
+            const encoded_length = V.encoded_length + 32;
 
             fn encrypt(
                 pk: InnerPk,
@@ -436,7 +436,7 @@ fn Kyber(comptime p: Params) type {
                     // Note that coefficients of r are bounded by q and those of Aᵀ
                     // are bounded by 4.5q and so their product is bounded by 2¹⁵q
                     // as required for multiplication.
-                    u.ps[i] = pk.aT.vs[i].dotHat(rh);
+                    u.ps[i] = pk.aT.rows[i].dotHat(rh);
                 }
 
                 // Aᵀ and r were not in Montgomery form, so the Montgomery
@@ -451,14 +451,14 @@ fn Kyber(comptime p: Params) type {
                 return u.compress(p.du) ++ v.compress(p.dv);
             }
 
-            fn toBytes(pk: InnerPk) [bytes_length]u8 {
+            fn toBytes(pk: InnerPk) [encoded_length]u8 {
                 return pk.th.toBytes() ++ pk.rho;
             }
 
-            fn fromBytes(buf: *const [bytes_length]u8) errors.NonCanonicalError!InnerPk {
+            fn fromBytes(buf: *const [encoded_length]u8) errors.NonCanonicalError!InnerPk {
                 var ret: InnerPk = undefined;
 
-                const th_bytes = buf[0..V.bytes_length];
+                const th_bytes = buf[0..V.encoded_length];
                 ret.th = V.fromBytes(th_bytes).normalize();
 
                 if (p.ml_kem) {
@@ -468,7 +468,7 @@ fn Kyber(comptime p: Params) type {
                     }
                 }
 
-                ret.rho = buf[V.bytes_length..bytes_length].*;
+                ret.rho = buf[V.encoded_length..encoded_length].*;
                 ret.aT = M.uniform(ret.rho, true);
                 return ret;
             }
@@ -477,7 +477,7 @@ fn Kyber(comptime p: Params) type {
         // Private key of the inner PKE
         const InnerSk = struct {
             sh: V, // NTT(s), normalized
-            const bytes_length = V.bytes_length;
+            const encoded_length = V.encoded_length;
 
             fn decrypt(sk: InnerSk, ct: *const [ciphertext_length]u8) [inner_plaintext_length]u8 {
                 const u = V.decompress(p.du, ct[0..comptime V.compressedSize(p.du)]);
@@ -491,11 +491,11 @@ fn Kyber(comptime p: Params) type {
                     .normalize().compress(1);
             }
 
-            fn toBytes(sk: InnerSk) [bytes_length]u8 {
+            fn toBytes(sk: InnerSk) [encoded_length]u8 {
                 return sk.sh.toBytes();
             }
 
-            fn fromBytes(buf: *const [bytes_length]u8) InnerSk {
+            fn fromBytes(buf: *const [encoded_length]u8) InnerSk {
                 var ret: InnerSk = undefined;
                 ret.sh = V.fromBytes(buf).normalize();
                 return ret;
@@ -505,7 +505,10 @@ fn Kyber(comptime p: Params) type {
         // Derives inner PKE keypair from given seed.
         fn innerKeyFromSeed(seed: [inner_seed_length]u8, pk: *InnerPk, sk: *InnerSk) void {
             var expanded_seed: [64]u8 = undefined;
-            sha3.Sha3_512.hash(&seed, &expanded_seed, .{});
+            var h = sha3.Sha3_512.init(.{});
+            h.update(&seed);
+            if (p.ml_kem) h.update(&[1]u8{p.k});
+            h.final(&expanded_seed);
             pk.rho = expanded_seed[0..32].*;
             const sigma = expanded_seed[32..64];
             pk.aT = M.uniform(pk.rho, false); // Expand ρ to A; we'll transpose later on
@@ -513,7 +516,7 @@ fn Kyber(comptime p: Params) type {
             // Sample secret vector s.
             sk.sh = V.noise(p.eta1, 0, sigma).ntt().normalize();
 
-            const eh = Vec(p.k).noise(p.eta1, p.k, sigma).ntt(); // sample blind e.
+            const eh = PolyVec(p.k).noise(p.eta1, p.k, sigma).ntt(); // sample blind e.
             var th: V = undefined;
 
             // Next, we compute t = A s + e.
@@ -525,7 +528,7 @@ fn Kyber(comptime p: Params) type {
                 // multiplications in the inner product added a factor R⁻¹ which
                 // we'll cancel out with toMont().  This will also ensure the
                 // coefficients of th are bounded in absolute value by q.
-                th.ps[i] = pk.aT.vs[i].dotHat(sk.sh).toMont();
+                th.ps[i] = pk.aT.rows[i].dotHat(sk.sh).toMont();
             }
 
             pk.th = th.add(eh).normalize(); // bounded by 8q
@@ -562,7 +565,6 @@ const zetas = computeZetas();
 // not enough, the other coefficient is reduced as well.
 //
 // This is actually optimal, as proven in https://eprint.iacr.org/2020/1377.pdf
-// TODO generate comptime?
 const inv_ntt_reductions = [_]i16{
     -1, // after layer 1
     -1, // after layer 2
@@ -631,31 +633,8 @@ test "invNTTReductions bounds" {
     }
 }
 
-// Extended euclidean algorithm.
-//
-// For a, b finds x, y such that  x a + y b = gcd(a, b). Used to compute
-// modular inverse.
-fn eea(a: anytype, b: @TypeOf(a)) EeaResult(@TypeOf(a)) {
-    if (a == 0) {
-        return .{ .gcd = b, .x = 0, .y = 1 };
-    }
-    const r = eea(@rem(b, a), a);
-    return .{ .gcd = r.gcd, .x = r.y - @divTrunc(b, a) * r.x, .y = r.x };
-}
-
-fn EeaResult(comptime T: type) type {
-    return struct { gcd: T, x: T, y: T };
-}
-
-// Returns least common multiple of a and b.
-fn lcm(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-    const r = eea(a, b);
-    return a * b / r.gcd;
-}
-
-// Invert modulo p.
 fn invertMod(a: anytype, p: @TypeOf(a)) @TypeOf(a) {
-    const r = eea(a, p);
+    const r = extendedEuclidean(@TypeOf(a), a, p);
     assert(r.gcd == 1);
     return r.x;
 }
@@ -677,10 +656,10 @@ fn montReduce(x: i32) i16 {
     // Note gcd(2¹⁶, q) = 1 as q is prime.  Write q' := 62209 = q⁻¹ mod R.
     // First we compute
     //
-    //	m := ((x mod R) q') mod R
+    // m := ((x mod R) q') mod R
     //         = x q' mod R
-    //	   = int16(x q')
-    //	   = int16(int32(x) * int32(q'))
+    //    = int16(x q')
+    //    = int16(int32(x) * int32(q'))
     //
     // Note that x q' might be as big as 2³² and could overflow the int32
     // multiplication in the last line.  However for any int32s a and b,
@@ -785,31 +764,12 @@ test "Test csubq" {
     }
 }
 
-// Compute a^s mod p.
-fn mpow(a: anytype, s: @TypeOf(a), p: @TypeOf(a)) @TypeOf(a) {
-    var ret: @TypeOf(a) = 1;
-    var s2 = s;
-    var a2 = a;
-
-    while (true) {
-        if (s2 & 1 == 1) {
-            ret = @mod(ret * a2, p);
-        }
-        s2 >>= 1;
-        if (s2 == 0) {
-            break;
-        }
-        a2 = @mod(a2 * a2, p);
-    }
-    return ret;
-}
-
 // Computes zetas table used by ntt and invNTT.
 fn computeZetas() [128]i16 {
     @setEvalBranchQuota(10000);
     var ret: [128]i16 = undefined;
     for (&ret, 0..) |*r, i| {
-        const t = @as(i16, @intCast(mpow(@as(i32, zeta), @bitReverse(@as(u7, @intCast(i))), Q)));
+        const t = @as(i16, @intCast(modularPow(i32, zeta, @bitReverse(@as(u7, @intCast(i))), Q)));
         r.* = csubq(feBarrettReduce(feToMont(t)));
     }
     return ret;
@@ -825,9 +785,10 @@ fn computeZetas() [128]i16 {
 const Poly = struct {
     cs: [N]i16,
 
-    const bytes_length = N / 2 * 3;
+    const encoded_length = N / 2 * 3;
     const zero: Poly = .{ .cs = .{0} ** N };
 
+    // Add two polynomials (coefficients not normalized)
     fn add(a: Poly, b: Poly) Poly {
         var ret: Poly = undefined;
         for (0..N) |i| {
@@ -836,29 +797,11 @@ const Poly = struct {
         return ret;
     }
 
+    // Subtract two polynomials (coefficients not normalized)
     fn sub(a: Poly, b: Poly) Poly {
         var ret: Poly = undefined;
         for (0..N) |i| {
             ret.cs[i] = a.cs[i] - b.cs[i];
-        }
-        return ret;
-    }
-
-    // For testing, generates a random polynomial with for each
-    // coefficient |x| ≤ q.
-    fn randAbsLeqQ(rnd: anytype) Poly {
-        var ret: Poly = undefined;
-        for (0..N) |i| {
-            ret.cs[i] = rnd.random().intRangeAtMost(i16, -Q, Q);
-        }
-        return ret;
-    }
-
-    // For testing, generates a random normalized polynomial.
-    fn randNormalized(rnd: anytype) Poly {
-        var ret: Poly = undefined;
-        for (0..N) |i| {
-            ret.cs[i] = rnd.random().intRangeLessThan(i16, 0, Q);
         }
         return ret;
     }
@@ -1051,7 +994,7 @@ const Poly = struct {
         var in_off: usize = 0;
         var out_off: usize = 0;
 
-        const batch_size: usize = comptime lcm(@as(i16, d), 8);
+        const batch_size: usize = comptime math.lcm(d, 8);
         const in_batch_size: usize = comptime batch_size / d;
         const out_batch_size: usize = comptime batch_size / 8;
 
@@ -1115,7 +1058,7 @@ const Poly = struct {
         var in_off: usize = 0;
         var out_off: usize = 0;
 
-        const batch_size: usize = comptime lcm(@as(i16, d), 8);
+        const batch_size: usize = comptime math.lcm(d, 8);
         const in_batch_size: usize = comptime batch_size / 8;
         const out_batch_size: usize = comptime batch_size / d;
 
@@ -1253,7 +1196,7 @@ const Poly = struct {
                 t |= @as(T, buf[batch_bytes * i + j]) << (8 * j);
             }
 
-            // Accumelate `a's and `b's together by masking them out, shifting
+            // Accumulate `a's and `b's together by masking them out, shifting
             // and adding. For η=3, we have  d = a₁ + a₂ + a₃ + 8(b₁ + b₂ + b₃) + …
             var d: T = 0;
             inline for (0..eta) |j| {
@@ -1272,53 +1215,23 @@ const Poly = struct {
         return ret;
     }
 
-    // Sample p uniformly from the given seed and x and y coordinates.
     fn uniform(seed: [32]u8, x: u8, y: u8) Poly {
-        var h = sha3.Shake128.init(.{});
-        const suffix: [2]u8 = .{ x, y };
-        h.update(&seed);
-        h.update(&suffix);
-
-        const buf_len = sha3.Shake128.block_length; // rate SHAKE-128
-        var buf: [buf_len]u8 = undefined;
-
-        var ret: Poly = undefined;
-        var i: usize = 0; // index into ret.cs
-        outer: while (true) {
-            h.squeeze(&buf);
-
-            var j: usize = 0; // index into buf
-            while (j < buf_len) : (j += 3) {
-                const b0 = @as(u16, buf[j]);
-                const b1 = @as(u16, buf[j + 1]);
-                const b2 = @as(u16, buf[j + 2]);
-
-                const ts: [2]u16 = .{
-                    b0 | ((b1 & 0xf) << 8),
-                    (b1 >> 4) | (b2 << 4),
-                };
-
-                inline for (ts) |t| {
-                    if (t < Q) {
-                        ret.cs[i] = @as(i16, @intCast(t));
-                        i += 1;
-
-                        if (i == N) {
-                            break :outer;
-                        }
-                    }
-                }
-            }
-        }
-
-        return ret;
+        const domain_sep: [2]u8 = .{ x, y };
+        return sampleUniformRejection(
+            Poly,
+            Q,
+            12,
+            N,
+            &seed,
+            &domain_sep,
+        );
     }
 
     // Packs p.
     //
     // Assumes p is normalized (and not just Barrett reduced).
-    fn toBytes(p: Poly) [bytes_length]u8 {
-        var ret: [bytes_length]u8 = undefined;
+    fn toBytes(p: Poly) [encoded_length]u8 {
+        var ret: [encoded_length]u8 = undefined;
         for (0..comptime N / 2) |i| {
             const t0 = @as(u16, @intCast(p.cs[2 * i]));
             const t1 = @as(u16, @intCast(p.cs[2 * i + 1]));
@@ -1332,7 +1245,7 @@ const Poly = struct {
     // Unpacks a Poly from buf.
     //
     // p will not be normalized; instead 0 ≤ p[i] < 4096.
-    fn fromBytes(buf: *const [bytes_length]u8) Poly {
+    fn fromBytes(buf: *const [encoded_length]u8) Poly {
         var ret: Poly = undefined;
         for (0..comptime N / 2) |i| {
             const b0 = @as(i16, buf[3 * i]);
@@ -1345,71 +1258,65 @@ const Poly = struct {
     }
 };
 
-// A vector of K polynomials.
-fn Vec(comptime K: u8) type {
+// A vector of k polynomials.
+fn PolyVec(comptime k: u8) type {
     return struct {
-        ps: [K]Poly,
+        ps: [k]Poly,
 
         const Self = @This();
-        const bytes_length = K * Poly.bytes_length;
+        const encoded_length = k * Poly.encoded_length;
 
         fn compressedSize(comptime d: u8) usize {
-            return Poly.compressedSize(d) * K;
+            return Poly.compressedSize(d) * k;
         }
 
-        fn ntt(a: Self) Self {
+        /// Apply unary operation to each polynomial
+        fn map(v: Self, comptime op: fn (Poly) Poly) Self {
             var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].ntt();
+            inline for (0..k) |i| {
+                ret.ps[i] = op(v.ps[i]);
             }
             return ret;
         }
 
-        fn invNTT(a: Self) Self {
+        /// Apply binary operation pairwise
+        fn mapBinary(a: Self, b: Self, comptime op: fn (Poly, Poly) Poly) Self {
             var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].invNTT();
+            inline for (0..k) |i| {
+                ret.ps[i] = op(a.ps[i], b.ps[i]);
             }
             return ret;
         }
 
-        fn normalize(a: Self) Self {
-            var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].normalize();
-            }
-            return ret;
+        fn ntt(v: Self) Self {
+            return map(v, Poly.ntt);
         }
 
-        fn barrettReduce(a: Self) Self {
-            var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].barrettReduce();
-            }
-            return ret;
+        fn invNTT(v: Self) Self {
+            return map(v, Poly.invNTT);
+        }
+
+        fn normalize(v: Self) Self {
+            return map(v, Poly.normalize);
+        }
+
+        fn barrettReduce(v: Self) Self {
+            return map(v, Poly.barrettReduce);
         }
 
         fn add(a: Self, b: Self) Self {
-            var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].add(b.ps[i]);
-            }
-            return ret;
+            return mapBinary(a, b, Poly.add);
         }
 
         fn sub(a: Self, b: Self) Self {
-            var ret: Self = undefined;
-            for (0..K) |i| {
-                ret.ps[i] = a.ps[i].sub(b.ps[i]);
-            }
-            return ret;
+            return mapBinary(a, b, Poly.sub);
         }
 
         // Samples v[i] from centered binomial distribution with the given η,
         // seed and nonce+i.
         fn noise(comptime eta: u8, nonce: u8, seed: *const [32]u8) Self {
             var ret: Self = undefined;
-            for (0..K) |i| {
+            for (0..k) |i| {
                 ret.ps[i] = Poly.noise(eta, nonce + @as(u8, @intCast(i)), seed);
             }
             return ret;
@@ -1425,7 +1332,7 @@ fn Vec(comptime K: u8) type {
         // of the Montgomery factor.
         fn dotHat(a: Self, b: Self) Poly {
             var ret: Poly = Poly.zero;
-            for (0..K) |i| {
+            for (0..k) |i| {
                 ret = ret.add(a.ps[i].mulHat(b.ps[i]));
             }
             return ret;
@@ -1434,7 +1341,7 @@ fn Vec(comptime K: u8) type {
         fn compress(v: Self, comptime d: u8) [compressedSize(d)]u8 {
             const cs = comptime Poly.compressedSize(d);
             var ret: [compressedSize(d)]u8 = undefined;
-            inline for (0..K) |i| {
+            inline for (0..k) |i| {
                 ret[i * cs .. (i + 1) * cs].* = v.ps[i].compress(d);
             }
             return ret;
@@ -1443,27 +1350,27 @@ fn Vec(comptime K: u8) type {
         fn decompress(comptime d: u8, buf: *const [compressedSize(d)]u8) Self {
             const cs = comptime Poly.compressedSize(d);
             var ret: Self = undefined;
-            inline for (0..K) |i| {
+            inline for (0..k) |i| {
                 ret.ps[i] = Poly.decompress(d, buf[i * cs .. (i + 1) * cs]);
             }
             return ret;
         }
 
         /// Serializes the key into a byte array.
-        fn toBytes(v: Self) [bytes_length]u8 {
-            var ret: [bytes_length]u8 = undefined;
-            inline for (0..K) |i| {
-                ret[i * Poly.bytes_length .. (i + 1) * Poly.bytes_length].* = v.ps[i].toBytes();
+        fn toBytes(v: Self) [encoded_length]u8 {
+            var ret: [encoded_length]u8 = undefined;
+            inline for (0..k) |i| {
+                ret[i * Poly.encoded_length .. (i + 1) * Poly.encoded_length].* = v.ps[i].toBytes();
             }
             return ret;
         }
 
         /// Deserializes the key from a byte array.
-        fn fromBytes(buf: *const [bytes_length]u8) Self {
+        fn fromBytes(buf: *const [encoded_length]u8) Self {
             var ret: Self = undefined;
-            inline for (0..K) |i| {
+            inline for (0..k) |i| {
                 ret.ps[i] = Poly.fromBytes(
-                    buf[i * Poly.bytes_length .. (i + 1) * Poly.bytes_length],
+                    buf[i * Poly.encoded_length .. (i + 1) * Poly.encoded_length],
                 );
             }
             return ret;
@@ -1471,19 +1378,19 @@ fn Vec(comptime K: u8) type {
     };
 }
 
-// A matrix of K vectors
-fn Mat(comptime K: u8) type {
+// A matrix of k vectors
+fn Mat(comptime k: u8) type {
     return struct {
         const Self = @This();
-        vs: [K]Vec(K),
+        rows: [k]PolyVec(k),
 
         fn uniform(seed: [32]u8, comptime transposed: bool) Self {
             var ret: Self = undefined;
             var i: u8 = 0;
-            while (i < K) : (i += 1) {
+            while (i < k) : (i += 1) {
                 var j: u8 = 0;
-                while (j < K) : (j += 1) {
-                    ret.vs[i].ps[j] = Poly.uniform(
+                while (j < k) : (j += 1) {
+                    ret.rows[i].ps[j] = Poly.uniform(
                         seed,
                         if (transposed) i else j,
                         if (transposed) j else i,
@@ -1496,9 +1403,9 @@ fn Mat(comptime K: u8) type {
         // Returns transpose of A
         fn transpose(m: Self) Self {
             var ret: Self = undefined;
-            for (0..K) |i| {
-                for (0..K) |j| {
-                    ret.vs[i].ps[j] = m.vs[j].ps[i];
+            for (0..k) |i| {
+                for (0..k) |j| {
+                    ret.rows[i].ps[j] = m.rows[j].ps[i];
                 }
             }
             return ret;
@@ -1508,7 +1415,7 @@ fn Mat(comptime K: u8) type {
 
 // Returns `true` if a ≠ b.
 fn ctneq(comptime len: usize, a: [len]u8, b: [len]u8) u1 {
-    return 1 - @intFromBool(crypto.utils.timingSafeEql([len]u8, a, b));
+    return 1 - @intFromBool(crypto.timing_safe.eql([len]u8, a, b));
 }
 
 // Copy src into dst given b = 1.
@@ -1519,12 +1426,32 @@ fn cmov(comptime len: usize, dst: *[len]u8, src: [len]u8, b: u1) void {
     }
 }
 
+// Test helper: generates a random polynomial with each coefficient |x| ≤ q
+fn randPolyAbsLeqQ(rnd: anytype) Poly {
+    var ret: Poly = undefined;
+    for (0..N) |i| {
+        ret.cs[i] = rnd.random().intRangeAtMost(i16, -Q, Q);
+    }
+    return ret;
+}
+
+// Test helper: generates a random normalized polynomial
+fn randPolyNormalized(rnd: anytype) Poly {
+    var ret: Poly = undefined;
+    for (0..N) |i| {
+        ret.cs[i] = rnd.random().intRangeLessThan(i16, 0, Q);
+    }
+    return ret;
+}
+
 test "MulHat" {
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
+
     var rnd = RndGen.init(0);
 
     for (0..100) |_| {
-        const a = Poly.randAbsLeqQ(&rnd);
-        const b = Poly.randAbsLeqQ(&rnd);
+        const a = randPolyAbsLeqQ(&rnd);
+        const b = randPolyAbsLeqQ(&rnd);
 
         const p2 = a.ntt().mulHat(b.ntt()).barrettReduce().invNTT().normalize();
         var p: Poly = undefined;
@@ -1554,7 +1481,7 @@ test "NTT" {
     var rnd = RndGen.init(0);
 
     for (0..1000) |_| {
-        var p = Poly.randAbsLeqQ(&rnd);
+        var p = randPolyAbsLeqQ(&rnd);
         const q = p.toMont().normalize();
         p = p.ntt();
 
@@ -1577,7 +1504,7 @@ test "Compression" {
     var rnd = RndGen.init(0);
     inline for (.{ 1, 4, 5, 10, 11 }) |d| {
         for (0..1000) |_| {
-            const p = Poly.randNormalized(&rnd);
+            const p = randPolyNormalized(&rnd);
             const pp = p.compress(d);
             const pq = Poly.decompress(d, &pp).compress(d);
             try testing.expectEqual(pp, pq);
@@ -1668,12 +1595,14 @@ test "Polynomial packing" {
     var rnd = RndGen.init(0);
 
     for (0..1000) |_| {
-        const p = Poly.randNormalized(&rnd);
+        const p = randPolyNormalized(&rnd);
         try testing.expectEqual(Poly.fromBytes(&p.toBytes()), p);
     }
 }
 
 test "Test inner PKE" {
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
+
     var seed: [32]u8 = undefined;
     var pt: [32]u8 = undefined;
     for (&seed, &pt, 0..) |*s, *p, i| {
@@ -1681,7 +1610,7 @@ test "Test inner PKE" {
         p.* = @as(u8, @intCast(i + 32));
     }
     inline for (modes) |mode| {
-        for (0..100) |i| {
+        for (0..10) |i| {
             var pk: mode.InnerPk = undefined;
             var sk: mode.InnerSk = undefined;
             seed[0] = @as(u8, @intCast(i));
@@ -1695,14 +1624,16 @@ test "Test inner PKE" {
 }
 
 test "Test happy flow" {
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
+
     var seed: [64]u8 = undefined;
     for (&seed, 0..) |*s, i| {
         s.* = @as(u8, @intCast(i));
     }
     inline for (modes) |mode| {
-        for (0..100) |i| {
+        for (0..10) |i| {
             seed[0] = @as(u8, @intCast(i));
-            const kp = try mode.KeyPair.create(seed);
+            const kp = try mode.KeyPair.generateDeterministic(seed);
             const sk = try mode.SecretKey.fromBytes(&kp.secret_key.toBytes());
             try testing.expectEqual(sk, kp.secret_key);
             const pk = try mode.PublicKey.fromBytes(&kp.public_key.toBytes());
@@ -1718,53 +1649,64 @@ test "Test happy flow" {
 
 // Code to test NIST Known Answer Tests (KAT), see PQCgenKAT.c.
 
-const sha2 = crypto.hash.sha2;
+test "NIST KAT test d00.Kyber512" {
+    if (comptime builtin.cpu.has(.loongarch, .lsx)) return error.SkipZigTest;
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
 
-test "NIST KAT test" {
-    inline for (.{
-        .{ kyber_d00.Kyber512, "e9c2bd37133fcb40772f81559f14b1f58dccd1c816701be9ba6214d43baf4547" },
-        .{ kyber_d00.Kyber1024, "89248f2f33f7f4f7051729111f3049c409a933ec904aedadf035f30fa5646cd5" },
-        .{ kyber_d00.Kyber768, "a1e122cad3c24bc51622e4c242d8b8acbcd3f618fee4220400605ca8f9ea02c2" },
-    }) |modeHash| {
-        const mode = modeHash[0];
-        var seed: [48]u8 = undefined;
-        for (&seed, 0..) |*s, i| {
-            s.* = @as(u8, @intCast(i));
-        }
-        var f = sha2.Sha256.init(.{});
-        const fw = f.writer();
-        var g = NistDRBG.init(seed);
-        try std.fmt.format(fw, "# {s}\n\n", .{mode.name});
-        for (0..100) |i| {
-            g.fill(&seed);
-            try std.fmt.format(fw, "count = {}\n", .{i});
-            try std.fmt.format(fw, "seed = {s}\n", .{std.fmt.fmtSliceHexUpper(&seed)});
-            var g2 = NistDRBG.init(seed);
+    try testNistKat(d00.Kyber512, "e9c2bd37133fcb40772f81559f14b1f58dccd1c816701be9ba6214d43baf4547");
+}
 
-            // This is not equivalent to g2.fill(kseed[:]). As the reference
-            // implementation calls randombytes twice generating the keypair,
-            // we have to do that as well.
-            var kseed: [64]u8 = undefined;
-            var eseed: [32]u8 = undefined;
-            g2.fill(kseed[0..32]);
-            g2.fill(kseed[32..64]);
-            g2.fill(&eseed);
-            const kp = try mode.KeyPair.create(kseed);
-            const e = kp.public_key.encaps(eseed);
-            const ss2 = try kp.secret_key.decaps(&e.ciphertext);
-            try testing.expectEqual(ss2, e.shared_secret);
-            try std.fmt.format(fw, "pk = {s}\n", .{std.fmt.fmtSliceHexUpper(&kp.public_key.toBytes())});
-            try std.fmt.format(fw, "sk = {s}\n", .{std.fmt.fmtSliceHexUpper(&kp.secret_key.toBytes())});
-            try std.fmt.format(fw, "ct = {s}\n", .{std.fmt.fmtSliceHexUpper(&e.ciphertext)});
-            try std.fmt.format(fw, "ss = {s}\n\n", .{std.fmt.fmtSliceHexUpper(&e.shared_secret)});
-        }
+test "NIST KAT test d00.Kyber1024" {
+    if (comptime builtin.cpu.has(.loongarch, .lsx)) return error.SkipZigTest;
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
 
-        var out: [32]u8 = undefined;
-        f.final(&out);
-        var outHex: [64]u8 = undefined;
-        _ = try std.fmt.bufPrint(&outHex, "{s}", .{std.fmt.fmtSliceHexLower(&out)});
-        try testing.expectEqual(outHex, modeHash[1].*);
+    try testNistKat(d00.Kyber1024, "89248f2f33f7f4f7051729111f3049c409a933ec904aedadf035f30fa5646cd5");
+}
+
+test "NIST KAT test d00.Kyber768" {
+    if (comptime builtin.cpu.has(.loongarch, .lsx)) return error.SkipZigTest;
+    if (comptime builtin.cpu.has(.s390x, .vector)) return error.SkipZigTest;
+
+    try testNistKat(d00.Kyber768, "a1e122cad3c24bc51622e4c242d8b8acbcd3f618fee4220400605ca8f9ea02c2");
+}
+
+fn testNistKat(mode: type, hash: []const u8) !void {
+    var seed: [48]u8 = undefined;
+    for (&seed, 0..) |*s, i| {
+        s.* = @as(u8, @intCast(i));
     }
+    var fw: std.Io.Writer.Hashing(crypto.hash.sha2.Sha256) = .init(&.{});
+    var g = NistDRBG.init(seed);
+    try fw.writer.print("# {s}\n\n", .{mode.name});
+    for (0..100) |i| {
+        g.fill(&seed);
+        try fw.writer.print("count = {}\n", .{i});
+        try fw.writer.print("seed = {X}\n", .{&seed});
+        var g2 = NistDRBG.init(seed);
+
+        // This is not equivalent to g2.fill(kseed[:]). As the reference
+        // implementation calls randombytes twice generating the keypair,
+        // we have to do that as well.
+        var kseed: [64]u8 = undefined;
+        var eseed: [32]u8 = undefined;
+        g2.fill(kseed[0..32]);
+        g2.fill(kseed[32..64]);
+        g2.fill(&eseed);
+        const kp = try mode.KeyPair.generateDeterministic(kseed);
+        const e = kp.public_key.encaps(eseed);
+        const ss2 = try kp.secret_key.decaps(&e.ciphertext);
+        try testing.expectEqual(ss2, e.shared_secret);
+        try fw.writer.print("pk = {X}\n", .{&kp.public_key.toBytes()});
+        try fw.writer.print("sk = {X}\n", .{&kp.secret_key.toBytes()});
+        try fw.writer.print("ct = {X}\n", .{&e.ciphertext});
+        try fw.writer.print("ss = {X}\n\n", .{&e.shared_secret});
+    }
+
+    var out: [32]u8 = undefined;
+    fw.hasher.final(&out);
+    var outHex: [64]u8 = undefined;
+    _ = try std.fmt.bufPrint(&outHex, "{x}", .{&out});
+    try testing.expectEqualStrings(&outHex, hash);
 }
 
 const NistDRBG = struct {
@@ -1828,3 +1770,222 @@ const NistDRBG = struct {
         return ret;
     }
 };
+
+/// Extended Euclidian Algorithm
+/// Only meant to be used on comptime values; correctness matters, performance doesn't.
+fn extendedEuclidean(comptime T: type, comptime a_: T, comptime b_: T) struct { gcd: T, x: T, y: T } {
+    var a = a_;
+    var b = b_;
+    var x0: T = 1;
+    var x1: T = 0;
+    var y0: T = 0;
+    var y1: T = 1;
+
+    while (b != 0) {
+        const q = @divTrunc(a, b);
+        const temp_a = a;
+        a = b;
+        b = temp_a - q * b;
+
+        const temp_x = x0;
+        x0 = x1;
+        x1 = temp_x - q * x1;
+
+        const temp_y = y0;
+        y0 = y1;
+        y1 = temp_y - q * y1;
+    }
+
+    return .{ .gcd = a, .x = x0, .y = y0 };
+}
+
+/// Modular inversion: computes a^(-1) mod p
+/// Requires gcd(a,p) = 1. The result is normalized to the range [0, p).
+fn modularInverse(comptime T: type, comptime a: T, comptime p: T) T {
+    // Use a signed type for EEA computation
+    const type_info = @typeInfo(T);
+    const SignedT = if (type_info == .int and type_info.int.signedness == .unsigned)
+        std.meta.Int(.signed, type_info.int.bits)
+    else
+        T;
+
+    const a_signed = @as(SignedT, @intCast(a));
+    const p_signed = @as(SignedT, @intCast(p));
+
+    const r = extendedEuclidean(SignedT, a_signed, p_signed);
+    assert(r.gcd == 1);
+
+    // Normalize result to [0, p)
+    var result = r.x;
+    while (result < 0) {
+        result += p_signed;
+    }
+
+    return @intCast(result);
+}
+
+/// Modular exponentiation: computes a^s mod p using square-and-multiply algorithm.
+fn modularPow(comptime T: type, comptime a: T, s: T, comptime p: T) T {
+    const type_info = @typeInfo(T);
+    const bits = type_info.int.bits;
+    const WideT = std.meta.Int(.unsigned, bits * 2);
+
+    var ret: T = 1;
+    var base: T = a;
+    var exp = s;
+
+    while (exp > 0) {
+        if (exp & 1 == 1) {
+            ret = @intCast((@as(WideT, ret) * @as(WideT, base)) % p);
+        }
+        base = @intCast((@as(WideT, base) * @as(WideT, base)) % p);
+        exp >>= 1;
+    }
+
+    return ret;
+}
+
+/// Creates an all-ones or all-zeros mask from a single bit value.
+/// Returns all 1s (0xFF...FF) if bit == 1, all 0s if bit == 0.
+fn bitMask(comptime T: type, bit: T) T {
+    const type_info = @typeInfo(T);
+    if (type_info != .int or type_info.int.signedness != .unsigned) {
+        @compileError("bitMask requires an unsigned integer type");
+    }
+    return -%bit;
+}
+
+/// Creates a mask from the sign bit of a signed integer.
+/// Returns all 1s (0xFF...FF) if x < 0, all 0s if x >= 0.
+fn signMask(comptime T: type, x: T) std.meta.Int(.unsigned, @typeInfo(T).int.bits) {
+    const type_info = @typeInfo(T);
+    if (type_info != .int) {
+        @compileError("signMask requires an integer type");
+    }
+
+    const bits = type_info.int.bits;
+    const SignedT = std.meta.Int(.signed, bits);
+
+    // Convert to signed if needed, arithmetic right shift to propagate sign bit
+    const x_signed: SignedT = if (type_info.int.signedness == .signed) x else @bitCast(x);
+    const shifted = x_signed >> (bits - 1);
+    return @bitCast(shifted);
+}
+
+test "bitMask and signMask helpers" {
+    try testing.expectEqual(@as(u32, 0x00000000), bitMask(u32, 0));
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), bitMask(u32, 1));
+    try testing.expectEqual(@as(u8, 0x00), bitMask(u8, 0));
+    try testing.expectEqual(@as(u8, 0xFF), bitMask(u8, 1));
+    try testing.expectEqual(@as(u64, 0x0000000000000000), bitMask(u64, 0));
+    try testing.expectEqual(@as(u64, 0xFFFFFFFFFFFFFFFF), bitMask(u64, 1));
+
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), signMask(i32, -1));
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), signMask(i32, -100));
+    try testing.expectEqual(@as(u32, 0x00000000), signMask(i32, 0));
+    try testing.expectEqual(@as(u32, 0x00000000), signMask(i32, 1));
+    try testing.expectEqual(@as(u32, 0x00000000), signMask(i32, 100));
+
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), signMask(u32, 0x80000000)); // MSB set
+    try testing.expectEqual(@as(u32, 0x00000000), signMask(u32, 0x7FFFFFFF)); // MSB clear
+}
+
+/// Montgomery reduction: for input x, returns y where y ≡ x*R^(-1) (mod q).
+/// This is a generic implementation parameterized by the modulus q, its inverse qInv,
+/// the Montgomery constant R, and the result bound.
+///
+/// For ML-DSA: R = 2^32, returns y < 2q
+/// For ML-KEM: R = 2^16, returns y in range (-q, q)
+fn montgomeryReduce(
+    comptime InT: type,
+    comptime OutT: type,
+    comptime q: comptime_int,
+    comptime qInv: comptime_int,
+    comptime r_bits: comptime_int,
+    x: InT,
+) OutT {
+    const mask = (@as(InT, 1) << r_bits) - 1;
+    const m_full = (x *% qInv) & mask;
+    const m: OutT = @truncate(m_full);
+
+    const yR = x -% @as(InT, m) * @as(InT, q);
+    const y_shifted = @as(std.meta.Int(.unsigned, @typeInfo(InT).Int.bits), @bitCast(yR)) >> r_bits;
+    return @bitCast(@as(std.meta.Int(.unsigned, @typeInfo(OutT).Int.bits), @truncate(y_shifted)));
+}
+
+/// Uniform sampling using SHAKE-128 with rejection sampling.
+/// Samples polynomial coefficients uniformly from [0, q) using rejection sampling.
+///
+/// Parameters:
+/// - PolyType: The polynomial type to return
+/// - q: Modulus
+/// - bits_per_coef: Number of bits per coefficient (12 or 23)
+/// - n: Number of coefficients
+/// - seed: Random seed
+/// - domain_sep: Domain separation bytes (appended to seed)
+fn sampleUniformRejection(
+    comptime PolyType: type,
+    comptime q: comptime_int,
+    comptime bits_per_coef: comptime_int,
+    comptime n: comptime_int,
+    seed: []const u8,
+    domain_sep: []const u8,
+) PolyType {
+    var h = sha3.Shake128.init(.{});
+    h.update(seed);
+    h.update(domain_sep);
+
+    const buf_len = sha3.Shake128.block_length; // 168 bytes
+    var buf: [buf_len]u8 = undefined;
+
+    var ret: PolyType = undefined;
+    var coef_idx: usize = 0;
+
+    if (bits_per_coef == 12) {
+        // ML-KEM path: pack 2 coefficients per 3 bytes (12 bits each)
+        outer: while (true) {
+            h.squeeze(&buf);
+
+            var j: usize = 0;
+            while (j < buf_len) : (j += 3) {
+                const b0 = @as(u16, buf[j]);
+                const b1 = @as(u16, buf[j + 1]);
+                const b2 = @as(u16, buf[j + 2]);
+
+                const ts: [2]u16 = .{
+                    b0 | ((b1 & 0xf) << 8),
+                    (b1 >> 4) | (b2 << 4),
+                };
+
+                inline for (ts) |t| {
+                    if (t < q) {
+                        ret.cs[coef_idx] = @intCast(t);
+                        coef_idx += 1;
+                        if (coef_idx == n) break :outer;
+                    }
+                }
+            }
+        }
+    } else if (bits_per_coef == 23) {
+        // ML-DSA path: 1 coefficient per 3 bytes (23 bits)
+        while (coef_idx < n) {
+            h.squeeze(&buf);
+
+            var j: usize = 0;
+            while (j < buf_len and coef_idx < n) : (j += 3) {
+                const t = (@as(u32, buf[j]) |
+                    (@as(u32, buf[j + 1]) << 8) |
+                    (@as(u32, buf[j + 2]) << 16)) & 0x7fffff;
+
+                if (t < q) {
+                    ret.cs[coef_idx] = @intCast(t);
+                    coef_idx += 1;
+                }
+            }
+        }
+    } else {
+        @compileError("bits_per_coef must be 12 or 23");
+    }
+
+    return ret;
+}

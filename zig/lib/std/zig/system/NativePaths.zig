@@ -7,13 +7,13 @@ const mem = std.mem;
 const NativePaths = @This();
 
 arena: Allocator,
-include_dirs: std.ArrayListUnmanaged([]const u8) = .{},
-lib_dirs: std.ArrayListUnmanaged([]const u8) = .{},
-framework_dirs: std.ArrayListUnmanaged([]const u8) = .{},
-rpaths: std.ArrayListUnmanaged([]const u8) = .{},
-warnings: std.ArrayListUnmanaged([]const u8) = .{},
+include_dirs: std.ArrayList([]const u8) = .empty,
+lib_dirs: std.ArrayList([]const u8) = .empty,
+framework_dirs: std.ArrayList([]const u8) = .empty,
+rpaths: std.ArrayList([]const u8) = .empty,
+warnings: std.ArrayList([]const u8) = .empty,
 
-pub fn detect(arena: Allocator, native_target: std.Target) !NativePaths {
+pub fn detect(arena: Allocator, native_target: *const std.Target) !NativePaths {
     var self: NativePaths = .{ .arena = arena };
     var is_nix = false;
     if (process.getEnvVarOwned(arena, "NIX_CFLAGS_COMPILE")) |nix_cflags_compile| {
@@ -81,20 +81,25 @@ pub fn detect(arena: Allocator, native_target: std.Target) !NativePaths {
         return self;
     }
 
-    // TODO: consider also adding homebrew paths
     // TODO: consider also adding macports paths
-    if (comptime builtin.target.isDarwin()) {
+    if (builtin.target.os.tag.isDarwin()) {
         if (std.zig.system.darwin.isSdkInstalled(arena)) sdk: {
             const sdk = std.zig.system.darwin.getSdk(arena, native_target) orelse break :sdk;
             try self.addLibDir(try std.fs.path.join(arena, &.{ sdk, "usr/lib" }));
             try self.addFrameworkDir(try std.fs.path.join(arena, &.{ sdk, "System/Library/Frameworks" }));
             try self.addIncludeDir(try std.fs.path.join(arena, &.{ sdk, "usr/include" }));
-            return self;
         }
+
+        // Check for homebrew paths
+        if (std.posix.getenv("HOMEBREW_PREFIX")) |prefix| {
+            try self.addLibDir(try std.fs.path.join(arena, &.{ prefix, "/lib" }));
+            try self.addIncludeDir(try std.fs.path.join(arena, &.{ prefix, "/include" }));
+        }
+
         return self;
     }
 
-    if (builtin.os.tag.isSolarish()) {
+    if (builtin.os.tag == .illumos) {
         try self.addLibDir("/usr/lib/64");
         try self.addLibDir("/usr/local/lib/64");
         try self.addLibDir("/lib/64");

@@ -6,7 +6,7 @@ const log = std.log.scoped(.spirv_link);
 const BinaryModule = @import("BinaryModule.zig");
 const Section = @import("../../codegen/spirv/Section.zig");
 const spec = @import("../../codegen/spirv/spec.zig");
-const ResultId = spec.IdResult;
+const ResultId = spec.Id;
 const Word = spec.Word;
 
 /// This structure contains all the stuff that we need to parse from the module in
@@ -74,9 +74,9 @@ const ModuleInfo = struct {
             param_types: []const ResultId,
         }).init(arena);
         var calls = std.AutoArrayHashMap(ResultId, void).init(arena);
-        var callee_store = std.ArrayList(ResultId).init(arena);
+        var callee_store = std.array_list.Managed(ResultId).init(arena);
         var function_invocation_globals = std.AutoArrayHashMap(ResultId, void).init(arena);
-        var result_id_offsets = std.ArrayList(u16).init(arena);
+        var result_id_offsets = std.array_list.Managed(u16).init(arena);
         var invocation_globals = std.AutoArrayHashMap(ResultId, InvocationGlobal).init(arena);
 
         var maybe_current_function: ?ResultId = null;
@@ -92,7 +92,7 @@ const ModuleInfo = struct {
                     const entry_point: ResultId = @enumFromInt(inst.operands[1]);
                     const entry = try entry_points.getOrPut(entry_point);
                     if (entry.found_existing) {
-                        log.err("Entry point type {} has duplicate definition", .{entry_point});
+                        log.err("Entry point type {f} has duplicate definition", .{entry_point});
                         return error.DuplicateId;
                     }
                 },
@@ -103,7 +103,7 @@ const ModuleInfo = struct {
 
                     const entry = try fn_types.getOrPut(fn_type);
                     if (entry.found_existing) {
-                        log.err("Function type {} has duplicate definition", .{fn_type});
+                        log.err("Function type {f} has duplicate definition", .{fn_type});
                         return error.DuplicateId;
                     }
 
@@ -135,7 +135,7 @@ const ModuleInfo = struct {
                 },
                 .OpFunction => {
                     if (maybe_current_function) |current_function| {
-                        log.err("OpFunction {} does not have an OpFunctionEnd", .{current_function});
+                        log.err("OpFunction {f} does not have an OpFunctionEnd", .{current_function});
                         return error.InvalidPhysicalFormat;
                     }
 
@@ -154,7 +154,7 @@ const ModuleInfo = struct {
                     };
                     const entry = try functions.getOrPut(current_function);
                     if (entry.found_existing) {
-                        log.err("Function {} has duplicate definition", .{current_function});
+                        log.err("Function {f} has duplicate definition", .{current_function});
                         return error.DuplicateId;
                     }
 
@@ -162,7 +162,7 @@ const ModuleInfo = struct {
                     try callee_store.appendSlice(calls.keys());
 
                     const fn_type = fn_types.get(fn_ty_id) orelse {
-                        log.err("Function {} has invalid OpFunction type", .{current_function});
+                        log.err("Function {f} has invalid OpFunction type", .{current_function});
                         return error.InvalidId;
                     };
 
@@ -187,7 +187,7 @@ const ModuleInfo = struct {
         }
 
         if (maybe_current_function) |current_function| {
-            log.err("OpFunction {} does not have an OpFunctionEnd", .{current_function});
+            log.err("OpFunction {f} does not have an OpFunctionEnd", .{current_function});
             return error.InvalidPhysicalFormat;
         }
 
@@ -222,7 +222,7 @@ const ModuleInfo = struct {
         seen: *std.DynamicBitSetUnmanaged,
     ) !void {
         const index = self.functions.getIndex(id) orelse {
-            log.err("function calls invalid function {}", .{id});
+            log.err("function calls invalid function {f}", .{id});
             return error.InvalidId;
         };
 
@@ -261,7 +261,7 @@ const ModuleInfo = struct {
         seen: *std.DynamicBitSetUnmanaged,
     ) !void {
         const index = self.invocation_globals.getIndex(id) orelse {
-            log.err("invalid invocation global {}", .{id});
+            log.err("invalid invocation global {f}", .{id});
             return error.InvalidId;
         };
 
@@ -276,7 +276,7 @@ const ModuleInfo = struct {
         }
 
         const initializer = self.functions.get(info.initializer) orelse {
-            log.err("invocation global {} has invalid initializer {}", .{ id, info.initializer });
+            log.err("invocation global {f} has invalid initializer {f}", .{ id, info.initializer });
             return error.InvalidId;
         };
 
@@ -342,9 +342,9 @@ const ModuleBuilder = struct {
     entry_point_new_id_base: u32,
     /// A set of all function types in the new program. SPIR-V mandates that these are unique,
     /// and until a general type deduplication pass is programmed, we just handle it here via this.
-    function_types: std.ArrayHashMapUnmanaged(FunctionType, ResultId, FunctionType.Context, true) = .{},
+    function_types: std.ArrayHashMapUnmanaged(FunctionType, ResultId, FunctionType.Context, true) = .empty,
     /// Maps functions to new information required for creating the module
-    function_new_info: std.AutoArrayHashMapUnmanaged(ResultId, FunctionNewInfo) = .{},
+    function_new_info: std.AutoArrayHashMapUnmanaged(ResultId, FunctionNewInfo) = .empty,
     /// Offset of the functions section in the new binary.
     new_functions_section: ?usize,
 
@@ -382,6 +382,15 @@ const ModuleBuilder = struct {
         var it = binary.iterateInstructions();
         while (it.next()) |inst| {
             switch (inst.opcode) {
+                .OpName => {
+                    const id: ResultId = @enumFromInt(inst.operands[0]);
+                    if (info.invocation_globals.contains(id)) continue;
+                },
+                .OpExtInstImport => {
+                    const set_id: ResultId = @enumFromInt(inst.operands[0]);
+                    const set = binary.ext_inst_map.get(set_id).?;
+                    if (set == .zig) continue;
+                },
                 .OpExtInst => {
                     const set_id: ResultId = @enumFromInt(inst.operands[2]);
                     const set_inst = inst.operands[3];
@@ -400,10 +409,19 @@ const ModuleBuilder = struct {
                     self.section.writeWords(inst.operands[2..]);
                     continue;
                 },
+                .OpExecutionMode, .OpExecutionModeId => {
+                    const original_id: ResultId = @enumFromInt(inst.operands[0]);
+                    const new_id_index = info.entry_points.getIndex(original_id).?;
+                    const new_id: ResultId = @enumFromInt(self.entry_point_new_id_base + new_id_index);
+                    try self.section.emitRaw(self.arena, inst.opcode, inst.operands.len);
+                    self.section.writeOperand(ResultId, new_id);
+                    self.section.writeWords(inst.operands[1..]);
+                    continue;
+                },
                 .OpTypeFunction => {
                     // Re-emitted in `emitFunctionTypes()`. We can do this because
                     // OpTypeFunction's may not currently be used anywhere that is not
-                    // directly with an OpFunction. For now we igore Intels function
+                    // directly with an OpFunction. For now we ignore Intels function
                     // pointers extension, that is not a problem with a generalized
                     // pass anyway.
                     continue;
@@ -473,15 +491,15 @@ const ModuleBuilder = struct {
         return entry.value_ptr.*;
     }
 
-    /// Rewrite the modules' functions and emit them with the new parameter types.
+    /// Rewrite the modules functions and emit them with the new parameter types.
     fn rewriteFunctions(
         self: *ModuleBuilder,
         parser: *BinaryModule.Parser,
         binary: BinaryModule,
         info: ModuleInfo,
     ) !void {
-        var result_id_offsets = std.ArrayList(u16).init(self.arena);
-        var operands = std.ArrayList(u32).init(self.arena);
+        var result_id_offsets = std.array_list.Managed(u16).init(self.arena);
+        var operands = std.array_list.Managed(u32).init(self.arena);
 
         var maybe_current_function: ?ResultId = null;
         var it = binary.iterateInstructionsFrom(binary.sections.functions);
@@ -617,7 +635,7 @@ const ModuleBuilder = struct {
                 try self.section.emit(self.arena, .OpVariable, .{
                     .id_result_type = global_info.ty,
                     .id_result = id,
-                    .storage_class = .Function,
+                    .storage_class = .function,
                     .initializer = null,
                 });
             }
@@ -682,9 +700,8 @@ const ModuleBuilder = struct {
     }
 };
 
-pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: *std.Progress.Node) !void {
-    var sub_node = progress.start("Lower invocation globals", 6);
-    sub_node.activate();
+pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: std.Progress.Node) !void {
+    const sub_node = progress.start("Lower invocation globals", 6);
     defer sub_node.end();
 
     var arena = std.heap.ArenaAllocator.init(parser.a);

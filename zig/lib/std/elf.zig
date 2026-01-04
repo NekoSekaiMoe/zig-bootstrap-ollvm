@@ -1,9 +1,11 @@
 //! Executable and Linkable Format.
 
 const std = @import("std.zig");
+const Io = std.Io;
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
+const Endian = std.builtin.Endian;
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
 pub const AT_NULL = 0;
@@ -48,6 +50,7 @@ pub const AT_L2_CACHESIZE = 44;
 pub const AT_L2_CACHEGEOMETRY = 45;
 pub const AT_L3_CACHESIZE = 46;
 pub const AT_L3_CACHEGEOMETRY = 47;
+pub const AT_MINSIGSTKSZ = 51;
 
 pub const DT_NULL = 0;
 pub const DT_NEEDED = 1;
@@ -84,7 +87,10 @@ pub const DT_ENCODING = 32;
 pub const DT_PREINIT_ARRAY = 32;
 pub const DT_PREINIT_ARRAYSZ = 33;
 pub const DT_SYMTAB_SHNDX = 34;
-pub const DT_NUM = 35;
+pub const DT_RELRSZ = 35;
+pub const DT_RELR = 36;
+pub const DT_RELRENT = 37;
+pub const DT_NUM = 38;
 pub const DT_LOOS = 0x6000000d;
 pub const DT_HIOS = 0x6ffff000;
 pub const DT_LOPROC = 0x70000000;
@@ -255,181 +261,405 @@ pub const DF_1_SINGLETON = 0x02000000;
 pub const DF_1_STUB = 0x04000000;
 pub const DF_1_PIE = 0x08000000;
 
-pub const VERSYM_HIDDEN = 0x8000;
-pub const VERSYM_VERSION = 0x7fff;
+pub const Versym = packed struct(u16) {
+    VERSION: u15,
+    HIDDEN: bool,
 
-/// Symbol is local
-pub const VER_NDX_LOCAL = 0;
-/// Symbol is global
-pub const VER_NDX_GLOBAL = 1;
-/// Beginning of reserved entries
-pub const VER_NDX_LORESERVE = 0xff00;
-/// Symbol is to be eliminated
-pub const VER_NDX_ELIMINATE = 0xff01;
+    pub const LOCAL: Versym = @bitCast(@intFromEnum(VER_NDX.LOCAL));
+    pub const GLOBAL: Versym = @bitCast(@intFromEnum(VER_NDX.GLOBAL));
+};
+
+pub const VER_NDX = enum(u16) {
+    /// Symbol is local
+    LOCAL = 0,
+    /// Symbol is global
+    GLOBAL = 1,
+    /// Beginning of reserved entries
+    LORESERVE = 0xff00,
+    /// Symbol is to be eliminated
+    ELIMINATE = 0xff01,
+    UNSPECIFIED = 0xffff,
+    _,
+};
 
 /// Version definition of the file itself
 pub const VER_FLG_BASE = 1;
 /// Weak version identifier
 pub const VER_FLG_WEAK = 2;
 
-/// Program header table entry unused
-pub const PT_NULL = 0;
-/// Loadable program segment
-pub const PT_LOAD = 1;
-/// Dynamic linking information
-pub const PT_DYNAMIC = 2;
-/// Program interpreter
-pub const PT_INTERP = 3;
-/// Auxiliary information
-pub const PT_NOTE = 4;
-/// Reserved
-pub const PT_SHLIB = 5;
-/// Entry for header table itself
-pub const PT_PHDR = 6;
-/// Thread-local storage segment
-pub const PT_TLS = 7;
-/// Number of defined types
-pub const PT_NUM = 8;
-/// Start of OS-specific
-pub const PT_LOOS = 0x60000000;
-/// GCC .eh_frame_hdr segment
-pub const PT_GNU_EH_FRAME = 0x6474e550;
-/// Indicates stack executability
-pub const PT_GNU_STACK = 0x6474e551;
-/// Read-only after relocation
-pub const PT_GNU_RELRO = 0x6474e552;
-pub const PT_LOSUNW = 0x6ffffffa;
-/// Sun specific segment
-pub const PT_SUNWBSS = 0x6ffffffa;
-/// Stack segment
-pub const PT_SUNWSTACK = 0x6ffffffb;
-pub const PT_HISUNW = 0x6fffffff;
-/// End of OS-specific
-pub const PT_HIOS = 0x6fffffff;
-/// Start of processor-specific
-pub const PT_LOPROC = 0x70000000;
-/// End of processor-specific
-pub const PT_HIPROC = 0x7fffffff;
+/// Deprecated, use `@intFromEnum(std.elf.PT.NULL)`
+pub const PT_NULL = @intFromEnum(std.elf.PT.NULL);
+/// Deprecated, use `@intFromEnum(std.elf.PT.LOAD)`
+pub const PT_LOAD = @intFromEnum(std.elf.PT.LOAD);
+/// Deprecated, use `@intFromEnum(std.elf.PT.DYNAMIC)`
+pub const PT_DYNAMIC = @intFromEnum(std.elf.PT.DYNAMIC);
+/// Deprecated, use `@intFromEnum(std.elf.PT.INTERP)`
+pub const PT_INTERP = @intFromEnum(std.elf.PT.INTERP);
+/// Deprecated, use `@intFromEnum(std.elf.PT.NOTE)`
+pub const PT_NOTE = @intFromEnum(std.elf.PT.NOTE);
+/// Deprecated, use `@intFromEnum(std.elf.PT.SHLIB)`
+pub const PT_SHLIB = @intFromEnum(std.elf.PT.SHLIB);
+/// Deprecated, use `@intFromEnum(std.elf.PT.PHDR)`
+pub const PT_PHDR = @intFromEnum(std.elf.PT.PHDR);
+/// Deprecated, use `@intFromEnum(std.elf.PT.TLS)`
+pub const PT_TLS = @intFromEnum(std.elf.PT.TLS);
+/// Deprecated, use `std.elf.PT.NUM`.
+pub const PT_NUM = PT.NUM;
+/// Deprecated, use `@intFromEnum(std.elf.PT.LOOS)`
+pub const PT_LOOS = @intFromEnum(std.elf.PT.LOOS);
+/// Deprecated, use `@intFromEnum(std.elf.PT.GNU_EH_FRAME)`
+pub const PT_GNU_EH_FRAME = @intFromEnum(std.elf.PT.GNU_EH_FRAME);
+/// Deprecated, use `@intFromEnum(std.elf.PT.GNU_STACK)`
+pub const PT_GNU_STACK = @intFromEnum(std.elf.PT.GNU_STACK);
+/// Deprecated, use `@intFromEnum(std.elf.PT.GNU_RELRO)`
+pub const PT_GNU_RELRO = @intFromEnum(std.elf.PT.GNU_RELRO);
+/// Deprecated, use `@intFromEnum(std.elf.PT.LOSUNW)`
+pub const PT_LOSUNW = @intFromEnum(std.elf.PT.LOSUNW);
+/// Deprecated, use `@intFromEnum(std.elf.PT.SUNWBSS)`
+pub const PT_SUNWBSS = @intFromEnum(std.elf.PT.SUNWBSS);
+/// Deprecated, use `@intFromEnum(std.elf.PT.SUNWSTACK)`
+pub const PT_SUNWSTACK = @intFromEnum(std.elf.PT.SUNWSTACK);
+/// Deprecated, use `@intFromEnum(std.elf.PT.HISUNW)`
+pub const PT_HISUNW = @intFromEnum(std.elf.PT.HISUNW);
+/// Deprecated, use `@intFromEnum(std.elf.PT.HIOS)`
+pub const PT_HIOS = @intFromEnum(std.elf.PT.HIOS);
+/// Deprecated, use `@intFromEnum(std.elf.PT.LOPROC)`
+pub const PT_LOPROC = @intFromEnum(std.elf.PT.LOPROC);
+/// Deprecated, use `@intFromEnum(std.elf.PT.HIPROC)`
+pub const PT_HIPROC = @intFromEnum(std.elf.PT.HIPROC);
 
-/// Section header table entry unused
-pub const SHT_NULL = 0;
-/// Program data
-pub const SHT_PROGBITS = 1;
-/// Symbol table
-pub const SHT_SYMTAB = 2;
-/// String table
-pub const SHT_STRTAB = 3;
-/// Relocation entries with addends
-pub const SHT_RELA = 4;
-/// Symbol hash table
-pub const SHT_HASH = 5;
-/// Dynamic linking information
-pub const SHT_DYNAMIC = 6;
-/// Notes
-pub const SHT_NOTE = 7;
-/// Program space with no data (bss)
-pub const SHT_NOBITS = 8;
-/// Relocation entries, no addends
-pub const SHT_REL = 9;
-/// Reserved
-pub const SHT_SHLIB = 10;
-/// Dynamic linker symbol table
-pub const SHT_DYNSYM = 11;
-/// Array of constructors
-pub const SHT_INIT_ARRAY = 14;
-/// Array of destructors
-pub const SHT_FINI_ARRAY = 15;
-/// Array of pre-constructors
-pub const SHT_PREINIT_ARRAY = 16;
-/// Section group
-pub const SHT_GROUP = 17;
-/// Extended section indices
-pub const SHT_SYMTAB_SHNDX = 18;
-/// Start of OS-specific
-pub const SHT_LOOS = 0x60000000;
-/// LLVM address-significance table
-pub const SHT_LLVM_ADDRSIG = 0x6fff4c03;
-/// GNU hash table
-pub const SHT_GNU_HASH = 0x6ffffff6;
-/// GNU version definition table
-pub const SHT_GNU_VERDEF = 0x6ffffffd;
-/// GNU needed versions table
-pub const SHT_GNU_VERNEED = 0x6ffffffe;
-/// GNU symbol version table
-pub const SHT_GNU_VERSYM = 0x6fffffff;
-/// End of OS-specific
-pub const SHT_HIOS = 0x6fffffff;
-/// Start of processor-specific
-pub const SHT_LOPROC = 0x70000000;
-/// Unwind information
-pub const SHT_X86_64_UNWIND = 0x70000001;
-/// End of processor-specific
-pub const SHT_HIPROC = 0x7fffffff;
-/// Start of application-specific
-pub const SHT_LOUSER = 0x80000000;
-/// End of application-specific
-pub const SHT_HIUSER = 0xffffffff;
+pub const PN_XNUM = 0xffff;
+
+/// Deprecated, use `@intFromEnum(std.elf.SHT.NULL)`
+pub const SHT_NULL = @intFromEnum(std.elf.SHT.NULL);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.PROGBITS)`
+pub const SHT_PROGBITS = @intFromEnum(std.elf.SHT.PROGBITS);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.SYMTAB)`
+pub const SHT_SYMTAB = @intFromEnum(std.elf.SHT.SYMTAB);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.STRTAB)`
+pub const SHT_STRTAB = @intFromEnum(std.elf.SHT.STRTAB);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.RELA)`
+pub const SHT_RELA = @intFromEnum(std.elf.SHT.RELA);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.HASH)`
+pub const SHT_HASH = @intFromEnum(std.elf.SHT.HASH);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.DYNAMIC)`
+pub const SHT_DYNAMIC = @intFromEnum(std.elf.SHT.DYNAMIC);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.NOTE)`
+pub const SHT_NOTE = @intFromEnum(std.elf.SHT.NOTE);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.NOBITS)`
+pub const SHT_NOBITS = @intFromEnum(std.elf.SHT.NOBITS);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.REL)`
+pub const SHT_REL = @intFromEnum(std.elf.SHT.REL);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.SHLIB)`
+pub const SHT_SHLIB = @intFromEnum(std.elf.SHT.SHLIB);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.DYNSYM)`
+pub const SHT_DYNSYM = @intFromEnum(std.elf.SHT.DYNSYM);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.INIT_ARRAY)`
+pub const SHT_INIT_ARRAY = @intFromEnum(std.elf.SHT.INIT_ARRAY);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.FINI_ARRAY)`
+pub const SHT_FINI_ARRAY = @intFromEnum(std.elf.SHT.FINI_ARRAY);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.PREINIT_ARRAY)`
+pub const SHT_PREINIT_ARRAY = @intFromEnum(std.elf.SHT.PREINIT_ARRAY);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.GROUP)`
+pub const SHT_GROUP = @intFromEnum(std.elf.SHT.GROUP);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.SYMTAB_SHNDX)`
+pub const SHT_SYMTAB_SHNDX = @intFromEnum(std.elf.SHT.SYMTAB_SHNDX);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.RELR)`
+pub const SHT_RELR = @intFromEnum(std.elf.SHT.RELR);
+/// Deprecated, use `std.elf.SHT.NUM`.
+pub const SHT_NUM = SHT.NUM;
+/// Deprecated, use `@intFromEnum(std.elf.SHT.LOOS)`
+pub const SHT_LOOS = @intFromEnum(std.elf.SHT.LOOS);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.LLVM_ADDRSIG)`
+pub const SHT_LLVM_ADDRSIG = @intFromEnum(std.elf.SHT.LLVM_ADDRSIG);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.GNU_HASH)`
+pub const SHT_GNU_HASH = @intFromEnum(std.elf.SHT.GNU_HASH);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.GNU_VERDEF)`
+pub const SHT_GNU_VERDEF = @intFromEnum(std.elf.SHT.GNU_VERDEF);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.GNU_VERNEED)`
+pub const SHT_GNU_VERNEED = @intFromEnum(std.elf.SHT.GNU_VERNEED);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.GNU_VERSYM)`
+pub const SHT_GNU_VERSYM = @intFromEnum(std.elf.SHT.GNU_VERSYM);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.HIOS)`
+pub const SHT_HIOS = @intFromEnum(std.elf.SHT.HIOS);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.LOPROC)`
+pub const SHT_LOPROC = @intFromEnum(std.elf.SHT.LOPROC);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.X86_64_UNWIND)`
+pub const SHT_X86_64_UNWIND = @intFromEnum(std.elf.SHT.X86_64_UNWIND);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.HIPROC)`
+pub const SHT_HIPROC = @intFromEnum(std.elf.SHT.HIPROC);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.LOUSER)`
+pub const SHT_LOUSER = @intFromEnum(std.elf.SHT.LOUSER);
+/// Deprecated, use `@intFromEnum(std.elf.SHT.HIUSER)`
+pub const SHT_HIUSER = @intFromEnum(std.elf.SHT.HIUSER);
 
 // Note type for .note.gnu.build_id
 pub const NT_GNU_BUILD_ID = 3;
 
-/// Local symbol
-pub const STB_LOCAL = 0;
-/// Global symbol
-pub const STB_GLOBAL = 1;
-/// Weak symbol
-pub const STB_WEAK = 2;
-/// Number of defined types
-pub const STB_NUM = 3;
-/// Start of OS-specific
-pub const STB_LOOS = 10;
-/// Unique symbol
-pub const STB_GNU_UNIQUE = 10;
-/// End of OS-specific
-pub const STB_HIOS = 12;
-/// Start of processor-specific
-pub const STB_LOPROC = 13;
-/// End of processor-specific
-pub const STB_HIPROC = 15;
+/// Deprecated, use `@intFromEnum(std.elf.STB.LOCAL)`
+pub const STB_LOCAL = @intFromEnum(STB.LOCAL);
+/// Deprecated, use `@intFromEnum(std.elf.STB.GLOBAL)`
+pub const STB_GLOBAL = @intFromEnum(STB.GLOBAL);
+/// Deprecated, use `@intFromEnum(std.elf.STB.WEAK)`
+pub const STB_WEAK = @intFromEnum(STB.WEAK);
+/// Deprecated, use `std.elf.STB.NUM`
+pub const STB_NUM = STB.NUM;
+/// Deprecated, use `@intFromEnum(std.elf.STB.LOOS)`
+pub const STB_LOOS = @intFromEnum(STB.LOOS);
+/// Deprecated, use `@intFromEnum(std.elf.STB.GNU_UNIQUE)`
+pub const STB_GNU_UNIQUE = @intFromEnum(STB.GNU_UNIQUE);
+/// Deprecated, use `@intFromEnum(std.elf.STB.HIOS)`
+pub const STB_HIOS = @intFromEnum(STB.HIOS);
+/// Deprecated, use `@intFromEnum(std.elf.STB.LOPROC)`
+pub const STB_LOPROC = @intFromEnum(STB.LOPROC);
+/// Deprecated, use `@intFromEnum(std.elf.STB.HIPROC)`
+pub const STB_HIPROC = @intFromEnum(STB.HIPROC);
 
-pub const STB_MIPS_SPLIT_COMMON = 13;
+/// Deprecated, use `@intFromEnum(std.elf.STB.MIPS_SPLIT_COMMON)`
+pub const STB_MIPS_SPLIT_COMMON = @intFromEnum(STB.MIBS_SPLIT_COMMON);
 
-/// Symbol type is unspecified
-pub const STT_NOTYPE = 0;
-/// Symbol is a data object
-pub const STT_OBJECT = 1;
-/// Symbol is a code object
-pub const STT_FUNC = 2;
-/// Symbol associated with a section
-pub const STT_SECTION = 3;
-/// Symbol's name is file name
-pub const STT_FILE = 4;
-/// Symbol is a common data object
-pub const STT_COMMON = 5;
-/// Symbol is thread-local data object
-pub const STT_TLS = 6;
-/// Number of defined types
-pub const STT_NUM = 7;
-/// Start of OS-specific
-pub const STT_LOOS = 10;
-/// Symbol is indirect code object
-pub const STT_GNU_IFUNC = 10;
-/// End of OS-specific
-pub const STT_HIOS = 12;
-/// Start of processor-specific
-pub const STT_LOPROC = 13;
-/// End of processor-specific
-pub const STT_HIPROC = 15;
+/// Deprecated, use `@intFromEnum(std.elf.STT.NOTYPE)`
+pub const STT_NOTYPE = @intFromEnum(STT.NOTYPE);
+/// Deprecated, use `@intFromEnum(std.elf.STT.OBJECT)`
+pub const STT_OBJECT = @intFromEnum(STT.OBJECT);
+/// Deprecated, use `@intFromEnum(std.elf.STT.FUNC)`
+pub const STT_FUNC = @intFromEnum(STT.FUNC);
+/// Deprecated, use `@intFromEnum(std.elf.STT.SECTION)`
+pub const STT_SECTION = @intFromEnum(STT.SECTION);
+/// Deprecated, use `@intFromEnum(std.elf.STT.FILE)`
+pub const STT_FILE = @intFromEnum(STT.FILE);
+/// Deprecated, use `@intFromEnum(std.elf.STT.COMMON)`
+pub const STT_COMMON = @intFromEnum(STT.COMMON);
+/// Deprecated, use `@intFromEnum(std.elf.STT.TLS)`
+pub const STT_TLS = @intFromEnum(STT.TLS);
+/// Deprecated, use `std.elf.STT.NUM`
+pub const STT_NUM = STT.NUM;
+/// Deprecated, use `@intFromEnum(std.elf.STT.LOOS)`
+pub const STT_LOOS = @intFromEnum(STT.LOOS);
+/// Deprecated, use `@intFromEnum(std.elf.STT.GNU_IFUNC)`
+pub const STT_GNU_IFUNC = @intFromEnum(STT.GNU_IFUNC);
+/// Deprecated, use `@intFromEnum(std.elf.STT.HIOS)`
+pub const STT_HIOS = @intFromEnum(STT.HIOS);
+/// Deprecated, use `@intFromEnum(std.elf.STT.LOPROC)`
+pub const STT_LOPROC = @intFromEnum(STT.LOPROC);
+/// Deprecated, use `@intFromEnum(std.elf.STT.HIPROC)`
+pub const STT_HIPROC = @intFromEnum(STT.HIPROC);
 
-pub const STT_SPARC_REGISTER = 13;
+/// Deprecated, use `@intFromEnum(std.elf.STT.SPARC_REGISTER)`
+pub const STT_SPARC_REGISTER = @intFromEnum(STT.SPARC_REGISTER);
 
-pub const STT_PARISC_MILLICODE = 13;
+/// Deprecated, use `@intFromEnum(std.elf.STT.PARISC_MILLICODE)`
+pub const STT_PARISC_MILLICODE = @intFromEnum(STT.PARISC_MILLICODE);
 
-pub const STT_HP_OPAQUE = (STT_LOOS + 0x1);
-pub const STT_HP_STUB = (STT_LOOS + 0x2);
+/// Deprecated, use `@intFromEnum(std.elf.STT.HP_OPAQUE)`
+pub const STT_HP_OPAQUE = @intFromEnum(STT.HP_OPAQUE);
+/// Deprecated, use `@intFromEnum(std.elf.STT.HP_STUB)`
+pub const STT_HP_STUB = @intFromEnum(STT.HP_STUB);
 
-pub const STT_ARM_TFUNC = STT_LOPROC;
-pub const STT_ARM_16BIT = STT_HIPROC;
+/// Deprecated, use `@intFromEnum(std.elf.STT.ARM_TFUNC)`
+pub const STT_ARM_TFUNC = @intFromEnum(STT.ARM_TFUNC);
+/// Deprecated, use `@intFromEnum(std.elf.STT.ARM_16BIT)`
+pub const STT_ARM_16BIT = @intFromEnum(STT.ARM_16BIT);
+
+pub const PT = enum(Word) {
+    /// Program header table entry unused
+    NULL = 0,
+    /// Loadable program segment
+    LOAD = 1,
+    /// Dynamic linking information
+    DYNAMIC = 2,
+    /// Program interpreter
+    INTERP = 3,
+    /// Auxiliary information
+    NOTE = 4,
+    /// Reserved
+    SHLIB = 5,
+    /// Entry for header table itself
+    PHDR = 6,
+    /// Thread-local storage segment
+    TLS = 7,
+    _,
+
+    /// Number of defined types
+    pub const NUM = @typeInfo(PT).@"enum".fields.len;
+
+    /// Start of OS-specific
+    pub const LOOS: PT = @enumFromInt(0x60000000);
+    /// End of OS-specific
+    pub const HIOS: PT = @enumFromInt(0x6fffffff);
+
+    /// GCC .eh_frame_hdr segment
+    pub const GNU_EH_FRAME: PT = @enumFromInt(0x6474e550);
+    /// Indicates stack executability
+    pub const GNU_STACK: PT = @enumFromInt(0x6474e551);
+    /// Read-only after relocation
+    pub const GNU_RELRO: PT = @enumFromInt(0x6474e552);
+
+    pub const LOSUNW: PT = @enumFromInt(0x6ffffffa);
+    pub const HISUNW: PT = @enumFromInt(0x6fffffff);
+
+    /// Sun specific segment
+    pub const SUNWBSS: PT = @enumFromInt(0x6ffffffa);
+    /// Stack segment
+    pub const SUNWSTACK: PT = @enumFromInt(0x6ffffffb);
+
+    /// Start of processor-specific
+    pub const LOPROC: PT = @enumFromInt(0x70000000);
+    /// End of processor-specific
+    pub const HIPROC: PT = @enumFromInt(0x7fffffff);
+};
+
+pub const SHT = enum(Word) {
+    /// Section header table entry unused
+    NULL = 0,
+    /// Program data
+    PROGBITS = 1,
+    /// Symbol table
+    SYMTAB = 2,
+    /// String table
+    STRTAB = 3,
+    /// Relocation entries with addends
+    RELA = 4,
+    /// Symbol hash table
+    HASH = 5,
+    /// Dynamic linking information
+    DYNAMIC = 6,
+    /// Notes
+    NOTE = 7,
+    /// Program space with no data (bss)
+    NOBITS = 8,
+    /// Relocation entries, no addends
+    REL = 9,
+    /// Reserved
+    SHLIB = 10,
+    /// Dynamic linker symbol table
+    DYNSYM = 11,
+    /// Array of constructors
+    INIT_ARRAY = 14,
+    /// Array of destructors
+    FINI_ARRAY = 15,
+    /// Array of pre-constructors
+    PREINIT_ARRAY = 16,
+    /// Section group
+    GROUP = 17,
+    /// Extended section indices
+    SYMTAB_SHNDX = 18,
+    /// RELR relative relocations
+    RELR = 19,
+    _,
+
+    /// Number of defined types
+    pub const NUM = @typeInfo(SHT).@"enum".fields.len;
+
+    /// Start of OS-specific
+    pub const LOOS: SHT = @enumFromInt(0x60000000);
+    /// End of OS-specific
+    pub const HIOS: SHT = @enumFromInt(0x6fffffff);
+
+    /// LLVM address-significance table
+    pub const LLVM_ADDRSIG: SHT = @enumFromInt(0x6fff4c03);
+
+    /// GNU hash table
+    pub const GNU_HASH: SHT = @enumFromInt(0x6ffffff6);
+    /// GNU version definition table
+    pub const GNU_VERDEF: SHT = @enumFromInt(0x6ffffffd);
+    /// GNU needed versions table
+    pub const GNU_VERNEED: SHT = @enumFromInt(0x6ffffffe);
+    /// GNU symbol version table
+    pub const GNU_VERSYM: SHT = @enumFromInt(0x6fffffff);
+
+    /// Start of processor-specific
+    pub const LOPROC: SHT = @enumFromInt(0x70000000);
+    /// End of processor-specific
+    pub const HIPROC: SHT = @enumFromInt(0x7fffffff);
+
+    /// Unwind information
+    pub const X86_64_UNWIND: SHT = @enumFromInt(0x70000001);
+
+    /// Start of application-specific
+    pub const LOUSER: SHT = @enumFromInt(0x80000000);
+    /// End of application-specific
+    pub const HIUSER: SHT = @enumFromInt(0xffffffff);
+};
+
+pub const STB = enum(u4) {
+    /// Local symbol
+    LOCAL = 0,
+    /// Global symbol
+    GLOBAL = 1,
+    /// Weak symbol
+    WEAK = 2,
+    _,
+
+    /// Number of defined types
+    pub const NUM = @typeInfo(STB).@"enum".fields.len;
+
+    /// Start of OS-specific
+    pub const LOOS: STB = @enumFromInt(10);
+    /// End of OS-specific
+    pub const HIOS: STB = @enumFromInt(12);
+
+    /// Unique symbol
+    pub const GNU_UNIQUE: STB = @enumFromInt(@intFromEnum(LOOS) + 0);
+
+    /// Start of processor-specific
+    pub const LOPROC: STB = @enumFromInt(13);
+    /// End of processor-specific
+    pub const HIPROC: STB = @enumFromInt(15);
+
+    pub const MIPS_SPLIT_COMMON: STB = @enumFromInt(@intFromEnum(LOPROC) + 0);
+};
+
+pub const STT = enum(u4) {
+    /// Symbol type is unspecified
+    NOTYPE = 0,
+    /// Symbol is a data object
+    OBJECT = 1,
+    /// Symbol is a code object
+    FUNC = 2,
+    /// Symbol associated with a section
+    SECTION = 3,
+    /// Symbol's name is file name
+    FILE = 4,
+    /// Symbol is a common data object
+    COMMON = 5,
+    /// Symbol is thread-local data object
+    TLS = 6,
+    _,
+
+    /// Number of defined types
+    pub const NUM = @typeInfo(STT).@"enum".fields.len;
+
+    /// Start of OS-specific
+    pub const LOOS: STT = @enumFromInt(10);
+    /// End of OS-specific
+    pub const HIOS: STT = @enumFromInt(12);
+
+    /// Symbol is indirect code object
+    pub const GNU_IFUNC: STT = @enumFromInt(@intFromEnum(LOOS) + 0);
+
+    pub const HP_OPAQUE: STT = @enumFromInt(@intFromEnum(LOOS) + 1);
+    pub const HP_STUB: STT = @enumFromInt(@intFromEnum(LOOS) + 2);
+
+    /// Start of processor-specific
+    pub const LOPROC: STT = @enumFromInt(13);
+    /// End of processor-specific
+    pub const HIPROC: STT = @enumFromInt(15);
+
+    pub const SPARC_REGISTER: STT = @enumFromInt(@intFromEnum(LOPROC) + 0);
+
+    pub const PARISC_MILLICODE: STT = @enumFromInt(@intFromEnum(LOPROC) + 0);
+
+    pub const ARM_TFUNC: STT = @enumFromInt(@intFromEnum(LOPROC) + 0);
+    pub const ARM_16BIT: STT = @enumFromInt(@intFromEnum(HIPROC) + 2);
+};
+
+pub const STV = enum(u3) {
+    DEFAULT = 0,
+    INTERNAL = 1,
+    HIDDEN = 2,
+    PROTECTED = 3,
+};
 
 pub const MAGIC = "\x7fELF";
 
@@ -450,18 +680,30 @@ pub const ET = enum(u16) {
     /// Core file
     CORE = 4,
 
+    _,
+
+    /// Beginning of OS-specific codes
+    pub const LOOS = 0xfe00;
+
+    /// End of OS-specific codes
+    pub const HIOS = 0xfeff;
+
     /// Beginning of processor-specific codes
     pub const LOPROC = 0xff00;
 
-    /// Processor-specific
+    /// End of processor-specific codes
     pub const HIPROC = 0xffff;
 };
 
 /// All integers are native endian.
 pub const Header = struct {
-    endian: std.builtin.Endian,
-    machine: EM,
     is_64: bool,
+    endian: Endian,
+    os_abi: OSABI,
+    /// The meaning of this value depends on `os_abi`.
+    abi_version: u8,
+    type: ET,
+    machine: EM,
     entry: u64,
     phoff: u64,
     shoff: u64,
@@ -471,268 +713,581 @@ pub const Header = struct {
     shnum: u16,
     shstrndx: u16,
 
-    pub fn program_header_iterator(self: Header, parse_source: anytype) ProgramHeaderIterator(@TypeOf(parse_source)) {
-        return ProgramHeaderIterator(@TypeOf(parse_source)){
-            .elf_header = self,
-            .parse_source = parse_source,
+    pub fn iterateProgramHeaders(h: *const Header, file_reader: *Io.File.Reader) ProgramHeaderIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .phnum = h.phnum,
+            .phoff = h.phoff,
+            .file_reader = file_reader,
         };
     }
 
-    pub fn section_header_iterator(self: Header, parse_source: anytype) SectionHeaderIterator(@TypeOf(parse_source)) {
-        return SectionHeaderIterator(@TypeOf(parse_source)){
-            .elf_header = self,
-            .parse_source = parse_source,
+    pub fn iterateProgramHeadersBuffer(h: *const Header, buf: []const u8) ProgramHeaderBufferIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .phnum = h.phnum,
+            .phoff = h.phoff,
+            .buf = buf,
         };
     }
 
-    pub fn read(parse_source: anytype) !Header {
-        var hdr_buf: [@sizeOf(Elf64_Ehdr)]u8 align(@alignOf(Elf64_Ehdr)) = undefined;
-        try parse_source.seekableStream().seekTo(0);
-        try parse_source.reader().readNoEof(&hdr_buf);
-        return Header.parse(&hdr_buf);
+    pub fn iterateSectionHeaders(h: *const Header, file_reader: *Io.File.Reader) SectionHeaderIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .shnum = h.shnum,
+            .shoff = h.shoff,
+            .file_reader = file_reader,
+        };
     }
 
-    pub fn parse(hdr_buf: *align(@alignOf(Elf64_Ehdr)) const [@sizeOf(Elf64_Ehdr)]u8) !Header {
-        const hdr32 = @as(*const Elf32_Ehdr, @ptrCast(hdr_buf));
-        const hdr64 = @as(*const Elf64_Ehdr, @ptrCast(hdr_buf));
-        if (!mem.eql(u8, hdr32.e_ident[0..4], MAGIC)) return error.InvalidElfMagic;
-        if (hdr32.e_ident[EI_VERSION] != 1) return error.InvalidElfVersion;
+    pub fn iterateSectionHeadersBuffer(h: *const Header, buf: []const u8) SectionHeaderBufferIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .shnum = h.shnum,
+            .shoff = h.shoff,
+            .buf = buf,
+        };
+    }
 
-        const endian: std.builtin.Endian = switch (hdr32.e_ident[EI_DATA]) {
+    pub fn iterateDynamicSection(
+        h: *const Header,
+        file_reader: *Io.File.Reader,
+        offset: u64,
+        size: u64,
+    ) DynamicSectionIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .offset = offset,
+            .end_offset = offset + size,
+            .file_reader = file_reader,
+        };
+    }
+
+    pub fn iterateDynamicSectionBuffer(
+        h: *const Header,
+        buf: []const u8,
+        offset: u64,
+        size: u64,
+    ) DynamicSectionBufferIterator {
+        return .{
+            .is_64 = h.is_64,
+            .endian = h.endian,
+            .offset = offset,
+            .end_offset = offset + size,
+            .buf = buf,
+        };
+    }
+
+    pub const ReadError = Io.Reader.Error || error{
+        InvalidElfMagic,
+        InvalidElfVersion,
+        InvalidElfClass,
+        InvalidElfEndian,
+    };
+
+    /// If this function fails, seek position of `r` is unchanged.
+    pub fn read(r: *Io.Reader) ReadError!Header {
+        const buf = try r.peek(@sizeOf(Elf64_Ehdr));
+
+        if (!mem.eql(u8, buf[0..4], MAGIC)) return error.InvalidElfMagic;
+        if (buf[EI.VERSION] != 1) return error.InvalidElfVersion;
+
+        const endian: Endian = switch (buf[EI.DATA]) {
             ELFDATA2LSB => .little,
             ELFDATA2MSB => .big,
             else => return error.InvalidElfEndian,
         };
-        const need_bswap = endian != native_endian;
 
-        const is_64 = switch (hdr32.e_ident[EI_CLASS]) {
-            ELFCLASS32 => false,
-            ELFCLASS64 => true,
+        return switch (buf[EI.CLASS]) {
+            ELFCLASS32 => .init(try r.takeStruct(Elf32_Ehdr, endian), endian),
+            ELFCLASS64 => .init(try r.takeStruct(Elf64_Ehdr, endian), endian),
             else => return error.InvalidElfClass,
         };
+    }
 
-        const machine = if (need_bswap) blk: {
-            const value = @intFromEnum(hdr32.e_machine);
-            break :blk @as(EM, @enumFromInt(@byteSwap(value)));
-        } else hdr32.e_machine;
-
-        return @as(Header, .{
+    pub fn init(hdr: anytype, endian: Endian) Header {
+        // Converting integers to exhaustive enums using `@enumFromInt` could cause a panic.
+        comptime assert(!@typeInfo(OSABI).@"enum".is_exhaustive);
+        return .{
+            .is_64 = switch (@TypeOf(hdr)) {
+                Elf32_Ehdr => false,
+                Elf64_Ehdr => true,
+                else => @compileError("bad type"),
+            },
             .endian = endian,
-            .machine = machine,
-            .is_64 = is_64,
-            .entry = int(is_64, need_bswap, hdr32.e_entry, hdr64.e_entry),
-            .phoff = int(is_64, need_bswap, hdr32.e_phoff, hdr64.e_phoff),
-            .shoff = int(is_64, need_bswap, hdr32.e_shoff, hdr64.e_shoff),
-            .phentsize = int(is_64, need_bswap, hdr32.e_phentsize, hdr64.e_phentsize),
-            .phnum = int(is_64, need_bswap, hdr32.e_phnum, hdr64.e_phnum),
-            .shentsize = int(is_64, need_bswap, hdr32.e_shentsize, hdr64.e_shentsize),
-            .shnum = int(is_64, need_bswap, hdr32.e_shnum, hdr64.e_shnum),
-            .shstrndx = int(is_64, need_bswap, hdr32.e_shstrndx, hdr64.e_shstrndx),
-        });
+            .os_abi = @enumFromInt(hdr.e_ident[EI.OSABI]),
+            .abi_version = hdr.e_ident[EI.ABIVERSION],
+            .type = hdr.e_type,
+            .machine = hdr.e_machine,
+            .entry = hdr.e_entry,
+            .phoff = hdr.e_phoff,
+            .shoff = hdr.e_shoff,
+            .phentsize = hdr.e_phentsize,
+            .phnum = hdr.e_phnum,
+            .shentsize = hdr.e_shentsize,
+            .shnum = hdr.e_shnum,
+            .shstrndx = hdr.e_shstrndx,
+        };
     }
 };
 
-pub fn ProgramHeaderIterator(comptime ParseSource: anytype) type {
-    return struct {
-        elf_header: Header,
-        parse_source: ParseSource,
-        index: usize = 0,
+pub const ProgramHeaderIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    phnum: u16,
+    phoff: u64,
 
-        pub fn next(self: *@This()) !?Elf64_Phdr {
-            if (self.index >= self.elf_header.phnum) return null;
-            defer self.index += 1;
+    file_reader: *Io.File.Reader,
+    index: usize = 0,
 
-            if (self.elf_header.is_64) {
-                var phdr: Elf64_Phdr = undefined;
-                const offset = self.elf_header.phoff + @sizeOf(@TypeOf(phdr)) * self.index;
-                try self.parse_source.seekableStream().seekTo(offset);
-                try self.parse_source.reader().readNoEof(mem.asBytes(&phdr));
+    pub fn next(it: *ProgramHeaderIterator) !?Elf64_Phdr {
+        if (it.index >= it.phnum) return null;
+        defer it.index += 1;
 
-                // ELF endianness matches native endianness.
-                if (self.elf_header.endian == native_endian) return phdr;
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
+        const offset = it.phoff + size * it.index;
+        try it.file_reader.seekTo(offset);
 
-                // Convert fields to native endianness.
-                mem.byteSwapAllFields(Elf64_Phdr, &phdr);
-                return phdr;
-            }
+        return try takeProgramHeader(&it.file_reader.interface, it.is_64, it.endian);
+    }
+};
 
-            var phdr: Elf32_Phdr = undefined;
-            const offset = self.elf_header.phoff + @sizeOf(@TypeOf(phdr)) * self.index;
-            try self.parse_source.seekableStream().seekTo(offset);
-            try self.parse_source.reader().readNoEof(mem.asBytes(&phdr));
+pub const ProgramHeaderBufferIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    phnum: u16,
+    phoff: u64,
 
-            // ELF endianness does NOT match native endianness.
-            if (self.elf_header.endian != native_endian) {
-                // Convert fields to native endianness.
-                mem.byteSwapAllFields(Elf32_Phdr, &phdr);
-            }
+    buf: []const u8,
+    index: usize = 0,
 
-            // Convert 32-bit header to 64-bit.
-            return Elf64_Phdr{
-                .p_type = phdr.p_type,
-                .p_offset = phdr.p_offset,
-                .p_vaddr = phdr.p_vaddr,
-                .p_paddr = phdr.p_paddr,
-                .p_filesz = phdr.p_filesz,
-                .p_memsz = phdr.p_memsz,
-                .p_flags = phdr.p_flags,
-                .p_align = phdr.p_align,
-            };
-        }
-    };
-}
+    pub fn next(it: *ProgramHeaderBufferIterator) !?Elf64_Phdr {
+        if (it.index >= it.phnum) return null;
+        defer it.index += 1;
 
-pub fn SectionHeaderIterator(comptime ParseSource: anytype) type {
-    return struct {
-        elf_header: Header,
-        parse_source: ParseSource,
-        index: usize = 0,
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
+        const offset = it.phoff + size * it.index;
+        var reader = Io.Reader.fixed(it.buf[offset..]);
 
-        pub fn next(self: *@This()) !?Elf64_Shdr {
-            if (self.index >= self.elf_header.shnum) return null;
-            defer self.index += 1;
+        return try takeProgramHeader(&reader, it.is_64, it.endian);
+    }
+};
 
-            if (self.elf_header.is_64) {
-                var shdr: Elf64_Shdr = undefined;
-                const offset = self.elf_header.shoff + @sizeOf(@TypeOf(shdr)) * self.index;
-                try self.parse_source.seekableStream().seekTo(offset);
-                try self.parse_source.reader().readNoEof(mem.asBytes(&shdr));
-
-                // ELF endianness matches native endianness.
-                if (self.elf_header.endian == native_endian) return shdr;
-
-                // Convert fields to native endianness.
-                mem.byteSwapAllFields(Elf64_Shdr, &shdr);
-                return shdr;
-            }
-
-            var shdr: Elf32_Shdr = undefined;
-            const offset = self.elf_header.shoff + @sizeOf(@TypeOf(shdr)) * self.index;
-            try self.parse_source.seekableStream().seekTo(offset);
-            try self.parse_source.reader().readNoEof(mem.asBytes(&shdr));
-
-            // ELF endianness does NOT match native endianness.
-            if (self.elf_header.endian != native_endian) {
-                // Convert fields to native endianness.
-                mem.byteSwapAllFields(Elf32_Shdr, &shdr);
-            }
-
-            // Convert 32-bit header to 64-bit.
-            return Elf64_Shdr{
-                .sh_name = shdr.sh_name,
-                .sh_type = shdr.sh_type,
-                .sh_flags = shdr.sh_flags,
-                .sh_addr = shdr.sh_addr,
-                .sh_offset = shdr.sh_offset,
-                .sh_size = shdr.sh_size,
-                .sh_link = shdr.sh_link,
-                .sh_info = shdr.sh_info,
-                .sh_addralign = shdr.sh_addralign,
-                .sh_entsize = shdr.sh_entsize,
-            };
-        }
-    };
-}
-
-pub fn int(is_64: bool, need_bswap: bool, int_32: anytype, int_64: anytype) @TypeOf(int_64) {
+pub fn takeProgramHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64_Phdr {
     if (is_64) {
-        if (need_bswap) {
-            return @byteSwap(int_64);
-        } else {
-            return int_64;
-        }
-    } else {
-        return int32(need_bswap, int_32, @TypeOf(int_64));
+        const phdr = try reader.takeStruct(Elf64_Phdr, endian);
+        return phdr;
     }
+
+    const phdr = try reader.takeStruct(Elf32_Phdr, endian);
+    return .{
+        .p_type = phdr.p_type,
+        .p_offset = phdr.p_offset,
+        .p_vaddr = phdr.p_vaddr,
+        .p_paddr = phdr.p_paddr,
+        .p_filesz = phdr.p_filesz,
+        .p_memsz = phdr.p_memsz,
+        .p_flags = phdr.p_flags,
+        .p_align = phdr.p_align,
+    };
 }
 
-pub fn int32(need_bswap: bool, int_32: anytype, comptime Int64: anytype) Int64 {
-    if (need_bswap) {
-        return @byteSwap(int_32);
-    } else {
-        return int_32;
+pub const SectionHeaderIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    shnum: u16,
+    shoff: u64,
+
+    file_reader: *Io.File.Reader,
+    index: usize = 0,
+
+    pub fn next(it: *SectionHeaderIterator) !?Elf64_Shdr {
+        if (it.index >= it.shnum) return null;
+        defer it.index += 1;
+
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Shdr) else @sizeOf(Elf32_Shdr);
+        const offset = it.shoff + size * it.index;
+        try it.file_reader.seekTo(offset);
+
+        return try takeSectionHeader(&it.file_reader.interface, it.is_64, it.endian);
     }
+};
+
+pub const SectionHeaderBufferIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    shnum: u16,
+    shoff: u64,
+
+    buf: []const u8,
+    index: usize = 0,
+
+    pub fn next(it: *SectionHeaderBufferIterator) !?Elf64_Shdr {
+        if (it.index >= it.shnum) return null;
+        defer it.index += 1;
+
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Shdr) else @sizeOf(Elf32_Shdr);
+        const offset = it.shoff + size * it.index;
+        if (offset > it.buf.len) return error.EndOfStream;
+        var reader = Io.Reader.fixed(it.buf[@intCast(offset)..]);
+
+        return try takeSectionHeader(&reader, it.is_64, it.endian);
+    }
+};
+
+pub fn takeSectionHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64_Shdr {
+    if (is_64) {
+        const shdr = try reader.takeStruct(Elf64_Shdr, endian);
+        return shdr;
+    }
+
+    const shdr = try reader.takeStruct(Elf32_Shdr, endian);
+    return .{
+        .sh_name = shdr.sh_name,
+        .sh_type = shdr.sh_type,
+        .sh_flags = shdr.sh_flags,
+        .sh_addr = shdr.sh_addr,
+        .sh_offset = shdr.sh_offset,
+        .sh_size = shdr.sh_size,
+        .sh_link = shdr.sh_link,
+        .sh_info = shdr.sh_info,
+        .sh_addralign = shdr.sh_addralign,
+        .sh_entsize = shdr.sh_entsize,
+    };
 }
 
-pub const EI_NIDENT = 16;
+pub const DynamicSectionIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    offset: u64,
+    end_offset: u64,
 
-pub const EI_CLASS = 4;
-pub const ELFCLASSNONE = 0;
-pub const ELFCLASS32 = 1;
-pub const ELFCLASS64 = 2;
-pub const ELFCLASSNUM = 3;
+    file_reader: *Io.File.Reader,
 
-pub const EI_DATA = 5;
-pub const ELFDATANONE = 0;
-pub const ELFDATA2LSB = 1;
-pub const ELFDATA2MSB = 2;
-pub const ELFDATANUM = 3;
+    pub fn next(it: *DynamicSectionIterator) !?Elf64_Dyn {
+        if (it.offset >= it.end_offset) return null;
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Dyn) else @sizeOf(Elf32_Dyn);
+        defer it.offset += size;
+        try it.file_reader.seekTo(it.offset);
+        return try takeDynamicSection(&it.file_reader.interface, it.is_64, it.endian);
+    }
+};
 
-pub const EI_VERSION = 6;
+pub const DynamicSectionBufferIterator = struct {
+    is_64: bool,
+    endian: Endian,
+    offset: u64,
+    end_offset: u64,
 
-pub const Elf32_Half = u16;
-pub const Elf64_Half = u16;
-pub const Elf32_Word = u32;
-pub const Elf32_Sword = i32;
-pub const Elf64_Word = u32;
-pub const Elf64_Sword = i32;
-pub const Elf32_Xword = u64;
-pub const Elf32_Sxword = i64;
-pub const Elf64_Xword = u64;
+    buf: []const u8,
+
+    pub fn next(it: *DynamicSectionBufferIterator) !?Elf64_Dyn {
+        if (it.offset >= it.end_offset) return null;
+        const size: u64 = if (it.is_64) @sizeOf(Elf64_Dyn) else @sizeOf(Elf32_Dyn);
+        defer it.offset += size;
+        var reader: std.Io.Reader = .fixed(it.buf[it.offset..]);
+        return try takeDynamicSection(&reader, it.is_64, it.endian);
+    }
+};
+
+pub fn takeDynamicSection(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64_Dyn {
+    if (is_64) {
+        const dyn = try reader.takeStruct(Elf64_Dyn, endian);
+        return dyn;
+    }
+
+    const dyn = try reader.takeStruct(Elf32_Dyn, endian);
+    return .{
+        .d_tag = dyn.d_tag,
+        .d_val = dyn.d_val,
+    };
+}
+
+pub const EI = struct {
+    pub const CLASS = 4;
+    pub const DATA = 5;
+    pub const VERSION = 6;
+    pub const OSABI = 7;
+    pub const ABIVERSION = 8;
+    pub const PAD = 9;
+    pub const NIDENT = 16;
+};
+
+/// Deprecated, use `std.elf.EI.CLASS`
+pub const EI_CLASS = EI.CLASS;
+/// Deprecated, use `std.elf.EI.DATA`
+pub const EI_DATA = EI.DATA;
+/// Deprecated, use `std.elf.EI.VERSION`
+pub const EI_VERSION = EI.VERSION;
+/// Deprecated, use `std.elf.EI.OSABI`
+pub const EI_OSABI = EI.OSABI;
+/// Deprecated, use `std.elf.EI.ABIVERSION`
+pub const EI_ABIVERSION = EI.ABIVERSION;
+/// Deprecated, use `std.elf.EI.PAD`
+pub const EI_PAD = EI.PAD;
+/// Deprecated, use `std.elf.EI.NIDENT`
+pub const EI_NIDENT = EI.NIDENT;
+
+pub const Half = u16;
+pub const Word = u32;
+pub const Sword = i32;
+pub const Xword = u64;
+pub const Sxword = i64;
+pub const Section = u16;
+pub const Elf32 = struct {
+    pub const Addr = u32;
+    pub const Off = u32;
+    pub const Ehdr = extern struct {
+        ident: [EI.NIDENT]u8,
+        type: ET,
+        machine: EM,
+        version: Word,
+        entry: Elf32.Addr,
+        phoff: Elf32.Off,
+        shoff: Elf32.Off,
+        flags: Word,
+        ehsize: Half,
+        phentsize: Half,
+        phnum: Half,
+        shentsize: Half,
+        shnum: Half,
+        shstrndx: Half,
+    };
+    pub const Phdr = extern struct {
+        type: PT,
+        offset: Elf32.Off,
+        vaddr: Elf32.Addr,
+        paddr: Elf32.Addr,
+        filesz: Word,
+        memsz: Word,
+        flags: PF,
+        @"align": Word,
+    };
+    pub const Shdr = extern struct {
+        name: Word,
+        type: SHT,
+        flags: packed struct { shf: SHF },
+        addr: Elf32.Addr,
+        offset: Elf32.Off,
+        size: Word,
+        link: Word,
+        info: Word,
+        addralign: Word,
+        entsize: Word,
+    };
+    pub const Chdr = extern struct {
+        type: COMPRESS,
+        size: Word,
+        addralign: Word,
+    };
+    pub const Sym = extern struct {
+        name: Word,
+        value: Elf32.Addr,
+        size: Word,
+        info: Info,
+        other: Other,
+        shndx: Section,
+
+        pub const Info = packed struct(u8) {
+            type: STT,
+            bind: STB,
+        };
+
+        pub const Other = packed struct(u8) {
+            visibility: STV,
+            unused: u5 = 0,
+        };
+    };
+    pub const Rel = extern struct {
+        offset: Elf32.Addr,
+        info: Info,
+        addend: u0 = 0,
+
+        pub const Info = packed struct(u32) {
+            type: u8,
+            sym: u24,
+        };
+    };
+    pub const Rela = extern struct {
+        offset: Elf32.Addr,
+        info: Info,
+        addend: i32,
+
+        pub const Info = Elf32.Rel.Info;
+    };
+    comptime {
+        assert(@sizeOf(Elf32.Ehdr) == 52);
+        assert(@sizeOf(Elf32.Phdr) == 32);
+        assert(@sizeOf(Elf32.Shdr) == 40);
+        assert(@sizeOf(Elf32.Sym) == 16);
+        assert(@sizeOf(Elf32.Rel) == 8);
+        assert(@sizeOf(Elf32.Rela) == 12);
+    }
+};
+pub const Elf64 = struct {
+    pub const Addr = u64;
+    pub const Off = u64;
+    pub const Ehdr = extern struct {
+        ident: [EI.NIDENT]u8,
+        type: ET,
+        machine: EM,
+        version: Word,
+        entry: Elf64.Addr,
+        phoff: Elf64.Off,
+        shoff: Elf64.Off,
+        flags: Word,
+        ehsize: Half,
+        phentsize: Half,
+        phnum: Half,
+        shentsize: Half,
+        shnum: Half,
+        shstrndx: Half,
+    };
+    pub const Phdr = extern struct {
+        type: PT,
+        flags: PF,
+        offset: Elf64.Off,
+        vaddr: Elf64.Addr,
+        paddr: Elf64.Addr,
+        filesz: Xword,
+        memsz: Xword,
+        @"align": Xword,
+    };
+    pub const Shdr = extern struct {
+        name: Word,
+        type: SHT,
+        flags: packed struct { shf: SHF, unused: Word = 0 },
+        addr: Elf64.Addr,
+        offset: Elf64.Off,
+        size: Xword,
+        link: Word,
+        info: Word,
+        addralign: Xword,
+        entsize: Xword,
+    };
+    pub const Chdr = extern struct {
+        type: COMPRESS,
+        reserved: Word = 0,
+        size: Xword,
+        addralign: Xword,
+    };
+    pub const Sym = extern struct {
+        name: Word,
+        info: Info,
+        other: Other,
+        shndx: Section,
+        value: Elf64.Addr,
+        size: Xword,
+
+        pub const Info = Elf32.Sym.Info;
+        pub const Other = Elf32.Sym.Other;
+    };
+    pub const Rel = extern struct {
+        offset: Elf64.Addr,
+        info: Info,
+        addend: u0 = 0,
+
+        pub const Info = packed struct(u64) {
+            type: u32,
+            sym: u32,
+        };
+    };
+    pub const Rela = extern struct {
+        offset: Elf64.Addr,
+        info: Info,
+        addend: i64,
+
+        pub const Info = Elf64.Rel.Info;
+    };
+    comptime {
+        assert(@sizeOf(Elf64.Ehdr) == 64);
+        assert(@sizeOf(Elf64.Phdr) == 56);
+        assert(@sizeOf(Elf64.Shdr) == 64);
+        assert(@sizeOf(Elf64.Sym) == 24);
+        assert(@sizeOf(Elf64.Rel) == 16);
+        assert(@sizeOf(Elf64.Rela) == 24);
+    }
+};
+pub const ElfN = switch (@sizeOf(usize)) {
+    4 => Elf32,
+    8 => Elf64,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
+
+/// Deprecated, use `std.elf.Xword`
+pub const Elf32_Xword = Xword;
+/// Deprecated, use `std.elf.Sxword`
+pub const Elf32_Sxword = Sxword;
+/// Deprecated, use `std.elf.Xword`
+pub const Elf64_Xword = Xword;
+/// Deprecated, use `std.elf.Sxword`
 pub const Elf64_Sxword = i64;
+/// Deprecated, use `std.elf.Elf32.Addr`
 pub const Elf32_Addr = u32;
+/// Deprecated, use `std.elf.Elf64.Addr`
 pub const Elf64_Addr = u64;
+/// Deprecated, use `std.elf.Elf32.Off`
 pub const Elf32_Off = u32;
+/// Deprecated, use `std.elf.Elf64.Off`
 pub const Elf64_Off = u64;
+/// Deprecated, use `std.elf.Section`
 pub const Elf32_Section = u16;
+/// Deprecated, use `std.elf.Section`
 pub const Elf64_Section = u16;
-pub const Elf32_Versym = Elf32_Half;
-pub const Elf64_Versym = Elf64_Half;
+/// Deprecated, use `std.elf.Elf32.Ehdr`
 pub const Elf32_Ehdr = extern struct {
     e_ident: [EI_NIDENT]u8,
     e_type: ET,
     e_machine: EM,
-    e_version: Elf32_Word,
+    e_version: Word,
     e_entry: Elf32_Addr,
     e_phoff: Elf32_Off,
     e_shoff: Elf32_Off,
-    e_flags: Elf32_Word,
-    e_ehsize: Elf32_Half,
-    e_phentsize: Elf32_Half,
-    e_phnum: Elf32_Half,
-    e_shentsize: Elf32_Half,
-    e_shnum: Elf32_Half,
-    e_shstrndx: Elf32_Half,
+    e_flags: Word,
+    e_ehsize: Half,
+    e_phentsize: Half,
+    e_phnum: Half,
+    e_shentsize: Half,
+    e_shnum: Half,
+    e_shstrndx: Half,
 };
+/// Deprecated, use `std.elf.Elf64.Ehdr`
 pub const Elf64_Ehdr = extern struct {
-    e_ident: [EI_NIDENT]u8,
+    e_ident: [EI.NIDENT]u8,
     e_type: ET,
     e_machine: EM,
-    e_version: Elf64_Word,
+    e_version: Word,
     e_entry: Elf64_Addr,
     e_phoff: Elf64_Off,
     e_shoff: Elf64_Off,
-    e_flags: Elf64_Word,
-    e_ehsize: Elf64_Half,
-    e_phentsize: Elf64_Half,
-    e_phnum: Elf64_Half,
-    e_shentsize: Elf64_Half,
-    e_shnum: Elf64_Half,
-    e_shstrndx: Elf64_Half,
+    e_flags: Word,
+    e_ehsize: Half,
+    e_phentsize: Half,
+    e_phnum: Half,
+    e_shentsize: Half,
+    e_shnum: Half,
+    e_shstrndx: Half,
 };
+/// Deprecated, use `std.elf.Elf32.Phdr`
 pub const Elf32_Phdr = extern struct {
-    p_type: Elf32_Word,
+    p_type: Word,
     p_offset: Elf32_Off,
     p_vaddr: Elf32_Addr,
     p_paddr: Elf32_Addr,
-    p_filesz: Elf32_Word,
-    p_memsz: Elf32_Word,
-    p_flags: Elf32_Word,
-    p_align: Elf32_Word,
+    p_filesz: Word,
+    p_memsz: Word,
+    p_flags: Word,
+    p_align: Word,
 };
+/// Deprecated, use `std.elf.Elf64.Phdr`
 pub const Elf64_Phdr = extern struct {
-    p_type: Elf64_Word,
-    p_flags: Elf64_Word,
+    p_type: Word,
+    p_flags: Word,
     p_offset: Elf64_Off,
     p_vaddr: Elf64_Addr,
     p_paddr: Elf64_Addr,
@@ -740,45 +1295,50 @@ pub const Elf64_Phdr = extern struct {
     p_memsz: Elf64_Xword,
     p_align: Elf64_Xword,
 };
+/// Deprecated, use `std.elf.Elf32.Shdr`
 pub const Elf32_Shdr = extern struct {
-    sh_name: Elf32_Word,
-    sh_type: Elf32_Word,
-    sh_flags: Elf32_Word,
+    sh_name: Word,
+    sh_type: Word,
+    sh_flags: Word,
     sh_addr: Elf32_Addr,
     sh_offset: Elf32_Off,
-    sh_size: Elf32_Word,
-    sh_link: Elf32_Word,
-    sh_info: Elf32_Word,
-    sh_addralign: Elf32_Word,
-    sh_entsize: Elf32_Word,
+    sh_size: Word,
+    sh_link: Word,
+    sh_info: Word,
+    sh_addralign: Word,
+    sh_entsize: Word,
 };
+/// Deprecated, use `std.elf.Elf64.Shdr`
 pub const Elf64_Shdr = extern struct {
-    sh_name: Elf64_Word,
-    sh_type: Elf64_Word,
+    sh_name: Word,
+    sh_type: Word,
     sh_flags: Elf64_Xword,
     sh_addr: Elf64_Addr,
     sh_offset: Elf64_Off,
     sh_size: Elf64_Xword,
-    sh_link: Elf64_Word,
-    sh_info: Elf64_Word,
+    sh_link: Word,
+    sh_info: Word,
     sh_addralign: Elf64_Xword,
     sh_entsize: Elf64_Xword,
 };
+/// Deprecated, use `std.elf.Elf32.Chdr`
 pub const Elf32_Chdr = extern struct {
     ch_type: COMPRESS,
-    ch_size: Elf32_Word,
-    ch_addralign: Elf32_Word,
+    ch_size: Word,
+    ch_addralign: Word,
 };
+/// Deprecated, use `std.elf.Elf64.Chdr`
 pub const Elf64_Chdr = extern struct {
     ch_type: COMPRESS,
-    ch_reserved: Elf64_Word = 0,
+    ch_reserved: Word = 0,
     ch_size: Elf64_Xword,
     ch_addralign: Elf64_Xword,
 };
+/// Deprecated, use `std.elf.Elf32.Sym`
 pub const Elf32_Sym = extern struct {
-    st_name: Elf32_Word,
+    st_name: Word,
     st_value: Elf32_Addr,
-    st_size: Elf32_Word,
+    st_size: Word,
     st_info: u8,
     st_other: u8,
     st_shndx: Elf32_Section,
@@ -790,8 +1350,9 @@ pub const Elf32_Sym = extern struct {
         return @truncate(self.st_info >> 4);
     }
 };
+/// Deprecated, use `std.elf.Elf64.Sym`
 pub const Elf64_Sym = extern struct {
-    st_name: Elf64_Word,
+    st_name: Word,
     st_info: u8,
     st_other: u8,
     st_shndx: Elf64_Section,
@@ -806,16 +1367,16 @@ pub const Elf64_Sym = extern struct {
     }
 };
 pub const Elf32_Syminfo = extern struct {
-    si_boundto: Elf32_Half,
-    si_flags: Elf32_Half,
+    si_boundto: Half,
+    si_flags: Half,
 };
 pub const Elf64_Syminfo = extern struct {
-    si_boundto: Elf64_Half,
-    si_flags: Elf64_Half,
+    si_boundto: Half,
+    si_flags: Half,
 };
 pub const Elf32_Rel = extern struct {
     r_offset: Elf32_Addr,
-    r_info: Elf32_Word,
+    r_info: Word,
 
     pub inline fn r_sym(self: @This()) u24 {
         return @truncate(self.r_info >> 8);
@@ -837,8 +1398,8 @@ pub const Elf64_Rel = extern struct {
 };
 pub const Elf32_Rela = extern struct {
     r_offset: Elf32_Addr,
-    r_info: Elf32_Word,
-    r_addend: Elf32_Sword,
+    r_info: Word,
+    r_addend: Sword,
 
     pub inline fn r_sym(self: @This()) u24 {
         return @truncate(self.r_info >> 8);
@@ -859,67 +1420,49 @@ pub const Elf64_Rela = extern struct {
         return @truncate(self.r_info);
     }
 };
+pub const Elf32_Relr = Word;
+pub const Elf64_Relr = Elf64_Xword;
 pub const Elf32_Dyn = extern struct {
-    d_tag: Elf32_Sword,
+    d_tag: Sword,
     d_val: Elf32_Addr,
 };
 pub const Elf64_Dyn = extern struct {
     d_tag: Elf64_Sxword,
     d_val: Elf64_Addr,
 };
-pub const Elf32_Verdef = extern struct {
-    vd_version: Elf32_Half,
-    vd_flags: Elf32_Half,
-    vd_ndx: Elf32_Half,
-    vd_cnt: Elf32_Half,
-    vd_hash: Elf32_Word,
-    vd_aux: Elf32_Word,
-    vd_next: Elf32_Word,
+pub const Verdef = extern struct {
+    version: Half,
+    flags: Half,
+    ndx: VER_NDX,
+    cnt: Half,
+    hash: Word,
+    aux: Word,
+    next: Word,
 };
-pub const Elf64_Verdef = extern struct {
-    vd_version: Elf64_Half,
-    vd_flags: Elf64_Half,
-    vd_ndx: Elf64_Half,
-    vd_cnt: Elf64_Half,
-    vd_hash: Elf64_Word,
-    vd_aux: Elf64_Word,
-    vd_next: Elf64_Word,
-};
-pub const Elf32_Verdaux = extern struct {
-    vda_name: Elf32_Word,
-    vda_next: Elf32_Word,
-};
-pub const Elf64_Verdaux = extern struct {
-    vda_name: Elf64_Word,
-    vda_next: Elf64_Word,
+pub const Verdaux = extern struct {
+    name: Word,
+    next: Word,
 };
 pub const Elf32_Verneed = extern struct {
-    vn_version: Elf32_Half,
-    vn_cnt: Elf32_Half,
-    vn_file: Elf32_Word,
-    vn_aux: Elf32_Word,
-    vn_next: Elf32_Word,
+    vn_version: Half,
+    vn_cnt: Half,
+    vn_file: Word,
+    vn_aux: Word,
+    vn_next: Word,
 };
 pub const Elf64_Verneed = extern struct {
-    vn_version: Elf64_Half,
-    vn_cnt: Elf64_Half,
-    vn_file: Elf64_Word,
-    vn_aux: Elf64_Word,
-    vn_next: Elf64_Word,
+    vn_version: Half,
+    vn_cnt: Half,
+    vn_file: Word,
+    vn_aux: Word,
+    vn_next: Word,
 };
-pub const Elf32_Vernaux = extern struct {
-    vna_hash: Elf32_Word,
-    vna_flags: Elf32_Half,
-    vna_other: Elf32_Half,
-    vna_name: Elf32_Word,
-    vna_next: Elf32_Word,
-};
-pub const Elf64_Vernaux = extern struct {
-    vna_hash: Elf64_Word,
-    vna_flags: Elf64_Half,
-    vna_other: Elf64_Half,
-    vna_name: Elf64_Word,
-    vna_next: Elf64_Word,
+pub const Vernaux = extern struct {
+    hash: Word,
+    flags: Half,
+    other: Half,
+    name: Word,
+    next: Word,
 };
 pub const Elf32_auxv_t = extern struct {
     a_type: u32,
@@ -934,104 +1477,95 @@ pub const Elf64_auxv_t = extern struct {
     },
 };
 pub const Elf32_Nhdr = extern struct {
-    n_namesz: Elf32_Word,
-    n_descsz: Elf32_Word,
-    n_type: Elf32_Word,
+    n_namesz: Word,
+    n_descsz: Word,
+    n_type: Word,
 };
 pub const Elf64_Nhdr = extern struct {
-    n_namesz: Elf64_Word,
-    n_descsz: Elf64_Word,
-    n_type: Elf64_Word,
+    n_namesz: Word,
+    n_descsz: Word,
+    n_type: Word,
 };
 pub const Elf32_Move = extern struct {
     m_value: Elf32_Xword,
-    m_info: Elf32_Word,
-    m_poffset: Elf32_Word,
-    m_repeat: Elf32_Half,
-    m_stride: Elf32_Half,
+    m_info: Word,
+    m_poffset: Word,
+    m_repeat: Half,
+    m_stride: Half,
 };
 pub const Elf64_Move = extern struct {
     m_value: Elf64_Xword,
     m_info: Elf64_Xword,
     m_poffset: Elf64_Xword,
-    m_repeat: Elf64_Half,
-    m_stride: Elf64_Half,
+    m_repeat: Half,
+    m_stride: Half,
 };
 pub const Elf32_gptab = extern union {
     gt_header: extern struct {
-        gt_current_g_value: Elf32_Word,
-        gt_unused: Elf32_Word,
+        gt_current_g_value: Word,
+        gt_unused: Word,
     },
     gt_entry: extern struct {
-        gt_g_value: Elf32_Word,
-        gt_bytes: Elf32_Word,
+        gt_g_value: Word,
+        gt_bytes: Word,
     },
 };
 pub const Elf32_RegInfo = extern struct {
-    ri_gprmask: Elf32_Word,
-    ri_cprmask: [4]Elf32_Word,
-    ri_gp_value: Elf32_Sword,
+    ri_gprmask: Word,
+    ri_cprmask: [4]Word,
+    ri_gp_value: Sword,
 };
 pub const Elf_Options = extern struct {
     kind: u8,
     size: u8,
     section: Elf32_Section,
-    info: Elf32_Word,
+    info: Word,
 };
 pub const Elf_Options_Hw = extern struct {
-    hwp_flags1: Elf32_Word,
-    hwp_flags2: Elf32_Word,
+    hwp_flags1: Word,
+    hwp_flags2: Word,
 };
 pub const Elf32_Lib = extern struct {
-    l_name: Elf32_Word,
-    l_time_stamp: Elf32_Word,
-    l_checksum: Elf32_Word,
-    l_version: Elf32_Word,
-    l_flags: Elf32_Word,
+    l_name: Word,
+    l_time_stamp: Word,
+    l_checksum: Word,
+    l_version: Word,
+    l_flags: Word,
 };
 pub const Elf64_Lib = extern struct {
-    l_name: Elf64_Word,
-    l_time_stamp: Elf64_Word,
-    l_checksum: Elf64_Word,
-    l_version: Elf64_Word,
-    l_flags: Elf64_Word,
+    l_name: Word,
+    l_time_stamp: Word,
+    l_checksum: Word,
+    l_version: Word,
+    l_flags: Word,
 };
 pub const Elf32_Conflict = Elf32_Addr;
 pub const Elf_MIPS_ABIFlags_v0 = extern struct {
-    version: Elf32_Half,
+    version: Half,
     isa_level: u8,
     isa_rev: u8,
     gpr_size: u8,
     cpr1_size: u8,
     cpr2_size: u8,
     fp_abi: u8,
-    isa_ext: Elf32_Word,
-    ases: Elf32_Word,
-    flags1: Elf32_Word,
-    flags2: Elf32_Word,
+    isa_ext: Word,
+    ases: Word,
+    flags1: Word,
+    flags2: Word,
 };
-
-comptime {
-    assert(@sizeOf(Elf32_Ehdr) == 52);
-    assert(@sizeOf(Elf64_Ehdr) == 64);
-
-    assert(@sizeOf(Elf32_Phdr) == 32);
-    assert(@sizeOf(Elf64_Phdr) == 56);
-
-    assert(@sizeOf(Elf32_Shdr) == 40);
-    assert(@sizeOf(Elf64_Shdr) == 64);
-}
 
 pub const Auxv = switch (@sizeOf(usize)) {
     4 => Elf32_auxv_t,
     8 => Elf64_auxv_t,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+/// Deprecated, use `std.elf.ElfN.Ehdr`
 pub const Ehdr = switch (@sizeOf(usize)) {
     4 => Elf32_Ehdr,
     8 => Elf64_Ehdr,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+/// Deprecated, use `std.elf.ElfN.Phdr`
 pub const Phdr = switch (@sizeOf(usize)) {
     4 => Elf32_Phdr,
     8 => Elf64_Phdr,
@@ -1052,40 +1586,122 @@ pub const Rela = switch (@sizeOf(usize)) {
     8 => Elf64_Rela,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+pub const Relr = switch (@sizeOf(usize)) {
+    4 => Elf32_Relr,
+    8 => Elf64_Relr,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
 pub const Shdr = switch (@sizeOf(usize)) {
     4 => Elf32_Shdr,
     8 => Elf64_Shdr,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+/// Deprecated, use `std.elf.ElfN.Chdr`
 pub const Chdr = switch (@sizeOf(usize)) {
     4 => Elf32_Chdr,
     8 => Elf64_Chdr,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+/// Deprecated, use `std.elf.ElfN.Sym`
 pub const Sym = switch (@sizeOf(usize)) {
     4 => Elf32_Sym,
     8 => Elf64_Sym,
     else => @compileError("expected pointer size of 32 or 64"),
 };
-pub const Verdef = switch (@sizeOf(usize)) {
-    4 => Elf32_Verdef,
-    8 => Elf64_Verdef,
-    else => @compileError("expected pointer size of 32 or 64"),
+/// Deprecated, use `std.elf.ElfN.Addr`
+pub const Addr = ElfN.Addr;
+
+/// Deprecated, use `@intFromEnum(std.elf.CLASS.NONE)`
+pub const ELFCLASSNONE = @intFromEnum(CLASS.NONE);
+/// Deprecated, use `@intFromEnum(std.elf.CLASS.@"32")`
+pub const ELFCLASS32 = @intFromEnum(CLASS.@"32");
+/// Deprecated, use `@intFromEnum(std.elf.CLASS.@"64")`
+pub const ELFCLASS64 = @intFromEnum(CLASS.@"64");
+/// Deprecated, use `@intFromEnum(std.elf.CLASS.NUM)`
+pub const ELFCLASSNUM = CLASS.NUM;
+pub const CLASS = enum(u8) {
+    NONE = 0,
+    @"32" = 1,
+    @"64" = 2,
+    _,
+
+    pub const NUM = @typeInfo(CLASS).@"enum".fields.len;
+
+    pub fn ElfN(comptime class: CLASS) type {
+        return switch (class) {
+            .NONE, _ => comptime unreachable,
+            .@"32" => Elf32,
+            .@"64" => Elf64,
+        };
+    }
 };
-pub const Verdaux = switch (@sizeOf(usize)) {
-    4 => Elf32_Verdaux,
-    8 => Elf64_Verdaux,
-    else => @compileError("expected pointer size of 32 or 64"),
+
+/// Deprecated, use `@intFromEnum(std.elf.DATA.NONE)`
+pub const ELFDATANONE = @intFromEnum(DATA.NONE);
+/// Deprecated, use `@intFromEnum(std.elf.DATA.@"2LSB")`
+pub const ELFDATA2LSB = @intFromEnum(DATA.@"2LSB");
+/// Deprecated, use `@intFromEnum(std.elf.DATA.@"2MSB")`
+pub const ELFDATA2MSB = @intFromEnum(DATA.@"2MSB");
+/// Deprecated, use `@intFromEnum(std.elf.DATA.NUM)`
+pub const ELFDATANUM = DATA.NUM;
+pub const DATA = enum(u8) {
+    NONE = 0,
+    @"2LSB" = 1,
+    @"2MSB" = 2,
+    _,
+
+    pub const NUM = @typeInfo(DATA).@"enum".fields.len;
 };
-pub const Addr = switch (@sizeOf(usize)) {
-    4 => Elf32_Addr,
-    8 => Elf64_Addr,
-    else => @compileError("expected pointer size of 32 or 64"),
-};
-pub const Half = switch (@sizeOf(usize)) {
-    4 => Elf32_Half,
-    8 => Elf64_Half,
-    else => @compileError("expected pointer size of 32 or 64"),
+
+pub const OSABI = enum(u8) {
+    /// UNIX System V ABI
+    NONE = 0,
+    /// HP-UX operating system
+    HPUX = 1,
+    /// NetBSD
+    NETBSD = 2,
+    /// GNU (Hurd/Linux)
+    GNU = 3,
+    /// Solaris
+    SOLARIS = 6,
+    /// AIX
+    AIX = 7,
+    /// IRIX
+    IRIX = 8,
+    /// FreeBSD
+    FREEBSD = 9,
+    /// TRU64 UNIX
+    TRU64 = 10,
+    /// Novell Modesto
+    MODESTO = 11,
+    /// OpenBSD
+    OPENBSD = 12,
+    /// OpenVMS
+    OPENVMS = 13,
+    /// Hewlett-Packard Non-Stop Kernel
+    NSK = 14,
+    /// AROS
+    AROS = 15,
+    /// FenixOS
+    FENIXOS = 16,
+    /// Nuxi CloudABI
+    CLOUDABI = 17,
+    /// Stratus Technologies OpenVOS
+    OPENVOS = 18,
+    /// NVIDIA CUDA architecture (not gABI assigned)
+    CUDA = 51,
+    /// AMD HSA Runtime (not gABI assigned)
+    AMDGPU_HSA = 64,
+    /// AMD PAL Runtime (not gABI assigned)
+    AMDGPU_PAL = 65,
+    /// AMD Mesa3D Runtime (not gABI assigned)
+    AMDGPU_MESA3D = 66,
+    /// ARM (not gABI assigned)
+    ARM = 97,
+    /// Standalone (embedded) application (not gABI assigned)
+    STANDALONE = 255,
+
+    _,
 };
 
 /// Machine architectures.
@@ -1095,575 +1711,478 @@ pub const Half = switch (@sizeOf(usize)) {
 pub const EM = enum(u16) {
     /// No machine
     NONE = 0,
-
     /// AT&T WE 32100
     M32 = 1,
-
-    /// SPARC
+    /// SUN SPARC
     SPARC = 2,
-
-    /// Intel 386
+    /// Intel 80386
     @"386" = 3,
-
-    /// Motorola 68000
+    /// Motorola m68k family
     @"68K" = 4,
-
-    /// Motorola 88000
+    /// Motorola m88k family
     @"88K" = 5,
-
     /// Intel MCU
     IAMCU = 6,
-
     /// Intel 80860
     @"860" = 7,
-
-    /// MIPS R3000
+    /// MIPS R3000 (officially, big-endian only)
     MIPS = 8,
-
     /// IBM System/370
     S370 = 9,
-
-    /// MIPS RS3000 Little-endian
+    /// MIPS R3000 (and R4000) little-endian, Oct 4 1993 Draft (deprecated)
     MIPS_RS3_LE = 10,
-
-    /// SPU Mark II
-    SPU_2 = 13,
-
-    /// Hewlett-Packard PA-RISC
+    /// Old version of Sparc v9, from before the ABI (not gABI assigned)
+    OLD_SPARCV9 = 11,
+    /// HPPA
     PARISC = 15,
-
-    /// Fujitsu VPP500
+    /// Fujitsu VPP500 (also old version of PowerPC, which was not gABI assigned)
     VPP500 = 17,
-
-    /// Enhanced instruction set SPARC
+    /// Sun's "v8plus"
     SPARC32PLUS = 18,
-
     /// Intel 80960
     @"960" = 19,
-
     /// PowerPC
     PPC = 20,
-
-    /// PowerPC64
+    /// 64-bit PowerPC
     PPC64 = 21,
-
-    /// IBM System/390
+    /// IBM S/390
     S390 = 22,
-
-    /// IBM SPU/SPC
+    /// Sony/Toshiba/IBM SPU
     SPU = 23,
-
-    /// NEC V800
+    /// NEC V800 series
     V800 = 36,
-
     /// Fujitsu FR20
     FR20 = 37,
-
-    /// TRW RH-32
+    /// TRW RH32
     RH32 = 38,
-
-    /// Motorola RCE
-    RCE = 39,
-
+    /// Motorola M*Core, aka RCE (also old Fujitsu MMA, which was not gABI assigned)
+    MCORE = 39,
     /// ARM
     ARM = 40,
-
-    /// DEC Alpha
-    ALPHA = 41,
-
-    /// Hitachi SH
+    /// Digital Alpha
+    OLD_ALPHA = 41,
+    /// Renesas (formerly Hitachi) / SuperH SH
     SH = 42,
-
-    /// SPARC V9
+    /// SPARC v9 64-bit
     SPARCV9 = 43,
-
-    /// Siemens TriCore
+    /// Siemens Tricore embedded processor
     TRICORE = 44,
-
-    /// Argonaut RISC Core
+    /// ARC Cores
     ARC = 45,
-
-    /// Hitachi H8/300
+    /// Renesas (formerly Hitachi) H8/300
     H8_300 = 46,
-
-    /// Hitachi H8/300H
+    /// Renesas (formerly Hitachi) H8/300H
     H8_300H = 47,
-
-    /// Hitachi H8S
+    /// Renesas (formerly Hitachi) H8S
     H8S = 48,
-
-    /// Hitachi H8/500
+    /// Renesas (formerly Hitachi) H8/500
     H8_500 = 49,
-
-    /// Intel IA-64 processor architecture
+    /// Intel IA-64 Processor
     IA_64 = 50,
-
     /// Stanford MIPS-X
     MIPS_X = 51,
-
-    /// Motorola ColdFire
+    /// Motorola Coldfire
     COLDFIRE = 52,
-
     /// Motorola M68HC12
     @"68HC12" = 53,
-
-    /// Fujitsu MMA Multimedia Accelerator
+    /// Fujitsu Multimedia Accelerator
     MMA = 54,
-
     /// Siemens PCP
     PCP = 55,
-
     /// Sony nCPU embedded RISC processor
     NCPU = 56,
-
     /// Denso NDR1 microprocessor
     NDR1 = 57,
-
     /// Motorola Star*Core processor
     STARCORE = 58,
-
     /// Toyota ME16 processor
     ME16 = 59,
-
     /// STMicroelectronics ST100 processor
     ST100 = 60,
-
-    /// Advanced Logic Corp. TinyJ embedded processor family
+    /// Advanced Logic Corp. TinyJ embedded processor
     TINYJ = 61,
-
-    /// AMD x86-64 architecture
+    /// Advanced Micro Devices X86-64 processor
     X86_64 = 62,
-
     /// Sony DSP Processor
     PDSP = 63,
-
     /// Digital Equipment Corp. PDP-10
     PDP10 = 64,
-
     /// Digital Equipment Corp. PDP-11
     PDP11 = 65,
-
     /// Siemens FX66 microcontroller
     FX66 = 66,
-
     /// STMicroelectronics ST9+ 8/16 bit microcontroller
     ST9PLUS = 67,
-
     /// STMicroelectronics ST7 8-bit microcontroller
     ST7 = 68,
-
     /// Motorola MC68HC16 Microcontroller
     @"68HC16" = 69,
-
     /// Motorola MC68HC11 Microcontroller
     @"68HC11" = 70,
-
     /// Motorola MC68HC08 Microcontroller
     @"68HC08" = 71,
-
     /// Motorola MC68HC05 Microcontroller
     @"68HC05" = 72,
-
     /// Silicon Graphics SVx
     SVX = 73,
-
-    /// STMicroelectronics ST19 8-bit microcontroller
+    /// STMicroelectronics ST19 8-bit cpu
     ST19 = 74,
-
     /// Digital VAX
     VAX = 75,
-
     /// Axis Communications 32-bit embedded processor
     CRIS = 76,
-
-    /// Infineon Technologies 32-bit embedded processor
+    /// Infineon Technologies 32-bit embedded cpu
     JAVELIN = 77,
-
-    /// Element 14 64-bit DSP Processor
+    /// Element 14 64-bit DSP processor
     FIREPATH = 78,
-
-    /// LSI Logic 16-bit DSP Processor
+    /// LSI Logic's 16-bit DSP processor
     ZSP = 79,
-
     /// Donald Knuth's educational 64-bit processor
     MMIX = 80,
-
-    /// Harvard University machine-independent object files
+    /// Harvard's machine-independent format
     HUANY = 81,
-
     /// SiTera Prism
     PRISM = 82,
-
     /// Atmel AVR 8-bit microcontroller
     AVR = 83,
-
     /// Fujitsu FR30
     FR30 = 84,
-
     /// Mitsubishi D10V
     D10V = 85,
-
     /// Mitsubishi D30V
     D30V = 86,
-
-    /// NEC v850
+    /// Renesas V850 (formerly NEC V850)
     V850 = 87,
-
-    /// Mitsubishi M32R
+    /// Renesas M32R (formerly Mitsubishi M32R)
     M32R = 88,
-
     /// Matsushita MN10300
     MN10300 = 89,
-
     /// Matsushita MN10200
     MN10200 = 90,
-
     /// picoJava
     PJ = 91,
-
-    /// OpenRISC 32-bit embedded processor
-    OPENRISC = 92,
-
-    /// ARC International ARCompact processor (old spelling/synonym: EM_ARC_A5)
+    /// OpenRISC 1000 32-bit embedded processor
+    OR1K = 92,
+    /// ARC International ARCompact processor
     ARC_COMPACT = 93,
-
     /// Tensilica Xtensa Architecture
     XTENSA = 94,
-
-    /// Alphamosaic VideoCore processor
+    /// Alphamosaic VideoCore processor (also old Sunplus S+core7 backend magic number, which was not gABI assigned)
     VIDEOCORE = 95,
-
     /// Thompson Multimedia General Purpose Processor
     TMM_GPP = 96,
-
     /// National Semiconductor 32000 series
     NS32K = 97,
-
     /// Tenor Network TPC processor
     TPC = 98,
-
-    /// Trebia SNP 1000 processor
+    /// Trebia SNP 1000 processor (also old value for picoJava, which was not gABI assigned)
     SNP1K = 99,
-
-    /// STMicroelectronics (www.st.com) ST200
+    /// STMicroelectronics ST200 microcontroller
     ST200 = 100,
-
-    /// Ubicom IP2xxx microcontroller family
+    /// Ubicom IP2022 micro controller
     IP2K = 101,
-
     /// MAX Processor
     MAX = 102,
-
-    /// National Semiconductor CompactRISC microprocessor
+    /// National Semiconductor CompactRISC
     CR = 103,
-
     /// Fujitsu F2MC16
     F2MC16 = 104,
-
-    /// Texas Instruments embedded microcontroller msp430
+    /// TI msp430 micro controller
     MSP430 = 105,
-
-    /// Analog Devices Blackfin (DSP) processor
+    /// ADI Blackfin
     BLACKFIN = 106,
-
     /// S1C33 Family of Seiko Epson processors
     SE_C33 = 107,
-
     /// Sharp embedded microprocessor
     SEP = 108,
-
     /// Arca RISC Microprocessor
     ARCA = 109,
-
     /// Microprocessor series from PKU-Unity Ltd. and MPRC of Peking University
     UNICORE = 110,
-
     /// eXcess: 16/32/64-bit configurable embedded CPU
     EXCESS = 111,
-
     /// Icera Semiconductor Inc. Deep Execution Processor
     DXP = 112,
-
     /// Altera Nios II soft-core processor
     ALTERA_NIOS2 = 113,
-
-    /// National Semiconductor CompactRISC CRX
+    /// National Semiconductor CRX
     CRX = 114,
-
-    /// Motorola XGATE embedded processor
+    /// Motorola XGATE embedded processor (also old value for National Semiconductor CompactRISC, which was not gABI assigned)
     XGATE = 115,
-
     /// Infineon C16x/XC16x processor
     C166 = 116,
-
     /// Renesas M16C series microprocessors
     M16C = 117,
-
     /// Microchip Technology dsPIC30F Digital Signal Controller
     DSPIC30F = 118,
-
     /// Freescale Communication Engine RISC core
     CE = 119,
-
     /// Renesas M32C series microprocessors
     M32C = 120,
-
     /// Altium TSK3000 core
     TSK3000 = 131,
-
     /// Freescale RS08 embedded processor
     RS08 = 132,
-
     /// Analog Devices SHARC family of 32-bit DSP processors
     SHARC = 133,
-
     /// Cyan Technology eCOG2 microprocessor
     ECOG2 = 134,
-
-    /// Sunplus S+core7 RISC processor
-    SCORE7 = 135,
-
+    /// Sunplus S+core (and S+core7) RISC processor
+    SCORE = 135,
     /// New Japan Radio (NJR) 24-bit DSP Processor
     DSP24 = 136,
-
     /// Broadcom VideoCore III processor
     VIDEOCORE3 = 137,
-
     /// RISC processor for Lattice FPGA architecture
     LATTICEMICO32 = 138,
-
     /// Seiko Epson C17 family
     SE_C17 = 139,
-
-    /// The Texas Instruments TMS320C6000 DSP family
+    /// Texas Instruments TMS320C6000 DSP family
     TI_C6000 = 140,
-
-    /// The Texas Instruments TMS320C2000 DSP family
+    /// Texas Instruments TMS320C2000 DSP family
     TI_C2000 = 141,
-
-    /// The Texas Instruments TMS320C55x DSP family
+    /// Texas Instruments TMS320C55x DSP family
     TI_C5500 = 142,
-
+    /// Texas Instruments Application Specific RISC Processor, 32bit fetch
+    TI_ARP32 = 143,
+    /// Texas Instruments Programmable Realtime Unit
+    TI_PRU = 144,
     /// STMicroelectronics 64bit VLIW Data Signal Processor
     MMDSP_PLUS = 160,
-
     /// Cypress M8C microprocessor
     CYPRESS_M8C = 161,
-
     /// Renesas R32C series microprocessors
     R32C = 162,
-
     /// NXP Semiconductors TriMedia architecture family
     TRIMEDIA = 163,
-
-    /// Qualcomm Hexagon processor
-    HEXAGON = 164,
-
+    /// QUALCOMM DSP6 Processor
+    QDSP6 = 164,
     /// Intel 8051 and variants
     @"8051" = 165,
-
-    /// STMicroelectronics STxP7x family of configurable and extensible RISC processors
+    /// STMicroelectronics STxP7x family
     STXP7X = 166,
-
     /// Andes Technology compact code size embedded RISC processor family
     NDS32 = 167,
-
     /// Cyan Technology eCOG1X family
     ECOG1X = 168,
-
     /// Dallas Semiconductor MAXQ30 Core Micro-controllers
     MAXQ30 = 169,
-
     /// New Japan Radio (NJR) 16-bit DSP Processor
     XIMO16 = 170,
-
     /// M2000 Reconfigurable RISC Microprocessor
     MANIK = 171,
-
     /// Cray Inc. NV2 vector architecture
     CRAYNV2 = 172,
-
     /// Renesas RX family
     RX = 173,
-
-    /// Imagination Technologies META processor architecture
+    /// Imagination Technologies Meta processor architecture
     METAG = 174,
-
     /// MCST Elbrus general purpose hardware architecture
     MCST_ELBRUS = 175,
-
     /// Cyan Technology eCOG16 family
     ECOG16 = 176,
-
-    /// National Semiconductor CompactRISC CR16 16-bit microprocessor
+    /// National Semiconductor CompactRISC 16-bit processor
     CR16 = 177,
-
     /// Freescale Extended Time Processing Unit
     ETPU = 178,
-
     /// Infineon Technologies SLE9X core
     SLE9X = 179,
-
     /// Intel L10M
     L10M = 180,
-
     /// Intel K10M
     K10M = 181,
-
-    /// ARM AArch64
+    /// ARM 64-bit architecture
     AARCH64 = 183,
-
     /// Atmel Corporation 32-bit microprocessor family
     AVR32 = 185,
-
     /// STMicroeletronics STM8 8-bit microcontroller
     STM8 = 186,
-
     /// Tilera TILE64 multicore architecture family
     TILE64 = 187,
-
     /// Tilera TILEPro multicore architecture family
     TILEPRO = 188,
-
+    /// Xilinx MicroBlaze 32-bit RISC soft processor core
+    MICROBLAZE = 189,
     /// NVIDIA CUDA architecture
     CUDA = 190,
-
     /// Tilera TILE-Gx multicore architecture family
     TILEGX = 191,
-
     /// CloudShield architecture family
     CLOUDSHIELD = 192,
-
     /// KIPO-KAIST Core-A 1st generation processor family
     COREA_1ST = 193,
-
     /// KIPO-KAIST Core-A 2nd generation processor family
     COREA_2ND = 194,
-
     /// Synopsys ARCompact V2
     ARC_COMPACT2 = 195,
-
     /// Open8 8-bit RISC soft processor core
     OPEN8 = 196,
-
     /// Renesas RL78 family
     RL78 = 197,
-
     /// Broadcom VideoCore V processor
     VIDEOCORE5 = 198,
-
-    /// Renesas 78KOR family
-    @"78KOR" = 199,
-
+    /// Renesas 78K0R
+    @"78K0R" = 199,
     /// Freescale 56800EX Digital Signal Controller (DSC)
     @"56800EX" = 200,
-
     /// Beyond BA1 CPU architecture
     BA1 = 201,
-
     /// Beyond BA2 CPU architecture
     BA2 = 202,
-
     /// XMOS xCORE processor family
     XCORE = 203,
-
     /// Microchip 8-bit PIC(r) family
     MCHP_PIC = 204,
-
-    /// Reserved by Intel
-    INTEL205 = 205,
-
-    /// Reserved by Intel
-    INTEL206 = 206,
-
-    /// Reserved by Intel
-    INTEL207 = 207,
-
-    /// Reserved by Intel
-    INTEL208 = 208,
-
-    /// Reserved by Intel
-    INTEL209 = 209,
-
+    /// Intel Graphics Technology
+    INTELGT = 205,
     /// KM211 KM32 32-bit processor
     KM32 = 210,
-
     /// KM211 KMX32 32-bit processor
     KMX32 = 211,
-
     /// KM211 KMX16 16-bit processor
     KMX16 = 212,
-
     /// KM211 KMX8 8-bit processor
     KMX8 = 213,
-
     /// KM211 KVARC processor
     KVARC = 214,
-
     /// Paneve CDP architecture family
     CDP = 215,
-
     /// Cognitive Smart Memory Processor
     COGE = 216,
-
-    /// iCelero CoolEngine
+    /// Bluechip Systems CoolEngine
     COOL = 217,
-
     /// Nanoradio Optimized RISC
     NORC = 218,
-
     /// CSR Kalimba architecture family
     CSR_KALIMBA = 219,
-
+    /// Zilog Z80
+    Z80 = 220,
+    /// Controls and Data Services VISIUMcore processor
+    VISIUM = 221,
+    /// FTDI Chip FT32 high performance 32-bit RISC architecture
+    FT32 = 222,
+    /// Moxie processor family
+    MOXIE = 223,
     /// AMD GPU architecture
     AMDGPU = 224,
-
     /// RISC-V
     RISCV = 243,
-
     /// Lanai 32-bit processor
     LANAI = 244,
-
-    /// Linux kernel bpf virtual machine
+    /// CEVA Processor Architecture Family
+    CEVA = 245,
+    /// CEVA X2 Processor Family
+    CEVA_X2 = 246,
+    /// Linux BPF - in-kernel virtual machine
     BPF = 247,
-
-    /// C-SKY
+    /// Graphcore Intelligent Processing Unit
+    GRAPHCORE_IPU = 248,
+    /// Imagination Technologies
+    IMG1 = 249,
+    /// Netronome Flow Processor
+    NFP = 250,
+    /// NEC Vector Engine
+    VE = 251,
+    /// C-SKY processor family
     CSKY = 252,
+    /// Synopsys ARCv2.3 64-bit
+    ARC_COMPACT3_64 = 253,
+    /// MOS Technology MCS 6502 processor
+    MCS6502 = 254,
+    /// Synopsys ARCv2.3 32-bit
+    ARC_COMPACT3 = 255,
+    /// Kalray VLIW core of the MPPA processor family
+    KVX = 256,
+    /// WDC 65816/65C816
+    @"65816" = 257,
+    /// LoongArch
+    LOONGARCH = 258,
+    /// ChipON KungFu32
+    KF32 = 259,
+    /// LAPIS nX-U16/U8
+    U16_U8CORE = 260,
+    /// Tachyum
+    TACHYUM = 261,
+    /// NXP 56800EF Digital Signal Controller (DSC)
+    @"56800EF" = 262,
+    /// Solana Bytecode Format
+    SBF = 263,
+    /// AMD/Xilinx AIEngine architecture
+    AIENGINE = 264,
+    /// SiMa MLA
+    SIMA_MLA = 265,
+    /// Cambricon BANG
+    BANG = 266,
+    /// Loongson LoongGPU
+    LOONGGPU = 267,
+    /// Wuxi Institute of Advanced Technology SW64
+    SW64 = 268,
+    /// AVR
+    AVR_OLD = 0x1057,
+    /// MSP430
+    MSP430_OLD = 0x1059,
+    /// Morpho MT
+    MT = 0x2530,
+    /// FR30
+    CYGNUS_FR30 = 0x3330,
+    /// WebAssembly (as used by LLVM)
+    WEBASSEMBLY = 0x4157,
+    /// Infineon Technologies 16-bit microcontroller with C166-V2 core
+    XC16X = 0x4688,
+    /// Freescale S12Z
+    S12Z = 0x4def,
+    /// DLX
+    DLX = 0x5aa5,
+    /// FRV
+    CYGNUS_FRV = 0x5441,
+    /// D10V
+    CYGNUS_D10V = 0x7650,
+    /// D30V
+    CYGNUS_D30V = 0x7676,
+    /// Ubicom IP2xxx
+    IP2K_OLD = 0x8217,
+    /// Cygnus PowerPC ELF
+    CYGNUS_POWERPC = 0x9025,
+    /// Alpha
+    ALPHA = 0x9026,
+    /// Cygnus M32R ELF
+    CYGNUS_M32R = 0x9041,
+    /// V850
+    CYGNUS_V850 = 0x9080,
+    /// Old S/390
+    S390_OLD = 0xa390,
+    /// Old unofficial value for Xtensa
+    XTENSA_OLD = 0xabc7,
+    /// Xstormy16
+    XSTORMY16 = 0xad45,
+    /// MN10300
+    CYGNUS_MN10300 = 0xbeef,
+    /// MN10200
+    CYGNUS_MN10200 = 0xdead,
+    /// Renesas M32C and M16C
+    M32C_OLD = 0xfeb0,
+    /// Vitesse IQ2000
+    IQ2000 = 0xfeba,
+    /// NIOS
+    NIOS32 = 0xfebb,
+    /// Toshiba MeP
+    CYGNUS_MEP = 0xf00d,
+    /// Old unofficial value for Moxie
+    MOXIE_OLD = 0xfeed,
+    /// Old MicroBlaze
+    MICROBLAZE_OLD = 0xbaab,
+    /// Adapteva's Epiphany architecture
+    ADAPTEVA_EPIPHANY = 0x1223,
 
-    /// Fujitsu FR-V
-    FRV = 0x5441,
+    /// Parallax Propeller (P1)
+    /// This value is an unofficial ELF value used in: https://github.com/parallaxinc/propgcc
+    PROPELLER = 0x5072,
+
+    /// Parallax Propeller 2 (P2)
+    /// This value is an unofficial ELF value used in: https://github.com/ne75/llvm-project
+    PROPELLER2 = 300,
 
     _,
-
-    pub fn toTargetCpuArch(em: EM) ?std.Target.Cpu.Arch {
-        return switch (em) {
-            .AVR => .avr,
-            .MSP430 => .msp430,
-            .ARC => .arc,
-            .ARM => .arm,
-            .HEXAGON => .hexagon,
-            .@"68K" => .m68k,
-            .MIPS => .mips,
-            .MIPS_RS3_LE => .mipsel,
-            .PPC => .powerpc,
-            .SPARC => .sparc,
-            .@"386" => .x86,
-            .XCORE => .xcore,
-            .CSR_KALIMBA => .kalimba,
-            .LANAI => .lanai,
-            .AARCH64 => .aarch64,
-            .PPC64 => .powerpc64,
-            .RISCV => .riscv64,
-            .X86_64 => .x86_64,
-            .BPF => .bpfel,
-            .SPARCV9 => .sparc64,
-            .S390 => .s390x,
-            .SPU_2 => .spu_2,
-            // there's many cases we don't (yet) handle, or will never have a
-            // zig target cpu arch equivalent (such as null).
-            else => null,
-        };
-    }
 };
 
 pub const GRP_COMDAT = 1;
@@ -1765,6 +2284,108 @@ pub const SHF_MIPS_STRING = 0x80000000;
 /// Make code section unreadable when in execute-only mode
 pub const SHF_ARM_PURECODE = 0x2000000;
 
+pub const SHF = packed struct(Word) {
+    /// Section data should be writable during execution.
+    WRITE: bool = false,
+    /// Section occupies memory during program execution.
+    ALLOC: bool = false,
+    /// Section contains executable machine instructions.
+    EXECINSTR: bool = false,
+    unused3: u1 = 0,
+    /// The data in this section may be merged.
+    MERGE: bool = false,
+    /// The data in this section is null-terminated strings.
+    STRINGS: bool = false,
+    /// A field in this section holds a section header table index.
+    INFO_LINK: bool = false,
+    /// Adds special ordering requirements for link editors.
+    LINK_ORDER: bool = false,
+    /// This section requires special OS-specific processing to avoid incorrect behavior.
+    OS_NONCONFORMING: bool = false,
+    /// This section is a member of a section group.
+    GROUP: bool = false,
+    /// This section holds Thread-Local Storage.
+    TLS: bool = false,
+    /// Identifies a section containing compressed data.
+    COMPRESSED: bool = false,
+    unused12: u8 = 0,
+    OS: packed union {
+        MASK: u8,
+        GNU: packed struct(u8) {
+            unused0: u1 = 0,
+            /// Not to be GCed by the linker
+            RETAIN: bool = false,
+            unused2: u6 = 0,
+        },
+        MIPS: packed struct(u8) {
+            unused0: u4 = 0,
+            /// Section contains text/data which may be replicated in other sections.
+            /// Linker must retain only one copy.
+            NODUPES: bool = false,
+            /// Linker must generate implicit hidden weak names.
+            NAMES: bool = false,
+            /// Section data local to process.
+            LOCAL: bool = false,
+            /// Do not strip this section.
+            NOSTRIP: bool = false,
+        },
+        ARM: packed struct(u8) {
+            unused0: u5 = 0,
+            /// Make code section unreadable when in execute-only mode
+            PURECODE: bool = false,
+            unused6: u2 = 0,
+        },
+    } = .{ .MASK = 0 },
+    PROC: packed union {
+        MASK: u4,
+        XCORE: packed struct(u4) {
+            /// All sections with the "d" flag are grouped together by the linker to form
+            /// the data section and the dp register is set to the start of the section by
+            /// the boot code.
+            DP_SECTION: bool = false,
+            /// All sections with the "c" flag are grouped together by the linker to form
+            /// the constant pool and the cp register is set to the start of the constant
+            /// pool by the boot code.
+            CP_SECTION: bool = false,
+            unused2: u1 = 0,
+            /// This section is excluded from the final executable or shared library.
+            EXCLUDE: bool = false,
+        },
+        X86_64: packed struct(u4) {
+            /// If an object file section does not have this flag set, then it may not hold
+            /// more than 2GB and can be freely referred to in objects using smaller code
+            /// models. Otherwise, only objects using larger code models can refer to them.
+            /// For example, a medium code model object can refer to data in a section that
+            /// sets this flag besides being able to refer to data in a section that does
+            /// not set it; likewise, a small code model object can refer only to code in a
+            /// section that does not set this flag.
+            LARGE: bool = false,
+            unused1: u2 = 0,
+            /// This section is excluded from the final executable or shared library.
+            EXCLUDE: bool = false,
+        },
+        HEX: packed struct(u4) {
+            /// All sections with the GPREL flag are grouped into a global data area
+            /// for faster accesses
+            GPREL: bool = false,
+            unused1: u2 = 0,
+            /// This section is excluded from the final executable or shared library.
+            EXCLUDE: bool = false,
+        },
+        MIPS: packed struct(u4) {
+            /// All sections with the GPREL flag are grouped into a global data area
+            /// for faster accesses
+            GPREL: bool = false,
+            /// This section should be merged.
+            MERGE: bool = false,
+            /// Address size to be inferred from section entry size.
+            ADDR: bool = false,
+            /// Section data is string data by default.
+            STRING: bool = false,
+        },
+    } = .{ .MASK = 0 },
+};
+
 /// Execute
 pub const PF_X = 1;
 
@@ -1779,6 +2400,19 @@ pub const PF_MASKOS = 0x0ff00000;
 
 /// Bits for processor-specific semantics.
 pub const PF_MASKPROC = 0xf0000000;
+
+pub const PF = packed struct(Word) {
+    X: bool = false,
+    W: bool = false,
+    R: bool = false,
+    unused3: u17 = 0,
+    OS: packed union {
+        MASK: u8,
+    } = .{ .MASK = 0 },
+    PROC: packed union {
+        MASK: u4,
+    } = .{ .MASK = 0 },
+};
 
 /// Undefined section
 pub const SHN_UNDEF = 0;
@@ -1896,7 +2530,7 @@ pub const R_X86_64 = enum(u32) {
     _,
 };
 
-/// AArch64 relocs.
+/// AArch64 relocations.
 pub const R_AARCH64 = enum(u32) {
     /// No relocation.
     NONE = 0,
@@ -2120,7 +2754,7 @@ pub const R_AARCH64 = enum(u32) {
     TLSLE_LDST64_TPREL_LO12 = 558,
     /// Likewise; no check.
     TLSLE_LDST64_TPREL_LO12_NC = 559,
-    ///  PC-rel. load immediate 20:2.
+    /// PC-rel. load immediate 20:2.
     TLSDESC_LD_PREL19 = 560,
     /// PC-rel. ADR immediate 20:0.
     TLSDESC_ADR_PREL21 = 561,
@@ -2233,11 +2867,121 @@ pub const R_RISCV = enum(u32) {
     _,
 };
 
-pub const STV = enum(u2) {
-    DEFAULT = 0,
-    INTERNAL = 1,
-    HIDDEN = 2,
-    PROTECTED = 3,
+/// PowerPC64 relocations.
+pub const R_PPC64 = enum(u32) {
+    NONE = 0,
+    ADDR32 = 1,
+    ADDR24 = 2,
+    ADDR16 = 3,
+    ADDR16_LO = 4,
+    ADDR16_HI = 5,
+    ADDR16_HA = 6,
+    ADDR14 = 7,
+    ADDR14_BRTAKEN = 8,
+    ADDR14_BRNTAKEN = 9,
+    REL24 = 10,
+    REL14 = 11,
+    REL14_BRTAKEN = 12,
+    REL14_BRNTAKEN = 13,
+    GOT16 = 14,
+    GOT16_LO = 15,
+    GOT16_HI = 16,
+    GOT16_HA = 17,
+    COPY = 19,
+    GLOB_DAT = 20,
+    JMP_SLOT = 21,
+    RELATIVE = 22,
+    REL32 = 26,
+    PLT16_LO = 29,
+    PLT16_HI = 30,
+    PLT16_HA = 31,
+    ADDR64 = 38,
+    ADDR16_HIGHER = 39,
+    ADDR16_HIGHERA = 40,
+    ADDR16_HIGHEST = 41,
+    ADDR16_HIGHESTA = 42,
+    REL64 = 44,
+    TOC16 = 47,
+    TOC16_LO = 48,
+    TOC16_HI = 49,
+    TOC16_HA = 50,
+    TOC = 51,
+    ADDR16_DS = 56,
+    ADDR16_LO_DS = 57,
+    GOT16_DS = 58,
+    GOT16_LO_DS = 59,
+    PLT16_LO_DS = 60,
+    TOC16_DS = 63,
+    TOC16_LO_DS = 64,
+    TLS = 67,
+    DTPMOD64 = 68,
+    TPREL16 = 69,
+    TPREL16_LO = 70,
+    TPREL16_HI = 71,
+    TPREL16_HA = 72,
+    TPREL64 = 73,
+    DTPREL16 = 74,
+    DTPREL16_LO = 75,
+    DTPREL16_HI = 76,
+    DTPREL16_HA = 77,
+    DTPREL64 = 78,
+    GOT_TLSGD16 = 79,
+    GOT_TLSGD16_LO = 80,
+    GOT_TLSGD16_HI = 81,
+    GOT_TLSGD16_HA = 82,
+    GOT_TLSLD16 = 83,
+    GOT_TLSLD16_LO = 84,
+    GOT_TLSLD16_HI = 85,
+    GOT_TLSLD16_HA = 86,
+    GOT_TPREL16_DS = 87,
+    GOT_TPREL16_LO_DS = 88,
+    GOT_TPREL16_HI = 89,
+    GOT_TPREL16_HA = 90,
+    GOT_DTPREL16_DS = 91,
+    GOT_DTPREL16_LO_DS = 92,
+    GOT_DTPREL16_HI = 93,
+    GOT_DTPREL16_HA = 94,
+    TPREL16_DS = 95,
+    TPREL16_LO_DS = 96,
+    TPREL16_HIGHER = 97,
+    TPREL16_HIGHERA = 98,
+    TPREL16_HIGHEST = 99,
+    TPREL16_HIGHESTA = 100,
+    DTPREL16_DS = 101,
+    DTPREL16_LO_DS = 102,
+    DTPREL16_HIGHER = 103,
+    DTPREL16_HIGHERA = 104,
+    DTPREL16_HIGHEST = 105,
+    DTPREL16_HIGHESTA = 106,
+    TLSGD = 107,
+    TLSLD = 108,
+    ADDR16_HIGH = 110,
+    ADDR16_HIGHA = 111,
+    TPREL16_HIGH = 112,
+    TPREL16_HIGHA = 113,
+    DTPREL16_HIGH = 114,
+    DTPREL16_HIGHA = 115,
+    REL24_NOTOC = 116,
+    PLTSEQ = 119,
+    PLTCALL = 120,
+    PLTSEQ_NOTOC = 121,
+    PLTCALL_NOTOC = 122,
+    PCREL_OPT = 123,
+    PCREL34 = 132,
+    GOT_PCREL34 = 133,
+    PLT_PCREL34 = 134,
+    PLT_PCREL34_NOTOC = 135,
+    TPREL34 = 146,
+    DTPREL34 = 147,
+    GOT_TLSGD_PCREL34 = 148,
+    GOT_TLSLD_PCREL34 = 149,
+    GOT_TPREL_PCREL34 = 150,
+    IRELATIVE = 248,
+    REL16 = 249,
+    REL16_LO = 250,
+    REL16_HI = 251,
+    REL16_HA = 252,
+    _,
 };
 
 pub const ar_hdr = extern struct {
@@ -2263,12 +3007,12 @@ pub const ar_hdr = extern struct {
     ar_fmag: [2]u8,
 
     pub fn date(self: ar_hdr) std.fmt.ParseIntError!u64 {
-        const value = mem.trimRight(u8, &self.ar_date, &[_]u8{0x20});
+        const value = mem.trimEnd(u8, &self.ar_date, &[_]u8{0x20});
         return std.fmt.parseInt(u64, value, 10);
     }
 
     pub fn size(self: ar_hdr) std.fmt.ParseIntError!u32 {
-        const value = mem.trimRight(u8, &self.ar_size, &[_]u8{0x20});
+        const value = mem.trimEnd(u8, &self.ar_size, &[_]u8{0x20});
         return std.fmt.parseInt(u32, value, 10);
     }
 
@@ -2302,7 +3046,7 @@ pub const ar_hdr = extern struct {
     pub fn nameOffset(self: ar_hdr) std.fmt.ParseIntError!?u32 {
         const value = &self.ar_name;
         if (value[0] != '/') return null;
-        const trimmed = mem.trimRight(u8, value, &[_]u8{0x20});
+        const trimmed = mem.trimEnd(u8, value, &[_]u8{0x20});
         return try std.fmt.parseInt(u32, trimmed[1..], 10);
     }
 };
@@ -2328,3 +3072,40 @@ pub const STRNAME = genSpecialMemberName("//");
 pub const SYM64NAME = genSpecialMemberName("/SYM64/");
 pub const SYMDEFNAME = genSpecialMemberName("__.SYMDEF");
 pub const SYMDEFSORTEDNAME = genSpecialMemberName("__.SYMDEF SORTED");
+
+pub const gnu_hash = struct {
+
+    // See https://flapenguin.me/elf-dt-gnu-hash
+
+    pub const Header = extern struct {
+        nbuckets: u32,
+        symoffset: u32,
+        bloom_size: u32,
+        bloom_shift: u32,
+    };
+
+    pub const ChainEntry = packed struct(u32) {
+        end_of_chain: bool,
+        /// Contains the top bits of the hash value.
+        hash: u31,
+    };
+
+    /// Calculate the hash value for a name
+    pub fn calculate(name: []const u8) u32 {
+        var hash: u32 = 5381;
+
+        for (name) |char| {
+            hash = (hash << 5) +% hash +% char;
+        }
+
+        return hash;
+    }
+
+    test calculate {
+        try std.testing.expectEqual(0x00001505, calculate(""));
+        try std.testing.expectEqual(0x156b2bb8, calculate("printf"));
+        try std.testing.expectEqual(0x7c967e3f, calculate("exit"));
+        try std.testing.expectEqual(0xbac212a0, calculate("syscall"));
+        try std.testing.expectEqual(0x8ae9f18e, calculate("flapenguin.me"));
+    }
+};

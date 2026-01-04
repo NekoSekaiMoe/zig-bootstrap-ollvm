@@ -10,6 +10,10 @@
 
 const std = @import("std");
 
+pub const lowercase = "abcdefghijklmnopqrstuvwxyz";
+pub const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub const letters = lowercase ++ uppercase;
+
 /// The C0 control codes of the ASCII encoding.
 ///
 /// See also: https://en.wikipedia.org/wiki/C0_and_C1_control_codes and `isControl`
@@ -130,15 +134,15 @@ pub fn isLower(c: u8) bool {
 /// Returns whether the character is printable and has some graphical representation,
 /// including the space character.
 pub fn isPrint(c: u8) bool {
-    return isASCII(c) and !isControl(c);
+    return isAscii(c) and !isControl(c);
 }
 
 /// Returns whether this character is included in `whitespace`.
 pub fn isWhitespace(c: u8) bool {
-    return for (whitespace) |other| {
-        if (c == other)
-            break true;
-    } else false;
+    return switch (c) {
+        ' ', '\t'...'\r' => true,
+        else => false,
+    };
 }
 
 /// Whitespace for general use.
@@ -151,7 +155,7 @@ test whitespace {
     for (whitespace) |char| try std.testing.expect(isWhitespace(char));
 
     var i: u8 = 0;
-    while (isASCII(i)) : (i += 1) {
+    while (isAscii(i)) : (i += 1) {
         if (isWhitespace(i)) try std.testing.expect(std.mem.indexOfScalar(u8, &whitespace, i) != null);
     }
 }
@@ -173,26 +177,20 @@ pub fn isHex(c: u8) bool {
 }
 
 /// Returns whether the character is a 7-bit ASCII character.
-pub fn isASCII(c: u8) bool {
+pub fn isAscii(c: u8) bool {
     return c < 128;
 }
 
 /// Uppercases the character and returns it as-is if already uppercase or not a letter.
 pub fn toUpper(c: u8) u8 {
-    if (isLower(c)) {
-        return c & 0b11011111;
-    } else {
-        return c;
-    }
+    const mask = @as(u8, @intFromBool(isLower(c))) << 5;
+    return c ^ mask;
 }
 
 /// Lowercases the character and returns it as-is if already lowercase or not a letter.
 pub fn toLower(c: u8) u8 {
-    if (isUpper(c)) {
-        return c | 0b00100000;
-    } else {
-        return c;
-    }
+    const mask = @as(u8, @intFromBool(isUpper(c))) << 5;
+    return c | mask;
 }
 
 test "ASCII character classes" {
@@ -422,13 +420,15 @@ test indexOfIgnoreCase {
 
 /// Returns the lexicographical order of two slices. O(n).
 pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
-    const n = @min(lhs.len, rhs.len);
-    var i: usize = 0;
-    while (i < n) : (i += 1) {
-        switch (std.math.order(toLower(lhs[i]), toLower(rhs[i]))) {
-            .eq => continue,
-            .lt => return .lt,
-            .gt => return .gt,
+    if (lhs.ptr != rhs.ptr) {
+        const n = @min(lhs.len, rhs.len);
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            switch (std.math.order(toLower(lhs[i]), toLower(rhs[i]))) {
+                .eq => continue,
+                .lt => return .lt,
+                .gt => return .gt,
+            }
         }
     }
     return std.math.order(lhs.len, rhs.len);
@@ -437,4 +437,45 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
 /// Returns whether the lexicographical order of `lhs` is lower than `rhs`.
 pub fn lessThanIgnoreCase(lhs: []const u8, rhs: []const u8) bool {
     return orderIgnoreCase(lhs, rhs) == .lt;
+}
+
+pub const HexEscape = struct {
+    bytes: []const u8,
+    charset: *const [16]u8,
+
+    pub const upper_charset = "0123456789ABCDEF";
+    pub const lower_charset = "0123456789abcdef";
+
+    pub fn format(se: HexEscape, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const charset = se.charset;
+
+        var buf: [4]u8 = undefined;
+        buf[0] = '\\';
+        buf[1] = 'x';
+
+        for (se.bytes) |c| {
+            if (std.ascii.isPrint(c)) {
+                try w.writeByte(c);
+            } else {
+                buf[2] = charset[c >> 4];
+                buf[3] = charset[c & 15];
+                try w.writeAll(&buf);
+            }
+        }
+    }
+};
+
+/// Replaces non-ASCII bytes with hex escapes.
+pub fn hexEscape(bytes: []const u8, case: std.fmt.Case) std.fmt.Alt(HexEscape, HexEscape.format) {
+    return .{ .data = .{ .bytes = bytes, .charset = switch (case) {
+        .lower => HexEscape.lower_charset,
+        .upper => HexEscape.upper_charset,
+    } } };
+}
+
+test hexEscape {
+    try std.testing.expectFmt("abc 123", "{f}", .{hexEscape("abc 123", .lower)});
+    try std.testing.expectFmt("ab\\xffc", "{f}", .{hexEscape("ab\xffc", .lower)});
+    try std.testing.expectFmt("abc 123", "{f}", .{hexEscape("abc 123", .upper)});
+    try std.testing.expectFmt("ab\\xFFc", "{f}", .{hexEscape("ab\xffc", .upper)});
 }

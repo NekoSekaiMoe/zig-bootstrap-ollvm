@@ -1,12 +1,9 @@
-const cc = .Inline;
-noinline fn foo() callconv(cc) void {}
+noinline fn foo() callconv(.@"inline") void {}
 
 comptime {
     _ = foo;
 }
 
 // error
-// backend=stage2
-// target=native
 //
-// :2:28: error: 'noinline' function cannot have callconv 'Inline'
+// :1:29: error: 'noinline' function cannot have calling convention 'inline'

@@ -4,14 +4,14 @@ const BitStack = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
-bytes: std.ArrayList(u8),
+bytes: std.array_list.Managed(u8),
 bit_len: usize = 0,
 
 pub fn init(allocator: Allocator) @This() {
     return .{
-        .bytes = std.ArrayList(u8).init(allocator),
+        .bytes = std.array_list.Managed(u8).init(allocator),
     };
 }
 
@@ -20,8 +20,8 @@ pub fn deinit(self: *@This()) void {
     self.* = undefined;
 }
 
-pub fn ensureTotalCapacity(self: *@This(), bit_capcity: usize) Allocator.Error!void {
-    const byte_capacity = (bit_capcity + 7) >> 3;
+pub fn ensureTotalCapacity(self: *@This(), bit_capacity: usize) Allocator.Error!void {
+    const byte_capacity = (bit_capacity + 7) >> 3;
     try self.bytes.ensureTotalCapacity(byte_capacity);
 }
 

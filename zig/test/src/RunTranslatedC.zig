@@ -6,7 +6,7 @@ target: std.Build.ResolvedTarget,
 
 const TestCase = struct {
     name: []const u8,
-    sources: ArrayList(SourceFile),
+    sources: std.array_list.Managed(SourceFile),
     expected_stdout: []const u8,
     allow_warnings: bool,
 
@@ -34,7 +34,7 @@ pub fn create(
     const tc = self.b.allocator.create(TestCase) catch unreachable;
     tc.* = TestCase{
         .name = name,
-        .sources = ArrayList(TestCase.SourceFile).init(self.b.allocator),
+        .sources = std.array_list.Managed(TestCase.SourceFile).init(self.b.allocator),
         .expected_stdout = expected_stdout,
         .allow_warnings = allow_warnings,
     };
@@ -72,32 +72,37 @@ pub fn addCase(self: *RunTranslatedCContext, case: *const TestCase) void {
     } else if (self.test_filters.len > 0) return;
 
     const write_src = b.addWriteFiles();
-    for (case.sources.items) |src_file| {
+    const first_case = case.sources.items[0];
+    const root_source_file = write_src.add(first_case.filename, first_case.source);
+    for (case.sources.items[1..]) |src_file| {
         _ = write_src.add(src_file.filename, src_file.source);
     }
     const translate_c = b.addTranslateC(.{
-        .root_source_file = write_src.files.items[0].getPath(),
-        .target = b.host,
+        .root_source_file = root_source_file,
+        .target = b.graph.host,
         .optimize = .Debug,
     });
 
     translate_c.step.name = b.fmt("{s} translate-c", .{annotated_case_name});
-    const exe = translate_c.addExecutable(.{});
+    const exe = b.addExecutable(.{
+        .name = "translated_c",
+        .root_module = translate_c.createModule(),
+    });
     exe.step.name = b.fmt("{s} build-exe", .{annotated_case_name});
-    exe.linkLibC();
+    exe.root_module.link_libc = true;
     const run = b.addRunArtifact(exe);
     run.step.name = b.fmt("{s} run", .{annotated_case_name});
     if (!case.allow_warnings) {
         run.expectStdErrEqual("");
     }
     run.expectStdOutEqual(case.expected_stdout);
+    run.skip_foreign_checks = true;
 
     self.step.dependOn(&run.step);
 }
 
 const RunTranslatedCContext = @This();
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const fmt = std.fmt;
 const mem = std.mem;
 const fs = std.fs;

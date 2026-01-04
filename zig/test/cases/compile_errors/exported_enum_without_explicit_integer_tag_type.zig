@@ -1,15 +1,13 @@
 const E = enum { one, two };
 comptime {
-    @export(E, .{ .name = "E" });
+    @export(&E, .{ .name = "E" });
 }
 const e: E = .two;
 comptime {
-    @export(e, .{ .name = "e" });
+    @export(&e, .{ .name = "e" });
 }
 
 // error
-// backend=stage2
-// target=native
 //
 // :3:5: error: unable to export type 'type'
 // :7:5: error: unable to export type 'tmp.E'

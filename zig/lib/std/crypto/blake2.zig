@@ -185,18 +185,6 @@ pub fn Blake2s(comptime out_bits: usize) type {
                 r.* ^= v[i] ^ v[i + 8];
             }
         }
-
-        pub const Error = error{};
-        pub const Writer = std.io.Writer(*Self, Error, write);
-
-        fn write(self: *Self, bytes: []const u8) Error!usize {
-            self.update(bytes);
-            return bytes.len;
-        }
-
-        pub fn writer(self: *Self) Writer {
-            return .{ .context = self };
-        }
     };
 }
 
@@ -786,7 +774,7 @@ test "blake2b384 streaming" {
 
 test "comptime blake2b384" {
     comptime {
-        @setEvalBranchQuota(10000);
+        @setEvalBranchQuota(20000);
         var block = [_]u8{0} ** Blake2b384.block_length;
         var out: [Blake2b384.digest_length]u8 = undefined;
 
@@ -878,7 +866,7 @@ test "blake2b512 keyed" {
 
 test "comptime blake2b512" {
     comptime {
-        @setEvalBranchQuota(10000);
+        @setEvalBranchQuota(12000);
         var block = [_]u8{0} ** Blake2b512.block_length;
         var out: [Blake2b512.digest_length]u8 = undefined;
 

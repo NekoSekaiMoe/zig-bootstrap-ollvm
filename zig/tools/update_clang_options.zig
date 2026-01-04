@@ -111,6 +111,14 @@ const known_options = [_]KnownOpt{
         .ident = "no_unwind_tables",
     },
     .{
+        .name = "fasynchronous-unwind-tables",
+        .ident = "asynchronous_unwind_tables",
+    },
+    .{
+        .name = "fno-asynchronous-unwind-tables",
+        .ident = "no_asynchronous_unwind_tables",
+    },
+    .{
         .name = "nolibc",
         .ident = "nostdlib",
     },
@@ -153,6 +161,10 @@ const known_options = [_]KnownOpt{
     .{
         .name = "Wl,",
         .ident = "wl",
+    },
+    .{
+        .name = "Wp,",
+        .ident = "wp",
     },
     .{
         .name = "Xlinker",
@@ -271,6 +283,18 @@ const known_options = [_]KnownOpt{
     .{
         .name = "fsanitize",
         .ident = "sanitize",
+    },
+    .{
+        .name = "fno-sanitize",
+        .ident = "no_sanitize",
+    },
+    .{
+        .name = "fsanitize-trap",
+        .ident = "sanitize_trap",
+    },
+    .{
+        .name = "fno-sanitize-trap",
+        .ident = "no_sanitize_trap",
     },
     .{
         .name = "T",
@@ -536,6 +560,34 @@ const known_options = [_]KnownOpt{
         .name = "municode",
         .ident = "mingw_unicode_entry_point",
     },
+    .{
+        .name = "fsanitize-coverage-trace-pc-guard",
+        .ident = "san_cov_trace_pc_guard",
+    },
+    .{
+        .name = "fsanitize-coverage",
+        .ident = "san_cov",
+    },
+    .{
+        .name = "fno-sanitize-coverage",
+        .ident = "no_san_cov",
+    },
+    .{
+        .name = "rtlib",
+        .ident = "rtlib",
+    },
+    .{
+        .name = "rtlib=",
+        .ident = "rtlib",
+    },
+    .{
+        .name = "static",
+        .ident = "static",
+    },
+    .{
+        .name = "dynamic",
+        .ident = "dynamic",
+    },
 };
 
 const blacklisted_options = [_][]const u8{};
@@ -552,24 +604,27 @@ fn knownOption(name: []const u8) ?[]const u8 {
 
 const cpu_targets = struct {
     pub const aarch64 = std.Target.aarch64;
+    pub const amdgcn = std.Target.amdgcn;
     pub const arc = std.Target.arc;
-    pub const amdgpu = std.Target.amdgpu;
     pub const arm = std.Target.arm;
     pub const avr = std.Target.avr;
     pub const bpf = std.Target.bpf;
     pub const csky = std.Target.csky;
     pub const hexagon = std.Target.hexagon;
+    pub const loongarch = std.Target.loongarch;
+    pub const m68k = std.Target.m68k;
     pub const mips = std.Target.mips;
     pub const msp430 = std.Target.msp430;
     pub const nvptx = std.Target.nvptx;
     pub const powerpc = std.Target.powerpc;
     pub const riscv = std.Target.riscv;
+    pub const s390x = std.Target.s390x;
     pub const sparc = std.Target.sparc;
     pub const spirv = std.Target.spirv;
-    pub const s390x = std.Target.s390x;
     pub const ve = std.Target.ve;
     pub const wasm = std.Target.wasm;
     pub const x86 = std.Target.x86;
+    pub const xtensa = std.Target.xtensa;
 };
 
 pub fn main() anyerror!void {
@@ -579,29 +634,29 @@ pub fn main() anyerror!void {
     const allocator = arena.allocator();
     const args = try std.process.argsAlloc(allocator);
 
-    if (args.len <= 1) {
-        usageAndExit(std.io.getStdErr(), args[0], 1);
-    }
+    var stdout_buffer: [4000]u8 = undefined;
+    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+
+    if (args.len <= 1) printUsageAndExit(args[0]);
+
     if (std.mem.eql(u8, args[1], "--help")) {
-        usageAndExit(std.io.getStdOut(), args[0], 0);
+        printUsage(stdout, args[0]) catch std.process.exit(2);
+        stdout.flush() catch std.process.exit(2);
+        std.process.exit(0);
     }
-    if (args.len < 3) {
-        usageAndExit(std.io.getStdErr(), args[0], 1);
-    }
+
+    if (args.len < 3) printUsageAndExit(args[0]);
 
     const llvm_tblgen_exe = args[1];
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) {
-        usageAndExit(std.io.getStdErr(), args[0], 1);
-    }
+    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) printUsageAndExit(args[0]);
 
     const llvm_src_root = args[2];
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) {
-        usageAndExit(std.io.getStdErr(), args[0], 1);
-    }
+    if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(allocator);
 
-    inline for (@typeInfo(cpu_targets).Struct.decls) |decl| {
+    inline for (@typeInfo(cpu_targets).@"struct".decls) |decl| {
         const Feature = @field(cpu_targets, decl.name).Feature;
         const all_features = @field(cpu_targets, decl.name).all_features;
 
@@ -621,7 +676,7 @@ pub fn main() anyerror!void {
         try std.fmt.allocPrint(allocator, "-I={s}/clang/include/clang/Driver", .{llvm_src_root}),
     };
 
-    const child_result = try std.ChildProcess.run(.{
+    const child_result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &child_args,
         .max_output_bytes = 100 * 1024 * 1024,
@@ -644,7 +699,7 @@ pub fn main() anyerror!void {
     defer parsed.deinit();
     const root_map = &parsed.value.object;
 
-    var all_objects = std.ArrayList(*json.ObjectMap).init(allocator);
+    var all_objects = std.array_list.Managed(*json.ObjectMap).init(allocator);
     {
         var it = root_map.iterator();
         it_map: while (it.next()) |kv| {
@@ -664,8 +719,6 @@ pub fn main() anyerror!void {
     // "W" and "Wl,". So we sort this list in order of descending priority.
     std.mem.sort(*json.ObjectMap, all_objects.items, {}, objectLessThan);
 
-    var buffered_stdout = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const stdout = buffered_stdout.writer();
     try stdout.writeAll(
         \\// This file is generated by tools/update_clang_options.zig.
         \\// zig fmt: off
@@ -714,7 +767,7 @@ pub fn main() anyerror!void {
             try stdout.print(
                 \\.{{
                 \\    .name = "{s}",
-                \\    .syntax = {s},
+                \\    .syntax = {f},
                 \\    .zig_equivalent = .{s},
                 \\    .pd1 = {},
                 \\    .pd2 = {},
@@ -726,7 +779,7 @@ pub fn main() anyerror!void {
             if ((std.mem.startsWith(u8, name, "mno-") and
                 llvm_to_zig_cpu_features.contains(name["mno-".len..])) or
                 (std.mem.startsWith(u8, name, "m") and
-                llvm_to_zig_cpu_features.contains(name["m".len..])))
+                    llvm_to_zig_cpu_features.contains(name["m".len..])))
             {
                 try stdout.print("m(\"{s}\"),\n", .{name});
             } else {
@@ -744,7 +797,7 @@ pub fn main() anyerror!void {
             try stdout.print(
                 \\.{{
                 \\    .name = "{s}",
-                \\    .syntax = {s},
+                \\    .syntax = {f},
                 \\    .zig_equivalent = .other,
                 \\    .pd1 = {},
                 \\    .pd2 = {},
@@ -760,7 +813,7 @@ pub fn main() anyerror!void {
         \\
     );
 
-    try buffered_stdout.flush();
+    try stdout.flush();
 }
 
 // TODO we should be able to import clang_options.zig but currently this is problematic because it will
@@ -792,14 +845,10 @@ const Syntax = union(enum) {
 
     pub fn format(
         self: Syntax,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        out_stream: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+        out_stream: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
         switch (self) {
-            .multi_arg => |n| return out_stream.print(".{{.{s}={}}}", .{ @tagName(self), n }),
+            .multi_arg => |n| return out_stream.print(".{{.{t}={d}}}", .{ self, n }),
             else => return out_stream.print(".{s}", .{@tagName(self)}),
         }
     }
@@ -911,13 +960,19 @@ fn objectLessThan(context: void, a: *json.ObjectMap, b: *json.ObjectMap) bool {
     return std.mem.lessThan(u8, a_key, b_key);
 }
 
-fn usageAndExit(file: fs.File, arg0: []const u8, code: u8) noreturn {
-    file.writer().print(
+fn printUsageAndExit(arg0: []const u8) noreturn {
+    const w, _ = std.debug.lockStderrWriter(&.{});
+    defer std.debug.unlockStderrWriter();
+    printUsage(w, arg0) catch std.process.exit(2);
+    std.process.exit(1);
+}
+
+fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
+    try w.print(
         \\Usage: {s} /path/to/llvm-tblgen /path/to/git/llvm/llvm-project
         \\Alternative Usage: zig run /path/to/git/zig/tools/update_clang_options.zig -- /path/to/llvm-tblgen /path/to/git/llvm/llvm-project
         \\
         \\Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.
         \\
-    , .{arg0}) catch std.process.exit(1);
-    std.process.exit(code);
+    , .{arg0});
 }

@@ -4,23 +4,116 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
+pub fn FloatRepr(comptime Float: type) type {
+    const fractional_bits = floatFractionalBits(Float);
+    const exponent_bits = floatExponentBits(Float);
+    return packed struct {
+        const Repr = @This();
+
+        mantissa: StoredMantissa,
+        exponent: BiasedExponent,
+        sign: std.math.Sign,
+
+        pub const StoredMantissa = @Int(.unsigned, floatMantissaBits(Float));
+        pub const Mantissa = @Int(.unsigned, 1 + fractional_bits);
+        pub const Exponent = @Int(.signed, exponent_bits);
+        pub const BiasedExponent = enum(@Int(.unsigned, exponent_bits)) {
+            denormal = 0,
+            min_normal = 1,
+            zero = (1 << (exponent_bits - 1)) - 1,
+            max_normal = (1 << exponent_bits) - 2,
+            infinite = (1 << exponent_bits) - 1,
+            _,
+
+            pub const Int = @typeInfo(BiasedExponent).@"enum".tag_type;
+
+            pub fn unbias(biased: BiasedExponent) Exponent {
+                switch (biased) {
+                    .denormal => unreachable,
+                    else => return @bitCast(@intFromEnum(biased) -% @intFromEnum(BiasedExponent.zero)),
+                    .infinite => unreachable,
+                }
+            }
+
+            pub fn bias(unbiased: Exponent) BiasedExponent {
+                return @enumFromInt(@intFromEnum(BiasedExponent.zero) +% @as(Int, @bitCast(unbiased)));
+            }
+        };
+
+        pub const Normalized = struct {
+            fraction: Fraction,
+            exponent: Normalized.Exponent,
+
+            pub const Fraction = @Int(.unsigned, fractional_bits);
+            pub const Exponent = @Int(.signed, 1 + exponent_bits);
+
+            /// This currently truncates denormal values, which needs to be fixed before this can be used to
+            /// produce a rounded value.
+            pub fn reconstruct(normalized: Normalized, sign: std.math.Sign) Float {
+                if (normalized.exponent > BiasedExponent.max_normal.unbias()) return @bitCast(Repr{
+                    .mantissa = 0,
+                    .exponent = .infinite,
+                    .sign = sign,
+                });
+                const mantissa = @as(Mantissa, 1 << fractional_bits) | normalized.fraction;
+                if (normalized.exponent < BiasedExponent.min_normal.unbias()) return @bitCast(Repr{
+                    .mantissa = @truncate(std.math.shr(
+                        Mantissa,
+                        mantissa,
+                        BiasedExponent.min_normal.unbias() - normalized.exponent,
+                    )),
+                    .exponent = .denormal,
+                    .sign = sign,
+                });
+                return @bitCast(Repr{
+                    .mantissa = @truncate(mantissa),
+                    .exponent = .bias(@intCast(normalized.exponent)),
+                    .sign = sign,
+                });
+            }
+        };
+
+        pub const Classified = union(enum) { normalized: Normalized, infinity, nan, invalid };
+        fn classify(repr: Repr) Classified {
+            return switch (repr.exponent) {
+                .denormal => {
+                    const mantissa: Mantissa = repr.mantissa;
+                    const shift = @clz(mantissa);
+                    return .{ .normalized = .{
+                        .fraction = @truncate(mantissa << shift),
+                        .exponent = @as(Normalized.Exponent, comptime BiasedExponent.min_normal.unbias()) - shift,
+                    } };
+                },
+                else => if (repr.mantissa <= std.math.maxInt(Normalized.Fraction)) .{ .normalized = .{
+                    .fraction = @intCast(repr.mantissa),
+                    .exponent = repr.exponent.unbias(),
+                } } else .invalid,
+                .infinite => switch (repr.mantissa) {
+                    0 => .infinity,
+                    else => .nan,
+                },
+            };
+        }
+    };
+}
+
 /// Creates a raw "1.0" mantissa for floating point type T. Used to dedupe f80 logic.
 inline fn mantissaOne(comptime T: type) comptime_int {
-    return if (@typeInfo(T).Float.bits == 80) 1 << floatFractionalBits(T) else 0;
+    return if (@typeInfo(T).float.bits == 80) 1 << floatFractionalBits(T) else 0;
 }
 
 /// Creates floating point type T from an unbiased exponent and raw mantissa.
 inline fn reconstructFloat(comptime T: type, comptime exponent: comptime_int, comptime mantissa: comptime_int) T {
-    const TBits = @Type(.{ .Int = .{ .signedness = .unsigned, .bits = @bitSizeOf(T) } });
+    const TBits = @Int(.unsigned, @bitSizeOf(T));
     const biased_exponent = @as(TBits, exponent + floatExponentMax(T));
     return @as(T, @bitCast((biased_exponent << floatMantissaBits(T)) | @as(TBits, mantissa)));
 }
 
 /// Returns the number of bits in the exponent of floating point type T.
 pub inline fn floatExponentBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 5,
         32 => 8,
         64 => 11,
@@ -32,9 +125,9 @@ pub inline fn floatExponentBits(comptime T: type) comptime_int {
 
 /// Returns the number of bits in the mantissa of floating point type T.
 pub inline fn floatMantissaBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -46,12 +139,12 @@ pub inline fn floatMantissaBits(comptime T: type) comptime_int {
 
 /// Returns the number of fractional bits in the mantissa of floating point type T.
 pub inline fn floatFractionalBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
     // standard IEEE floats have an implicit 0.m or 1.m integer part
     // f80 is special and has an explicitly stored bit in the MSB
     // this function corresponds to `MANT_DIG - 1' from C
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -94,42 +187,74 @@ pub inline fn floatEps(comptime T: type) T {
     return reconstructFloat(T, -floatFractionalBits(T), mantissaOne(T));
 }
 
-/// Returns the value inf for floating point type T.
-pub inline fn inf(comptime T: type) T {
-    return reconstructFloat(T, floatExponentMax(T) + 1, mantissaOne(T));
+/// Returns the local epsilon of floating point type T.
+pub inline fn floatEpsAt(comptime T: type, x: T) T {
+    switch (@typeInfo(T)) {
+        .float => |F| {
+            const U: type = @Int(.unsigned, F.bits);
+            const u: U = @bitCast(x);
+            const y: T = @bitCast(u ^ 1);
+            return @abs(x - y);
+        },
+        else => @compileError("floatEpsAt only supports floats"),
+    }
 }
 
-/// Returns the canonical quiet NaN representation for floating point type T.
-pub inline fn nan(comptime T: type) T {
+/// Returns the inf value for a floating point `Type`.
+pub inline fn inf(comptime Type: type) Type {
+    const RuntimeType = switch (Type) {
+        else => Type,
+        comptime_float => f128, // any float type will do
+    };
+    return reconstructFloat(RuntimeType, floatExponentMax(RuntimeType) + 1, mantissaOne(RuntimeType));
+}
+
+/// Returns the canonical quiet NaN representation for a floating point `Type`.
+pub inline fn nan(comptime Type: type) Type {
+    const RuntimeType = switch (Type) {
+        else => Type,
+        comptime_float => f128, // any float type will do
+    };
     return reconstructFloat(
-        T,
-        floatExponentMax(T) + 1,
-        mantissaOne(T) | 1 << (floatFractionalBits(T) - 1),
+        RuntimeType,
+        floatExponentMax(RuntimeType) + 1,
+        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 1),
     );
 }
 
-/// Returns a signalling NaN representation for floating point type T.
+/// Returns a signalling NaN representation for a floating point `Type`.
 ///
 /// TODO: LLVM is known to miscompile on some architectures to quiet NaN -
 ///       this is tracked by https://github.com/ziglang/zig/issues/14366
-pub inline fn snan(comptime T: type) T {
+pub inline fn snan(comptime Type: type) Type {
+    const RuntimeType = switch (Type) {
+        else => Type,
+        comptime_float => f128, // any float type will do
+    };
     return reconstructFloat(
-        T,
-        floatExponentMax(T) + 1,
-        mantissaOne(T) | 1 << (floatFractionalBits(T) - 2),
+        RuntimeType,
+        floatExponentMax(RuntimeType) + 1,
+        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 2),
     );
 }
 
-test "float bits" {
-    inline for ([_]type{ f16, f32, f64, f80, f128, c_longdouble }) |T| {
-        // (1 +) for the sign bit, since it is separate from the other bits
-        const size = 1 + floatExponentBits(T) + floatMantissaBits(T);
-        try expect(@bitSizeOf(T) == size);
+fn floatBits(comptime Type: type) !void {
+    // (1 +) for the sign bit, since it is separate from the other bits
+    const size = 1 + floatExponentBits(Type) + floatMantissaBits(Type);
+    try expect(@bitSizeOf(Type) == size);
+    try expect(floatFractionalBits(Type) <= floatMantissaBits(Type));
 
-        // for machine epsilon, assert expmin <= -prec <= expmax
-        try expect(floatExponentMin(T) <= -floatFractionalBits(T));
-        try expect(-floatFractionalBits(T) <= floatExponentMax(T));
-    }
+    // for machine epsilon, assert expmin <= -prec <= expmax
+    try expect(floatExponentMin(Type) <= -floatFractionalBits(Type));
+    try expect(-floatFractionalBits(Type) <= floatExponentMax(Type));
+}
+test floatBits {
+    try floatBits(f16);
+    try floatBits(f32);
+    try floatBits(f64);
+    try floatBits(f80);
+    try floatBits(f128);
+    try floatBits(c_longdouble);
 }
 
 test inf {
@@ -159,9 +284,6 @@ test nan {
 }
 
 test snan {
-    // TODO: https://github.com/ziglang/zig/issues/14366
-    if (builtin.zig_backend == .stage2_llvm and comptime builtin.cpu.arch.isArmOrThumb()) return error.SkipZigTest;
-
     const snan_u16: u16 = 0x7D00;
     const snan_u32: u32 = 0x7FA00000;
     const snan_u64: u64 = 0x7FF4000000000000;

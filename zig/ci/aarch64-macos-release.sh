@@ -3,25 +3,20 @@
 set -x
 set -e
 
-# Script assumes the presence of the following:
-# s3cmd
-
 ZIGDIR="$PWD"
-TARGET="$ARCH-macos-none"
+TARGET="aarch64-macos-none"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.12.0-dev.467+0345d7866"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
 PREFIX="$HOME/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
+if [ ! -d "$PREFIX" ]; then
+  cd $HOME
+  curl -L -O "https://ziglang.org/deps/$CACHE_BASENAME.tar.xz"
+  tar xf "$CACHE_BASENAME.tar.xz"
+fi
+
 cd $ZIGDIR
-
-# Make the `zig version` number consistent.
-# This will affect the cmake command below.
-git fetch --unshallow || true
-git fetch --tags
-
-mkdir build
-cd build
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -29,7 +24,10 @@ cd build
 export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
 export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
 
-PATH="$HOME/local/bin:$PATH" cmake .. \
+mkdir build-release
+cd build-release
+
+cmake .. \
   -DCMAKE_INSTALL_PREFIX="stage3-release" \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -41,14 +39,15 @@ PATH="$HOME/local/bin:$PATH" cmake .. \
   -DZIG_NO_LIB=ON \
   -GNinja
 
-$HOME/local/bin/ninja install
+ninja install
 
 stage3-release/bin/zig build test docs \
   --zig-lib-dir "$PWD/../lib" \
   -Denable-macos-sdk \
   -Dstatic-llvm \
   -Dskip-non-native \
-  --search-prefix "$PREFIX"
+  --search-prefix "$PREFIX" \
+  --test-timeout 2m
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \

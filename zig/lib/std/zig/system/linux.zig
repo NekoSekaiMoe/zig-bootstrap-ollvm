@@ -1,7 +1,8 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
-const io = std.io;
 const fs = std.fs;
 const fmt = std.fmt;
 const testing = std.testing;
@@ -10,7 +11,6 @@ const assert = std.debug.assert;
 
 const SparcCpuinfoImpl = struct {
     model: ?*const Target.Cpu.Model = null,
-    is_64bit: bool = false,
 
     const cpu_names = .{
         .{ "SuperSparc", &Target.sparc.cpu.supersparc },
@@ -40,17 +40,12 @@ const SparcCpuinfoImpl = struct {
                     break;
                 }
             }
-        } else if (mem.eql(u8, key, "type")) {
-            self.is_64bit = mem.eql(u8, value, "sun4u") or mem.eql(u8, value, "sun4v");
         }
 
         return true;
     }
 
     fn finalize(self: *const SparcCpuinfoImpl, arch: Target.Cpu.Arch) ?Target.Cpu {
-        // At the moment we only support 64bit SPARC systems.
-        assert(self.is_64bit);
-
         const model = self.model orelse return null;
         return Target.Cpu{
             .arch = arch,
@@ -76,9 +71,11 @@ const RiscvCpuinfoImpl = struct {
 
     const cpu_names = .{
         .{ "sifive,u54", &Target.riscv.cpu.sifive_u54 },
+        .{ "sifive,u54-mc", &Target.riscv.cpu.sifive_u54 },
         .{ "sifive,u7", &Target.riscv.cpu.sifive_7_series },
         .{ "sifive,u74", &Target.riscv.cpu.sifive_u74 },
         .{ "sifive,u74-mc", &Target.riscv.cpu.sifive_u74 },
+        .{ "spacemit,x60", &Target.riscv.cpu.spacemit_x60 },
     };
 
     fn line_hook(self: *RiscvCpuinfoImpl, key: []const u8, value: []const u8) !bool {
@@ -109,12 +106,12 @@ const RiscvCpuinfoParser = CpuinfoParser(RiscvCpuinfoImpl);
 
 test "cpuinfo: RISC-V" {
     try testParser(RiscvCpuinfoParser, .riscv64, &Target.riscv.cpu.sifive_u74,
-        \\processor	: 0
-        \\hart		: 1
-        \\isa		: rv64imafdc
-        \\mmu		: sv39
-        \\isa-ext       :
-        \\uarch		: sifive,u74-mc
+        \\processor : 0
+        \\hart      : 1
+        \\isa       : rv64imafdc
+        \\mmu       : sv39
+        \\isa-ext   :
+        \\uarch     : sifive,u74-mc
     );
 }
 
@@ -142,6 +139,7 @@ const PowerpcCpuinfoImpl = struct {
         .{ "POWER8NVL", &Target.powerpc.cpu.pwr8 },
         .{ "POWER9", &Target.powerpc.cpu.pwr9 },
         .{ "POWER10", &Target.powerpc.cpu.pwr10 },
+        .{ "POWER11", &Target.powerpc.cpu.pwr11 },
     };
 
     fn line_hook(self: *PowerpcCpuinfoImpl, key: []const u8, value: []const u8) !bool {
@@ -177,16 +175,87 @@ const PowerpcCpuinfoParser = CpuinfoParser(PowerpcCpuinfoImpl);
 
 test "cpuinfo: PowerPC" {
     try testParser(PowerpcCpuinfoParser, .powerpc, &Target.powerpc.cpu.@"970",
-        \\processor	: 0
-        \\cpu		: PPC970MP, altivec supported
-        \\clock		: 1250.000000MHz
-        \\revision	: 1.1 (pvr 0044 0101)
+        \\processor : 0
+        \\cpu       : PPC970MP, altivec supported
+        \\clock     : 1250.000000MHz
+        \\revision  : 1.1 (pvr 0044 0101)
     );
     try testParser(PowerpcCpuinfoParser, .powerpc64le, &Target.powerpc.cpu.pwr8,
-        \\processor	: 0
-        \\cpu		: POWER8 (raw), altivec supported
-        \\clock		: 2926.000000MHz
-        \\revision	: 2.0 (pvr 004d 0200)
+        \\processor : 0
+        \\cpu       : POWER8 (raw), altivec supported
+        \\clock     : 2926.000000MHz
+        \\revision  : 2.0 (pvr 004d 0200)
+    );
+}
+
+const S390xCpuinfoImpl = struct {
+    model: ?*const Target.Cpu.Model = null,
+
+    const cpu_names = .{
+        // z900: 2064, 2066
+        // z990: 2084, 2086
+        // z9: 2094, 2096
+
+        .{ "2097", &Target.s390x.cpu.z10 },
+        .{ "2098", &Target.s390x.cpu.z10 },
+        .{ "2817", &Target.s390x.cpu.z196 },
+        .{ "2818", &Target.s390x.cpu.z196 },
+        .{ "2827", &Target.s390x.cpu.zEC12 },
+        .{ "2828", &Target.s390x.cpu.zEC12 },
+        .{ "2964", &Target.s390x.cpu.z13 },
+        .{ "2965", &Target.s390x.cpu.z13 },
+        .{ "3906", &Target.s390x.cpu.z14 },
+        .{ "3907", &Target.s390x.cpu.z14 },
+        .{ "8561", &Target.s390x.cpu.z15 },
+        .{ "8562", &Target.s390x.cpu.z15 },
+        .{ "3931", &Target.s390x.cpu.z16 },
+        .{ "3932", &Target.s390x.cpu.z16 },
+        .{ "9175", &Target.s390x.cpu.z17 },
+        .{ "9176", &Target.s390x.cpu.z17 },
+    };
+
+    fn line_hook(self: *S390xCpuinfoImpl, key: []const u8, value: []const u8) !bool {
+        if (mem.eql(u8, key, "machine")) {
+            inline for (cpu_names) |pair| {
+                if (mem.eql(u8, value, pair[0])) {
+                    self.model = pair[1];
+                    break;
+                }
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    fn finalize(self: *const S390xCpuinfoImpl, arch: Target.Cpu.Arch) ?Target.Cpu {
+        const model = self.model orelse return null;
+        return Target.Cpu{
+            .arch = arch,
+            .model = model,
+            .features = model.features,
+        };
+    }
+};
+
+const S390xCpuinfoParser = CpuinfoParser(S390xCpuinfoImpl);
+
+test "cpuinfo: S390x" {
+    try testParser(S390xCpuinfoParser, .s390x, &Target.s390x.cpu.z15,
+        \\physical id     : 5
+        \\core id         : 5
+        \\book id         : 5
+        \\drawer id       : 5
+        \\dedicated       : 0
+        \\address         : 5
+        \\siblings        : 1
+        \\cpu cores       : 1
+        \\version         : FF
+        \\identification  : 09DD98
+        \\machine         : 8561
+        \\cpu MHz dynamic : 5200
+        \\cpu MHz static  : 5200
     );
 }
 
@@ -264,7 +333,7 @@ const ArmCpuinfoImpl = struct {
         if (self.core_no == 0) return null;
 
         const is_64bit = switch (arch) {
-            .aarch64, .aarch64_be, .aarch64_32 => true,
+            .aarch64, .aarch64_be => true,
             else => false,
         };
 
@@ -304,25 +373,25 @@ test "cpuinfo: ARM" {
         \\CPU revision    : 7
     );
     try testParser(ArmCpuinfoParser, .arm, &Target.arm.cpu.cortex_a7,
-        \\processor	: 0
-        \\model name	: ARMv7 Processor rev 3 (v7l)
-        \\BogoMIPS	: 18.00
-        \\Features	: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
-        \\CPU implementer	: 0x41
+        \\processor : 0
+        \\model name : ARMv7 Processor rev 3 (v7l)
+        \\BogoMIPS : 18.00
+        \\Features : half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
+        \\CPU implementer : 0x41
         \\CPU architecture: 7
-        \\CPU variant	: 0x0
-        \\CPU part	: 0xc07
-        \\CPU revision	: 3
+        \\CPU variant : 0x0
+        \\CPU part : 0xc07
+        \\CPU revision : 3
         \\
-        \\processor	: 4
-        \\model name	: ARMv7 Processor rev 3 (v7l)
-        \\BogoMIPS	: 90.00
-        \\Features	: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
-        \\CPU implementer	: 0x41
+        \\processor : 4
+        \\model name : ARMv7 Processor rev 3 (v7l)
+        \\BogoMIPS : 90.00
+        \\Features : half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
+        \\CPU implementer : 0x41
         \\CPU architecture: 7
-        \\CPU variant	: 0x2
-        \\CPU part	: 0xc0f
-        \\CPU revision	: 3
+        \\CPU variant : 0x2
+        \\CPU part : 0xc0f
+        \\CPU revision : 3
     );
     try testParser(ArmCpuinfoParser, .aarch64, &Target.aarch64.cpu.cortex_a72,
         \\processor       : 0
@@ -342,8 +411,8 @@ fn testParser(
     expected_model: *const Target.Cpu.Model,
     input: []const u8,
 ) !void {
-    var fbs = io.fixedBufferStream(input);
-    const result = try parser.parse(arch, fbs.reader());
+    var r: Io.Reader = .fixed(input);
+    const result = try parser.parse(arch, &r);
     try testing.expectEqual(expected_model, result.?.model);
     try testing.expect(expected_model.features.eql(result.?.features));
 }
@@ -355,20 +424,14 @@ fn testParser(
 // When all the lines have been analyzed the finalize method is called.
 fn CpuinfoParser(comptime impl: anytype) type {
     return struct {
-        fn parse(arch: Target.Cpu.Arch, reader: anytype) anyerror!?Target.Cpu {
-            var line_buf: [1024]u8 = undefined;
+        fn parse(arch: Target.Cpu.Arch, reader: *Io.Reader) !?Target.Cpu {
             var obj: impl = .{};
-
-            while (true) {
-                const line = (try reader.readUntilDelimiterOrEof(&line_buf, '\n')) orelse break;
+            while (try reader.takeDelimiter('\n')) |line| {
                 const colon_pos = mem.indexOfScalar(u8, line, ':') orelse continue;
-                const key = mem.trimRight(u8, line[0..colon_pos], " \t");
-                const value = mem.trimLeft(u8, line[colon_pos + 1 ..], " \t");
-
-                if (!try obj.line_hook(key, value))
-                    break;
+                const key = mem.trimEnd(u8, line[0..colon_pos], " \t");
+                const value = mem.trimStart(u8, line[colon_pos + 1 ..], " \t");
+                if (!try obj.line_hook(key, value)) break;
             }
-
             return obj.finalize(arch);
         }
     };
@@ -380,18 +443,21 @@ inline fn getAArch64CpuFeature(comptime feat_reg: []const u8) u64 {
     );
 }
 
-pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
-    var f = fs.openFileAbsolute("/proc/cpuinfo", .{}) catch |err| switch (err) {
+pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
+    var file = fs.openFileAbsolute("/proc/cpuinfo", .{}) catch |err| switch (err) {
         else => return null,
     };
-    defer f.close();
+    defer file.close();
+
+    var buffer: [4096]u8 = undefined; // "flags" lines can get pretty long.
+    var file_reader = file.reader(io, &buffer);
 
     const current_arch = builtin.cpu.arch;
     switch (current_arch) {
         .arm, .armeb, .thumb, .thumbeb => {
-            return ArmCpuinfoParser.parse(current_arch, f.reader()) catch null;
+            return ArmCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
-        .aarch64, .aarch64_be, .aarch64_32 => {
+        .aarch64, .aarch64_be => {
             const registers = [12]u64{
                 getAArch64CpuFeature("MIDR_EL1"),
                 getAArch64CpuFeature("ID_AA64PFR0_EL1"),
@@ -410,14 +476,17 @@ pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
             const core = @import("arm.zig").aarch64.detectNativeCpuAndFeatures(current_arch, registers);
             return core;
         },
-        .sparc64 => {
-            return SparcCpuinfoParser.parse(current_arch, f.reader()) catch null;
+        .sparc, .sparc64 => {
+            return SparcCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => {
-            return PowerpcCpuinfoParser.parse(current_arch, f.reader()) catch null;
+            return PowerpcCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
         .riscv64, .riscv32 => {
-            return RiscvCpuinfoParser.parse(current_arch, f.reader()) catch null;
+            return RiscvCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
+        },
+        .s390x => {
+            return S390xCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
         else => {},
     }

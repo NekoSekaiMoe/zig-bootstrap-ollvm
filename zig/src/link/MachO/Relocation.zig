@@ -1,4 +1,4 @@
-tag: enum { @"extern", local },
+tag: Tag,
 offset: u32,
 target: u32,
 addend: i64,
@@ -10,34 +10,44 @@ meta: packed struct {
     symbolnum: u24,
 },
 
-pub fn getTargetSymbol(rel: Relocation, macho_file: *MachO) *Symbol {
+pub fn getTargetSymbolRef(rel: Relocation, atom: Atom, macho_file: *MachO) MachO.Ref {
     assert(rel.tag == .@"extern");
-    return macho_file.getSymbol(rel.target);
+    return atom.getFile(macho_file).getSymbolRef(rel.target, macho_file);
 }
 
-pub fn getTargetAtom(rel: Relocation, macho_file: *MachO) *Atom {
+pub fn getTargetSymbol(rel: Relocation, atom: Atom, macho_file: *MachO) *Symbol {
+    assert(rel.tag == .@"extern");
+    const ref = atom.getFile(macho_file).getSymbolRef(rel.target, macho_file);
+    return ref.getSymbol(macho_file).?;
+}
+
+pub fn getTargetAtom(rel: Relocation, atom: Atom, macho_file: *MachO) *Atom {
     assert(rel.tag == .local);
-    return macho_file.getAtom(rel.target).?;
+    return atom.getFile(macho_file).getAtom(rel.target).?;
 }
 
-pub fn getTargetAddress(rel: Relocation, macho_file: *MachO) u64 {
+pub fn getTargetAddress(rel: Relocation, atom: Atom, macho_file: *MachO) u64 {
     return switch (rel.tag) {
-        .local => rel.getTargetAtom(macho_file).getAddress(macho_file),
-        .@"extern" => rel.getTargetSymbol(macho_file).getAddress(.{}, macho_file),
+        .local => rel.getTargetAtom(atom, macho_file).getAddress(macho_file),
+        .@"extern" => rel.getTargetSymbol(atom, macho_file).getAddress(.{}, macho_file),
     };
 }
 
-pub fn getGotTargetAddress(rel: Relocation, macho_file: *MachO) u64 {
+pub fn getGotTargetAddress(rel: Relocation, atom: Atom, macho_file: *MachO) u64 {
     return switch (rel.tag) {
         .local => 0,
-        .@"extern" => rel.getTargetSymbol(macho_file).getGotAddress(macho_file),
+        .@"extern" => rel.getTargetSymbol(atom, macho_file).getGotAddress(macho_file),
     };
 }
 
 pub fn getZigGotTargetAddress(rel: Relocation, macho_file: *MachO) u64 {
+    const zo = macho_file.getZigObject() orelse return 0;
     return switch (rel.tag) {
         .local => 0,
-        .@"extern" => rel.getTargetSymbol(macho_file).getZigGotAddress(macho_file),
+        .@"extern" => {
+            const ref = zo.getSymbolRef(rel.target, macho_file);
+            return ref.getSymbol(macho_file).?.getZigGotAddress(macho_file);
+        },
     };
 }
 
@@ -60,6 +70,52 @@ pub fn lessThan(ctx: void, lhs: Relocation, rhs: Relocation) bool {
     return lhs.offset < rhs.offset;
 }
 
+pub fn fmtPretty(rel: Relocation, cpu_arch: std.Target.Cpu.Arch) std.fmt.Alt(Format, Format.pretty) {
+    return .{ .data = .{ .relocation = rel, .arch = cpu_arch } };
+}
+
+const Format = struct {
+    relocation: Relocation,
+    arch: std.Target.Cpu.Arch,
+
+    fn pretty(f: Format, w: *Writer) Writer.Error!void {
+        try w.writeAll(switch (f.relocation.type) {
+            .signed => "X86_64_RELOC_SIGNED",
+            .signed1 => "X86_64_RELOC_SIGNED_1",
+            .signed2 => "X86_64_RELOC_SIGNED_2",
+            .signed4 => "X86_64_RELOC_SIGNED_4",
+            .got_load => "X86_64_RELOC_GOT_LOAD",
+            .tlv => "X86_64_RELOC_TLV",
+            .page => "ARM64_RELOC_PAGE21",
+            .pageoff => "ARM64_RELOC_PAGEOFF12",
+            .got_load_page => "ARM64_RELOC_GOT_LOAD_PAGE21",
+            .got_load_pageoff => "ARM64_RELOC_GOT_LOAD_PAGEOFF12",
+            .tlvp_page => "ARM64_RELOC_TLVP_LOAD_PAGE21",
+            .tlvp_pageoff => "ARM64_RELOC_TLVP_LOAD_PAGEOFF12",
+            .branch => switch (f.arch) {
+                .x86_64 => "X86_64_RELOC_BRANCH",
+                .aarch64 => "ARM64_RELOC_BRANCH26",
+                else => unreachable,
+            },
+            .got => switch (f.arch) {
+                .x86_64 => "X86_64_RELOC_GOT",
+                .aarch64 => "ARM64_RELOC_POINTER_TO_GOT",
+                else => unreachable,
+            },
+            .subtractor => switch (f.arch) {
+                .x86_64 => "X86_64_RELOC_SUBTRACTOR",
+                .aarch64 => "ARM64_RELOC_SUBTRACTOR",
+                else => unreachable,
+            },
+            .unsigned => switch (f.arch) {
+                .x86_64 => "X86_64_RELOC_UNSIGNED",
+                .aarch64 => "ARM64_RELOC_UNSIGNED",
+                else => unreachable,
+            },
+        });
+    }
+};
+
 pub const Type = enum {
     // x86_64
     /// RIP-relative displacement (X86_64_RELOC_SIGNED)
@@ -74,8 +130,6 @@ pub const Type = enum {
     got_load,
     /// RIP-relative TLV load (X86_64_RELOC_TLV)
     tlv,
-    /// Zig-specific __got_zig indirection
-    zig_got_load,
 
     // arm64
     /// PC-relative load (distance to page, ARM64_RELOC_PAGE21)
@@ -102,10 +156,13 @@ pub const Type = enum {
     unsigned,
 };
 
+const Tag = enum { local, @"extern" };
+
+const std = @import("std");
 const assert = std.debug.assert;
 const macho = std.macho;
 const math = std.math;
-const std = @import("std");
+const Writer = std.Io.Writer;
 
 const Atom = @import("Atom.zig");
 const MachO = @import("../MachO.zig");

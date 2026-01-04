@@ -237,10 +237,7 @@ test "double quoted string" {
     try testing.expectEqualStrings(
         \\"here" are some escaped quotes
     , arr[1]);
-    try testing.expectEqualStrings(
-        \\newlines and tabs
-        \\are	supported
-    , arr[2]);
+    try testing.expectEqualStrings("newlines and tabs\nare\tsupported", arr[2]);
     try testing.expectEqualStrings(
         \\let's have
         \\some fun!
@@ -410,7 +407,7 @@ test "duplicate map keys" {
 }
 
 fn testStringify(expected: []const u8, input: anytype) !void {
-    var output = std.ArrayList(u8).init(testing.allocator);
+    var output = std.array_list.Managed(u8).init(testing.allocator);
     defer output.deinit();
 
     try yaml_mod.stringify(testing.allocator, input, output.writer());

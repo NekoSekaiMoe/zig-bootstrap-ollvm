@@ -5,7 +5,6 @@
 const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
-const io = std.io;
 const math = std.math;
 const mem = std.mem;
 const meta = std.meta;
@@ -141,6 +140,10 @@ pub const Params = struct {
     /// Baseline parameters for offline usage
     pub const sensitive = Self.fromLimits(33554432, 1073741824);
 
+    /// Recommended parameters according to the
+    /// [OWASP cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+    pub const owasp = Self{ .ln = 17, .r = 8, .p = 1 };
+
     /// Create parameters from ops and mem limits, where mem_limit given in bytes
     pub fn fromLimits(ops_limit: u64, mem_limit: usize) Self {
         const ops = @max(32768, ops_limit);
@@ -191,11 +194,11 @@ pub fn kdf(
         params.r > max_int / 256 or
         n > max_int / 128 / @as(u64, params.r)) return KdfError.WeakParameters;
 
-    const xy = try allocator.alignedAlloc(u32, 16, 64 * params.r);
+    const xy = try allocator.alignedAlloc(u32, .@"16", 64 * params.r);
     defer allocator.free(xy);
-    const v = try allocator.alignedAlloc(u32, 16, 32 * n * params.r);
+    const v = try allocator.alignedAlloc(u32, .@"16", 32 * n * params.r);
     defer allocator.free(v);
-    var dk = try allocator.alignedAlloc(u8, 16, params.p * 128 * params.r);
+    var dk = try allocator.alignedAlloc(u8, .@"16", params.p * 128 * params.r);
     defer allocator.free(dk);
 
     try pwhash.pbkdf2(dk, password, salt, 1, HmacSha256);
@@ -300,30 +303,34 @@ const crypt_format = struct {
 
     /// Serialize parameters into a string in modular crypt format.
     pub fn serialize(params: anytype, str: []u8) EncodingError![]const u8 {
-        var buf = io.fixedBufferStream(str);
-        try serializeTo(params, buf.writer());
-        return buf.getWritten();
+        var w: std.Io.Writer = .fixed(str);
+        serializeTo(params, &w) catch |err| switch (err) {
+            error.WriteFailed => return error.NoSpaceLeft,
+            else => |e| return e,
+        };
+        return w.buffered();
     }
 
     /// Compute the number of bytes required to serialize `params`
     pub fn calcSize(params: anytype) usize {
-        var buf = io.countingWriter(io.null_writer);
-        serializeTo(params, buf.writer()) catch unreachable;
-        return @as(usize, @intCast(buf.bytes_written));
+        var trash: [128]u8 = undefined;
+        var d: std.Io.Writer.Discarding = .init(&trash);
+        serializeTo(params, &d.writer) catch unreachable;
+        return @intCast(d.fullCount());
     }
 
-    fn serializeTo(params: anytype, out: anytype) !void {
+    fn serializeTo(params: anytype, w: *std.Io.Writer) !void {
         var header: [14]u8 = undefined;
         header[0..3].* = prefix.*;
         Codec.intEncode(header[3..4], params.ln);
         Codec.intEncode(header[4..9], params.r);
         Codec.intEncode(header[9..14], params.p);
-        try out.writeAll(&header);
-        try out.writeAll(params.salt);
-        try out.writeAll("$");
+        try w.writeAll(&header);
+        try w.writeAll(params.salt);
+        try w.writeAll("$");
         var buf: [@TypeOf(params.hash).max_encoded_length]u8 = undefined;
         const hash_str = try params.hash.toB64(&buf);
-        try out.writeAll(hash_str);
+        try w.writeAll(hash_str);
     }
 
     /// Custom codec that maps 6 bits into 8 like regular Base64, but uses its own alphabet,

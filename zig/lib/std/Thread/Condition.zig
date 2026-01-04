@@ -123,14 +123,9 @@ const SingleThreadedImpl = struct {
     fn wait(self: *Impl, mutex: *Mutex, timeout: ?u64) error{Timeout}!void {
         _ = self;
         _ = mutex;
-
         // There are no other threads to wake us up.
         // So if we wait without a timeout we would never wake up.
-        const timeout_ns = timeout orelse {
-            unreachable; // deadlock detected
-        };
-
-        std.time.sleep(timeout_ns);
+        assert(timeout != null); // Deadlock detected.
         return error.Timeout;
     }
 
@@ -161,32 +156,32 @@ const WindowsImpl = struct {
             }
         }
 
-        if (comptime builtin.mode == .Debug) {
+        if (builtin.mode == .Debug) {
             // The internal state of the DebugMutex needs to be handled here as well.
             mutex.impl.locking_thread.store(0, .unordered);
         }
         const rc = os.windows.kernel32.SleepConditionVariableSRW(
             &self.condition,
-            if (comptime builtin.mode == .Debug) &mutex.impl.impl.srwlock else &mutex.impl.srwlock,
+            if (builtin.mode == .Debug) &mutex.impl.impl.srwlock else &mutex.impl.srwlock,
             timeout_ms,
             0, // the srwlock was assumed to acquired in exclusive mode not shared
         );
-        if (comptime builtin.mode == .Debug) {
+        if (builtin.mode == .Debug) {
             // The internal state of the DebugMutex needs to be handled here as well.
             mutex.impl.locking_thread.store(std.Thread.getCurrentId(), .unordered);
         }
 
         // Return error.Timeout if we know the timeout elapsed correctly.
         if (rc == os.windows.FALSE) {
-            assert(os.windows.kernel32.GetLastError() == .TIMEOUT);
+            assert(os.windows.GetLastError() == .TIMEOUT);
             if (!timeout_overflowed) return error.Timeout;
         }
     }
 
     fn wake(self: *Impl, comptime notify: Notify) void {
         switch (notify) {
-            .one => os.windows.kernel32.WakeConditionVariable(&self.condition),
-            .all => os.windows.kernel32.WakeAllConditionVariable(&self.condition),
+            .one => os.windows.ntdll.RtlWakeConditionVariable(&self.condition),
+            .all => os.windows.ntdll.RtlWakeAllConditionVariable(&self.condition),
         }
     }
 };
@@ -323,6 +318,8 @@ test "wait and signal" {
         return error.SkipZigTest;
     }
 
+    const io = testing.io;
+
     const num_threads = 4;
 
     const MultiWait = struct {
@@ -348,7 +345,7 @@ test "wait and signal" {
     }
 
     while (true) {
-        std.time.sleep(100 * std.time.ns_per_ms);
+        try std.Io.Clock.Duration.sleep(.{ .clock = .awake, .raw = .fromMilliseconds(100) }, io);
 
         multi_wait.mutex.lock();
         defer multi_wait.mutex.unlock();
@@ -367,6 +364,8 @@ test signal {
     if (builtin.single_threaded) {
         return error.SkipZigTest;
     }
+
+    const io = testing.io;
 
     const num_threads = 4;
 
@@ -405,7 +404,7 @@ test signal {
     }
 
     while (true) {
-        std.time.sleep(10 * std.time.ns_per_ms);
+        try std.Io.Clock.Duration.sleep(.{ .clock = .awake, .raw = .fromMilliseconds(10) }, io);
 
         signal_test.mutex.lock();
         defer signal_test.mutex.unlock();

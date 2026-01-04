@@ -1,12 +1,12 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const mem = std.mem;
-const io = std.io;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const Cache = std.Build.Cache;
 
 fn usage() noreturn {
-    io.getStdOut().writeAll(
+    std.fs.File.stdout().writeAll(
         \\Usage: zig std [options]
         \\
         \\Options:
@@ -24,7 +24,7 @@ pub fn main() !void {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
     var argv = try std.process.argsWithAllocator(arena);
@@ -59,10 +59,12 @@ pub fn main() !void {
     const should_open_browser = force_open_browser orelse (listen_port == 0);
 
     const address = std.net.Address.parseIp("127.0.0.1", listen_port) catch unreachable;
-    var http_server = try address.listen(.{});
+    var http_server = try address.listen(.{
+        .reuse_address = true,
+    });
     const port = http_server.listen_address.in.getPort();
     const url_with_newline = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/\n", .{port});
-    std.io.getStdOut().writeAll(url_with_newline) catch {};
+    std.fs.File.stdout().writeAll(url_with_newline) catch {};
     if (should_open_browser) {
         openBrowserTab(gpa, url_with_newline[0 .. url_with_newline.len - 1 :'\n']) catch |err| {
             std.log.err("unable to open browser: {s}", .{@errorName(err)});
@@ -90,9 +92,12 @@ pub fn main() !void {
 fn accept(context: *Context, connection: std.net.Server.Connection) void {
     defer connection.stream.close();
 
-    var read_buffer: [8000]u8 = undefined;
-    var server = std.http.Server.init(connection, &read_buffer);
-    while (server.state == .ready) {
+    var recv_buffer: [4000]u8 = undefined;
+    var send_buffer: [4000]u8 = undefined;
+    var conn_reader = connection.stream.reader(&recv_buffer);
+    var conn_writer = connection.stream.writer(&send_buffer);
+    var server = std.http.Server.init(conn_reader.interface(), &conn_writer.interface);
+    while (server.reader.state == .ready) {
         var request = server.receiveHead() catch |err| switch (err) {
             error.HttpConnectionClosing => return,
             else => {
@@ -100,9 +105,19 @@ fn accept(context: *Context, connection: std.net.Server.Connection) void {
                 return;
             },
         };
-        serveRequest(&request, context) catch |err| {
-            std.log.err("unable to serve {s}: {s}", .{ request.head.target, @errorName(err) });
-            return;
+        serveRequest(&request, context) catch |err| switch (err) {
+            error.WriteFailed => {
+                if (conn_writer.err) |e| {
+                    std.log.err("unable to serve {s}: {s}", .{ request.head.target, @errorName(e) });
+                } else {
+                    std.log.err("unable to serve {s}: {s}", .{ request.head.target, @errorName(err) });
+                }
+                return;
+            },
+            else => {
+                std.log.err("unable to serve {s}: {s}", .{ request.head.target, @errorName(err) });
+                return;
+            },
         };
     }
 }
@@ -117,6 +132,7 @@ const Context = struct {
 
 fn serveRequest(request: *std.http.Server.Request, context: *Context) !void {
     if (std.mem.eql(u8, request.head.target, "/") or
+        std.mem.eql(u8, request.head.target, "/debug") or
         std.mem.eql(u8, request.head.target, "/debug/"))
     {
         try serveDocsFile(request, context, "docs/index.html", "text/html");
@@ -157,7 +173,7 @@ fn serveDocsFile(
     // The desired API is actually sendfile, which will require enhancing std.http.Server.
     // We load the file with every request so that the user can make changes to the file
     // and refresh the HTML page without restarting this server.
-    const file_contents = try context.lib_dir.readFileAlloc(gpa, name, 10 * 1024 * 1024);
+    const file_contents = try context.lib_dir.readFileAlloc(name, gpa, .limited(10 * 1024 * 1024));
     defer gpa.free(file_contents);
     try request.respond(file_contents, .{
         .extra_headers = &.{
@@ -171,8 +187,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
     const gpa = context.gpa;
 
     var send_buffer: [0x4000]u8 = undefined;
-    var response = request.respondStreaming(.{
-        .send_buffer = &send_buffer,
+    var response = try request.respondStreaming(&send_buffer, .{
         .respond_options = .{
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "application/x-tar" },
@@ -180,13 +195,15 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
             },
         },
     });
-    const w = response.writer();
 
     var std_dir = try context.lib_dir.openDir("std", .{ .iterate = true });
     defer std_dir.close();
 
     var walker = try std_dir.walk(gpa);
     defer walker.deinit();
+
+    var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
+    archiver.prefix = "std";
 
     while (try walker.next()) |entry| {
         switch (entry.kind) {
@@ -198,47 +215,27 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
             },
             else => continue,
         }
-
-        var file = try std_dir.openFile(entry.path, .{});
+        var file = try entry.dir.openFile(entry.basename, .{});
         defer file.close();
-
         const stat = try file.stat();
-        const padding = p: {
-            const remainder = stat.size % 512;
-            break :p if (remainder > 0) 512 - remainder else 0;
+        var file_reader: std.fs.File.Reader = .{
+            .file = file,
+            .interface = std.fs.File.Reader.initInterface(&.{}),
+            .size = stat.size,
         };
-
-        var file_header = std.tar.output.Header.init();
-        file_header.typeflag = .regular;
-        try file_header.setPath("std", entry.path);
-        try file_header.setSize(stat.size);
-        try file_header.updateChecksum();
-        try w.writeAll(std.mem.asBytes(&file_header));
-        try w.writeFile(file);
-        try w.writeByteNTimes(0, padding);
+        try archiver.writeFile(entry.path, &file_reader, stat.mtime);
     }
 
     {
         // Since this command is JIT compiled, the builtin module available in
         // this source file corresponds to the user's host system.
         const builtin_zig = @embedFile("builtin");
-
-        var file_header = std.tar.output.Header.init();
-        file_header.typeflag = .regular;
-        try file_header.setPath("builtin", "builtin.zig");
-        try file_header.setSize(builtin_zig.len);
-        try file_header.updateChecksum();
-        try w.writeAll(std.mem.asBytes(&file_header));
-        try w.writeAll(builtin_zig);
-        const padding = p: {
-            const remainder = builtin_zig.len % 512;
-            break :p if (remainder > 0) 512 - remainder else 0;
-        };
-        try w.writeByteNTimes(0, padding);
+        archiver.prefix = "builtin";
+        try archiver.writeFileBytes("builtin.zig", builtin_zig, .{});
     }
 
     // intentionally omitting the pointless trailer
-    //try w.writeByteNTimes(0, 512 * 2);
+    //try archiver.finish();
     try response.end();
 }
 
@@ -255,9 +252,18 @@ fn serveWasm(
 
     // Do the compilation every request, so that the user can edit the files
     // and see the changes without restarting the server.
-    const wasm_binary_path = try buildWasmBinary(arena, context, optimize_mode);
+    const wasm_base_path = try buildWasmBinary(arena, context, optimize_mode);
+    const bin_name = try std.zig.binNameAlloc(arena, .{
+        .root_name = autodoc_root_name,
+        .target = &(std.zig.system.resolveTargetQuery(std.Build.parseTargetQuery(.{
+            .arch_os_abi = autodoc_arch_os_abi,
+            .cpu_features = autodoc_cpu_features,
+        }) catch unreachable) catch unreachable),
+        .output_mode = .Exe,
+    });
     // std.http.Server does not have a sendfile API yet.
-    const file_contents = try std.fs.cwd().readFileAlloc(gpa, wasm_binary_path, 10 * 1024 * 1024);
+    const bin_path = try wasm_base_path.join(arena, bin_name);
+    const file_contents = try bin_path.root_dir.handle.readFileAlloc(bin_path.sub_path, gpa, .limited(10 * 1024 * 1024));
     defer gpa.free(file_contents);
     try request.respond(file_contents, .{
         .extra_headers = &.{
@@ -267,47 +273,51 @@ fn serveWasm(
     });
 }
 
+const autodoc_root_name = "autodoc";
+const autodoc_arch_os_abi = "wasm32-freestanding";
+const autodoc_cpu_features = "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext";
+
 fn buildWasmBinary(
     arena: Allocator,
     context: *Context,
     optimize_mode: std.builtin.OptimizeMode,
-) ![]const u8 {
+) !Cache.Path {
     const gpa = context.gpa;
 
-    const main_src_path = try std.fs.path.join(arena, &.{
-        context.zig_lib_directory, "docs", "wasm", "main.zig",
-    });
-
-    var argv: std.ArrayListUnmanaged([]const u8) = .{};
+    var argv: std.ArrayList([]const u8) = .empty;
 
     try argv.appendSlice(arena, &.{
-        context.zig_exe_path,
-        "build-exe",
-        "-fno-entry",
-        "-O",
-        @tagName(optimize_mode),
-        "-target",
-        "wasm32-freestanding",
-        "-mcpu",
-        "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext",
-        "--cache-dir",
-        context.global_cache_path,
-        "--global-cache-dir",
-        context.global_cache_path,
-        "--name",
-        "autodoc",
-        "-rdynamic",
-        main_src_path,
-        "--listen=-",
+        context.zig_exe_path, //
+        "build-exe", //
+        "-fno-entry", //
+        "-O", @tagName(optimize_mode), //
+        "-target", autodoc_arch_os_abi, //
+        "-mcpu", autodoc_cpu_features, //
+        "--cache-dir", context.global_cache_path, //
+        "--global-cache-dir", context.global_cache_path, //
+        "--name", autodoc_root_name, //
+        "-rdynamic", //
+        "--dep", "Walk", //
+        try std.fmt.allocPrint(
+            arena,
+            "-Mroot={s}/docs/wasm/main.zig",
+            .{context.zig_lib_directory},
+        ),
+        try std.fmt.allocPrint(
+            arena,
+            "-MWalk={s}/docs/wasm/Walk.zig",
+            .{context.zig_lib_directory},
+        ),
+        "--listen=-", //
     });
 
-    var child = std.ChildProcess.init(argv.items, gpa);
+    var child = std.process.Child.init(argv.items, gpa);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     try child.spawn();
 
-    var poller = std.io.poll(gpa, enum { stdout, stderr }, .{
+    var poller = std.Io.poll(gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
         .stderr = child.stderr.?,
     });
@@ -316,21 +326,17 @@ fn buildWasmBinary(
     try sendMessage(child.stdin.?, .update);
     try sendMessage(child.stdin.?, .exit);
 
-    const Header = std.zig.Server.Message.Header;
-    var result: ?[]const u8 = null;
+    var result: ?Cache.Path = null;
     var result_error_bundle = std.zig.ErrorBundle.empty;
 
-    const stdout = poller.fifo(.stdout);
+    const stdout = poller.reader(.stdout);
 
     poll: while (true) {
-        while (stdout.readableLength() < @sizeOf(Header)) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const header = stdout.reader().readStruct(Header) catch unreachable;
-        while (stdout.readableLength() < header.bytes_len) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const body = stdout.readableSliceOfLen(header.bytes_len);
+        const Header = std.zig.Server.Message.Header;
+        while (stdout.buffered().len < @sizeOf(Header)) if (!try poller.poll()) break :poll;
+        const header = stdout.takeStruct(Header, .little) catch unreachable;
+        while (stdout.buffered().len < header.bytes_len) if (!try poller.poll()) break :poll;
+        const body = stdout.take(header.bytes_len) catch unreachable;
 
         switch (header.tag) {
             .zig_version => {
@@ -339,40 +345,29 @@ fn buildWasmBinary(
                 }
             },
             .error_bundle => {
-                const EbHdr = std.zig.Server.Message.ErrorBundle;
-                const eb_hdr = @as(*align(1) const EbHdr, @ptrCast(body));
-                const extra_bytes =
-                    body[@sizeOf(EbHdr)..][0 .. @sizeOf(u32) * eb_hdr.extra_len];
-                const string_bytes =
-                    body[@sizeOf(EbHdr) + extra_bytes.len ..][0..eb_hdr.string_bytes_len];
-                // TODO: use @ptrCast when the compiler supports it
-                const unaligned_extra = std.mem.bytesAsSlice(u32, extra_bytes);
-                const extra_array = try arena.alloc(u32, unaligned_extra.len);
-                @memcpy(extra_array, unaligned_extra);
-                result_error_bundle = .{
-                    .string_bytes = try arena.dupe(u8, string_bytes),
-                    .extra = extra_array,
-                };
+                result_error_bundle = try std.zig.Server.allocErrorBundle(arena, body);
             },
-            .emit_bin_path => {
-                const EbpHdr = std.zig.Server.Message.EmitBinPath;
-                const ebp_hdr = @as(*align(1) const EbpHdr, @ptrCast(body));
-                if (!ebp_hdr.flags.cache_hit) {
+            .emit_digest => {
+                var r: std.Io.Reader = .fixed(body);
+                const emit_digest = r.takeStruct(std.zig.Server.Message.EmitDigest, .little) catch unreachable;
+                if (!emit_digest.flags.cache_hit) {
                     std.log.info("source changes detected; rebuilt wasm component", .{});
                 }
-                result = try arena.dupe(u8, body[@sizeOf(EbpHdr)..]);
+                const digest = r.takeArray(Cache.bin_digest_len) catch unreachable;
+                result = .{
+                    .root_dir = Cache.Directory.cwd(),
+                    .sub_path = try std.fs.path.join(arena, &.{
+                        context.global_cache_path, "o" ++ std.fs.path.sep_str ++ Cache.binToHex(digest.*),
+                    }),
+                };
             },
             else => {}, // ignore other messages
         }
-
-        stdout.discard(body.len);
     }
 
-    const stderr = poller.fifo(.stderr);
-    if (stderr.readableLength() > 0) {
-        const owned_stderr = try stderr.toOwnedSlice();
-        defer gpa.free(owned_stderr);
-        std.debug.print("{s}", .{owned_stderr});
+    const stderr = poller.reader(.stderr);
+    if (stderr.bufferedLen() > 0) {
+        std.debug.print("{s}", .{stderr.buffered()});
     }
 
     // Send EOF to stdin.
@@ -399,8 +394,7 @@ fn buildWasmBinary(
     }
 
     if (result_error_bundle.errorMessageCount() > 0) {
-        const color = std.zig.Color.auto;
-        result_error_bundle.renderToStdErr(color.renderOptions());
+        result_error_bundle.renderToStdErr(.{}, true);
         std.log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
             try std.Build.Step.allocPrintCmd(arena, null, argv.items),
@@ -421,7 +415,10 @@ fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
         .tag = tag,
         .bytes_len = 0,
     };
-    try file.writeAll(std.mem.asBytes(&header));
+    var w = file.writer(&.{});
+    w.interface.writeStruct(header, .little) catch |err| switch (err) {
+        error.WriteFailed => return w.err.?,
+    };
 }
 
 fn openBrowserTab(gpa: Allocator, url: []const u8) !void {
@@ -433,9 +430,10 @@ fn openBrowserTab(gpa: Allocator, url: []const u8) !void {
 fn openBrowserTabThread(gpa: Allocator, url: []const u8) !void {
     const main_exe = switch (builtin.os.tag) {
         .windows => "explorer",
+        .macos => "open",
         else => "xdg-open",
     };
-    var child = std.ChildProcess.init(&.{ main_exe, url }, gpa);
+    var child = std.process.Child.init(&.{ main_exe, url }, gpa);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;

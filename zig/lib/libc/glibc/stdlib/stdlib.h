@@ -1,4 +1,4 @@
-/* Copyright (C) 1991-2023 Free Software Foundation, Inc.
+/* Copyright (C) 1991-2025 Free Software Foundation, Inc.
    Copyright The GNU Toolchain Authors.
    This file is part of the GNU C Library.
 
@@ -210,7 +210,7 @@ extern unsigned long long int strtoull (const char *__restrict __nptr,
 
 /* Versions of the above functions that handle '0b' and '0B' prefixes
    in base 0 or 2.  */
-#if __GLIBC_USE (C2X_STRTOL)
+#if __GLIBC_USE (C23_STRTOL)
 # ifdef __REDIRECT
 extern long int __REDIRECT_NTH (strtol, (const char *__restrict __nptr,
 					 char **__restrict __endptr,
@@ -274,7 +274,7 @@ extern unsigned long long int __isoc23_strtoull (const char *__restrict __nptr,
 #endif
 
 /* Convert a floating-point number to a string.  */
-#if __GLIBC_USE (IEC_60559_BFP_EXT_C2X)
+#if __GLIBC_USE (IEC_60559_BFP_EXT_C23)
 extern int strfromd (char *__dest, size_t __size, const char *__format,
 		     double __f)
      __THROW __nonnull ((3));
@@ -360,7 +360,7 @@ extern unsigned long long int strtoull_l (const char *__restrict __nptr,
 
 /* Versions of the above functions that handle '0b' and '0B' prefixes
    in base 0 or 2.  */
-# if __GLIBC_USE (C2X_STRTOL)
+# if __GLIBC_USE (C23_STRTOL)
 #  ifdef __REDIRECT
 extern long int __REDIRECT_NTH (strtol_l, (const char *__restrict __nptr,
 					   char **__restrict __endptr,
@@ -727,7 +727,7 @@ extern void *aligned_alloc (size_t __alignment, size_t __size)
 #endif
 
 /* Abort execution and generate a core-dump.  */
-extern void abort (void) __THROW __attribute__ ((__noreturn__));
+extern void abort (void) __THROW __attribute__ ((__noreturn__)) __COLD;
 
 
 /* Register a function to be called when `exit' is called.  */
@@ -985,6 +985,12 @@ __extension__ extern long long int llabs (long long int __x)
      __THROW __attribute__ ((__const__)) __wur;
 #endif
 
+#if __GLIBC_USE (ISOC2Y)
+extern unsigned int uabs (int __x) __THROW __attribute__ ((__const__)) __wur;
+extern unsigned long int ulabs (long int __x) __THROW __attribute__ ((__const__)) __wur;
+__extension__ extern unsigned long long int ullabs (long long int __x)
+     __THROW __attribute__ ((__const__)) __wur;
+#endif
 
 /* Return the `div_t', `ldiv_t' or `lldiv_t' representation
    of the value of NUMER over DENOM. */

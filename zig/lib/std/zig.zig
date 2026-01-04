@@ -2,6 +2,13 @@
 //! source lives here. These APIs are provided as-is and have absolutely no API
 //! guarantees whatsoever.
 
+const std = @import("std.zig");
+const tokenizer = @import("zig/tokenizer.zig");
+const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Writer = std.Io.Writer;
+
 pub const ErrorBundle = @import("zig/ErrorBundle.zig");
 pub const Server = @import("zig/Server.zig");
 pub const Client = @import("zig/Client.zig");
@@ -14,24 +21,26 @@ pub const isPrimitive = primitives.isPrimitive;
 pub const Ast = @import("zig/Ast.zig");
 pub const AstGen = @import("zig/AstGen.zig");
 pub const Zir = @import("zig/Zir.zig");
+pub const Zoir = @import("zig/Zoir.zig");
+pub const ZonGen = @import("zig/ZonGen.zig");
 pub const system = @import("zig/system.zig");
-/// Deprecated: use `std.Target.Query`.
-pub const CrossTarget = std.Target.Query;
 pub const BuiltinFn = @import("zig/BuiltinFn.zig");
 pub const AstRlAnnotate = @import("zig/AstRlAnnotate.zig");
 pub const LibCInstallation = @import("zig/LibCInstallation.zig");
 pub const WindowsSdk = @import("zig/WindowsSdk.zig");
 pub const LibCDirs = @import("zig/LibCDirs.zig");
 pub const target = @import("zig/target.zig");
+pub const llvm = @import("zig/llvm.zig");
 
 // Character literal parsing
 pub const ParsedCharLiteral = string_literal.ParsedCharLiteral;
 pub const parseCharLiteral = string_literal.parseCharLiteral;
 pub const parseNumberLiteral = number_literal.parseNumberLiteral;
 
-// Files needed by translate-c.
-pub const c_builtins = @import("zig/c_builtins.zig");
-pub const c_translation = @import("zig/c_translation.zig");
+pub const c_translation = struct {
+    pub const builtins = @import("zig/c_translation/builtins.zig");
+    pub const helpers = @import("zig/c_translation/helpers.zig");
+};
 
 pub const SrcHasher = std.crypto.hash.Blake3;
 pub const SrcHash = [16]u8;
@@ -44,20 +53,18 @@ pub const Color = enum {
     /// Assume stderr is a terminal.
     on,
 
-    pub fn get_tty_conf(color: Color) std.io.tty.Config {
+    pub fn getTtyConf(color: Color, detected: Io.tty.Config) Io.tty.Config {
         return switch (color) {
-            .auto => std.io.tty.detectConfig(std.io.getStdErr()),
+            .auto => detected,
             .on => .escape_codes,
             .off => .no_color,
         };
     }
-
-    pub fn renderOptions(color: Color) std.zig.ErrorBundle.RenderOptions {
-        const ttyconf = get_tty_conf(color);
-        return .{
-            .ttyconf = ttyconf,
-            .include_source_line = ttyconf != .no_color,
-            .include_reference_trace = ttyconf != .no_color,
+    pub fn detectTtyConf(color: Color) Io.tty.Config {
+        return switch (color) {
+            .auto => .detect(.stderr()),
+            .on => .escape_codes,
+            .off => .no_color,
         };
     }
 };
@@ -142,7 +149,7 @@ pub fn lineDelta(source: []const u8, start: usize, end: usize) isize {
 
 pub const BinNameOptions = struct {
     root_name: []const u8,
-    target: std.Target,
+    target: *const std.Target,
     output_mode: std.builtin.OutputMode,
     link_mode: ?std.builtin.LinkMode = null,
     version: ?std.SemanticVersion = null,
@@ -233,10 +240,14 @@ pub fn binNameAlloc(allocator: Allocator, options: BinNameOptions) error{OutOfMe
                 t.libPrefix(), root_name,
             }),
         },
-        .nvptx => return std.fmt.allocPrint(allocator, "{s}.ptx", .{root_name}),
-        .dxcontainer => return std.fmt.allocPrint(allocator, "{s}.dxil", .{root_name}),
     }
 }
+
+pub const SanitizeC = enum {
+    off,
+    trap,
+    full,
+};
 
 pub const BuildId = union(enum) {
     none,
@@ -247,7 +258,7 @@ pub const BuildId = union(enum) {
     hexstring: HexString,
 
     pub fn eql(a: BuildId, b: BuildId) bool {
-        const Tag = @typeInfo(BuildId).Union.tag_type.?;
+        const Tag = @typeInfo(BuildId).@"union".tag_type.?;
         const a_tag: Tag = a;
         const b_tag: Tag = b;
         if (a_tag != b_tag) return false;
@@ -313,12 +324,76 @@ pub const BuildId = union(enum) {
         try std.testing.expectError(error.InvalidCharacter, parse("0xfoobbb"));
         try std.testing.expectError(error.InvalidBuildIdStyle, parse("yaddaxxx"));
     }
+
+    pub fn format(id: BuildId, writer: *Writer) Writer.Error!void {
+        switch (id) {
+            .none, .fast, .uuid, .sha1, .md5 => {
+                try writer.writeAll(@tagName(id));
+            },
+            .hexstring => |hs| {
+                try writer.print("0x{x}", .{hs.toSlice()});
+            },
+        }
+    }
+
+    test format {
+        try std.testing.expectFmt("none", "{f}", .{@as(BuildId, .none)});
+        try std.testing.expectFmt("fast", "{f}", .{@as(BuildId, .fast)});
+        try std.testing.expectFmt("uuid", "{f}", .{@as(BuildId, .uuid)});
+        try std.testing.expectFmt("sha1", "{f}", .{@as(BuildId, .sha1)});
+        try std.testing.expectFmt("md5", "{f}", .{@as(BuildId, .md5)});
+        try std.testing.expectFmt("0x", "{f}", .{BuildId.initHexString("")});
+        try std.testing.expectFmt("0x1234cdef", "{f}", .{BuildId.initHexString("\x12\x34\xcd\xef")});
+    }
+};
+
+pub const LtoMode = enum { none, full, thin };
+
+pub const Subsystem = enum {
+    console,
+    windows,
+    posix,
+    native,
+    efi_application,
+    efi_boot_service_driver,
+    efi_rom,
+    efi_runtime_driver,
+
+    /// Deprecated; use '.console' instead. To be removed after 0.16.0 is tagged.
+    pub const Console: Subsystem = .console;
+    /// Deprecated; use '.windows' instead. To be removed after 0.16.0 is tagged.
+    pub const Windows: Subsystem = .windows;
+    /// Deprecated; use '.posix' instead. To be removed after 0.16.0 is tagged.
+    pub const Posix: Subsystem = .posix;
+    /// Deprecated; use '.native' instead. To be removed after 0.16.0 is tagged.
+    pub const Native: Subsystem = .native;
+    /// Deprecated; use '.efi_application' instead. To be removed after 0.16.0 is tagged.
+    pub const EfiApplication: Subsystem = .efi_application;
+    /// Deprecated; use '.efi_boot_service_driver' instead. To be removed after 0.16.0 is tagged.
+    pub const EfiBootServiceDriver: Subsystem = .efi_boot_service_driver;
+    /// Deprecated; use '.efi_rom' instead. To be removed after 0.16.0 is tagged.
+    pub const EfiRom: Subsystem = .efi_rom;
+    /// Deprecated; use '.efi_runtime_driver' instead. To be removed after 0.16.0 is tagged.
+    pub const EfiRuntimeDriver: Subsystem = .efi_runtime_driver;
+};
+
+pub const CompressDebugSections = enum { none, zlib, zstd };
+
+pub const RcIncludes = enum {
+    /// Use MSVC if available, fall back to MinGW.
+    any,
+    /// Use MSVC include paths (MSVC install + Windows SDK, must be present on the system).
+    msvc,
+    /// Use MinGW include paths (distributed with Zig).
+    gnu,
+    /// Do not use any autodetected include paths.
+    none,
 };
 
 /// Renders a `std.Target.Cpu` value into a textual representation that can be parsed
 /// via the `-mcpu` flag passed to the Zig compiler.
 /// Appends the result to `buffer`.
-pub fn serializeCpu(buffer: *std.ArrayList(u8), cpu: std.Target.Cpu) Allocator.Error!void {
+pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Allocator.Error!void {
     const all_features = cpu.arch.allFeaturesList();
     var populated_cpu_features = cpu.model.features;
     populated_cpu_features.populateDependencies(all_features);
@@ -346,536 +421,148 @@ pub fn serializeCpu(buffer: *std.ArrayList(u8), cpu: std.Target.Cpu) Allocator.E
 }
 
 pub fn serializeCpuAlloc(ally: Allocator, cpu: std.Target.Cpu) Allocator.Error![]u8 {
-    var buffer = std.ArrayList(u8).init(ally);
+    var buffer = std.array_list.Managed(u8).init(ally);
     try serializeCpu(&buffer, cpu);
     return buffer.toOwnedSlice();
 }
 
-pub const DeclIndex = enum(u32) {
-    _,
-
-    pub fn toOptional(i: DeclIndex) OptionalDeclIndex {
-        return @enumFromInt(@intFromEnum(i));
-    }
-};
-
-pub const OptionalDeclIndex = enum(u32) {
-    none = std.math.maxInt(u32),
-    _,
-
-    pub fn init(oi: ?DeclIndex) OptionalDeclIndex {
-        return @enumFromInt(@intFromEnum(oi orelse return .none));
-    }
-
-    pub fn unwrap(oi: OptionalDeclIndex) ?DeclIndex {
-        if (oi == .none) return null;
-        return @enumFromInt(@intFromEnum(oi));
-    }
-};
-
-/// Resolving a source location into a byte offset may require doing work
-/// that we would rather not do unless the error actually occurs.
-/// Therefore we need a data structure that contains the information necessary
-/// to lazily produce a `SrcLoc` as required.
-/// Most of the offsets in this data structure are relative to the containing Decl.
-/// This makes the source location resolve properly even when a Decl gets
-/// shifted up or down in the file, as long as the Decl's contents itself
-/// do not change.
-pub const LazySrcLoc = union(enum) {
-    /// When this tag is set, the code that constructed this `LazySrcLoc` is asserting
-    /// that all code paths which would need to resolve the source location are
-    /// unreachable. If you are debugging this tag incorrectly being this value,
-    /// look into using reverse-continue with a memory watchpoint to see where the
-    /// value is being set to this tag.
-    unneeded,
-    /// Means the source location points to an entire file; not any particular
-    /// location within the file. `file_scope` union field will be active.
-    entire_file,
-    /// The source location points to a byte offset within a source file,
-    /// offset from 0. The source file is determined contextually.
-    /// Inside a `SrcLoc`, the `file_scope` union field will be active.
-    byte_abs: u32,
-    /// The source location points to a token within a source file,
-    /// offset from 0. The source file is determined contextually.
-    /// Inside a `SrcLoc`, the `file_scope` union field will be active.
-    token_abs: u32,
-    /// The source location points to an AST node within a source file,
-    /// offset from 0. The source file is determined contextually.
-    /// Inside a `SrcLoc`, the `file_scope` union field will be active.
-    node_abs: u32,
-    /// The source location points to a byte offset within a source file,
-    /// offset from the byte offset of the Decl within the file.
-    /// The Decl is determined contextually.
-    byte_offset: u32,
-    /// This data is the offset into the token list from the Decl token.
-    /// The Decl is determined contextually.
-    token_offset: u32,
-    /// The source location points to an AST node, which is this value offset
-    /// from its containing Decl node AST index.
-    /// The Decl is determined contextually.
-    node_offset: TracedOffset,
-    /// The source location points to the main token of an AST node, found
-    /// by taking this AST node index offset from the containing Decl AST node.
-    /// The Decl is determined contextually.
-    node_offset_main_token: i32,
-    /// The source location points to the beginning of a struct initializer.
-    /// The Decl is determined contextually.
-    node_offset_initializer: i32,
-    /// The source location points to a variable declaration type expression,
-    /// found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a variable declaration AST node. Next, navigate
-    /// to the type expression.
-    /// The Decl is determined contextually.
-    node_offset_var_decl_ty: i32,
-    /// The source location points to the alignment expression of a var decl.
-    /// The Decl is determined contextually.
-    node_offset_var_decl_align: i32,
-    /// The source location points to the linksection expression of a var decl.
-    /// The Decl is determined contextually.
-    node_offset_var_decl_section: i32,
-    /// The source location points to the addrspace expression of a var decl.
-    /// The Decl is determined contextually.
-    node_offset_var_decl_addrspace: i32,
-    /// The source location points to the initializer of a var decl.
-    /// The Decl is determined contextually.
-    node_offset_var_decl_init: i32,
-    /// The source location points to the first parameter of a builtin
-    /// function call, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a builtin call AST node. Next, navigate
-    /// to the first parameter.
-    /// The Decl is determined contextually.
-    node_offset_builtin_call_arg0: i32,
-    /// Same as `node_offset_builtin_call_arg0` except arg index 1.
-    node_offset_builtin_call_arg1: i32,
-    node_offset_builtin_call_arg2: i32,
-    node_offset_builtin_call_arg3: i32,
-    node_offset_builtin_call_arg4: i32,
-    node_offset_builtin_call_arg5: i32,
-    /// Like `node_offset_builtin_call_arg0` but recurses through arbitrarily many calls
-    /// to pointer cast builtins.
-    node_offset_ptrcast_operand: i32,
-    /// The source location points to the index expression of an array access
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to an array access AST node. Next, navigate
-    /// to the index expression.
-    /// The Decl is determined contextually.
-    node_offset_array_access_index: i32,
-    /// The source location points to the LHS of a slice expression
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a slice AST node. Next, navigate
-    /// to the sentinel expression.
-    /// The Decl is determined contextually.
-    node_offset_slice_ptr: i32,
-    /// The source location points to start expression of a slice expression
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a slice AST node. Next, navigate
-    /// to the sentinel expression.
-    /// The Decl is determined contextually.
-    node_offset_slice_start: i32,
-    /// The source location points to the end expression of a slice
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a slice AST node. Next, navigate
-    /// to the sentinel expression.
-    /// The Decl is determined contextually.
-    node_offset_slice_end: i32,
-    /// The source location points to the sentinel expression of a slice
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a slice AST node. Next, navigate
-    /// to the sentinel expression.
-    /// The Decl is determined contextually.
-    node_offset_slice_sentinel: i32,
-    /// The source location points to the callee expression of a function
-    /// call expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function call AST node. Next, navigate
-    /// to the callee expression.
-    /// The Decl is determined contextually.
-    node_offset_call_func: i32,
-    /// The payload is offset from the containing Decl AST node.
-    /// The source location points to the field name of:
-    ///  * a field access expression (`a.b`), or
-    ///  * the callee of a method call (`a.b()`)
-    /// The Decl is determined contextually.
-    node_offset_field_name: i32,
-    /// The payload is offset from the containing Decl AST node.
-    /// The source location points to the field name of the operand ("b" node)
-    /// of a field initialization expression (`.a = b`)
-    /// The Decl is determined contextually.
-    node_offset_field_name_init: i32,
-    /// The source location points to the pointer of a pointer deref expression,
-    /// found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a pointer deref AST node. Next, navigate
-    /// to the pointer expression.
-    /// The Decl is determined contextually.
-    node_offset_deref_ptr: i32,
-    /// The source location points to the assembly source code of an inline assembly
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to inline assembly AST node. Next, navigate
-    /// to the asm template source code.
-    /// The Decl is determined contextually.
-    node_offset_asm_source: i32,
-    /// The source location points to the return type of an inline assembly
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to inline assembly AST node. Next, navigate
-    /// to the return type expression.
-    /// The Decl is determined contextually.
-    node_offset_asm_ret_ty: i32,
-    /// The source location points to the condition expression of an if
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to an if expression AST node. Next, navigate
-    /// to the condition expression.
-    /// The Decl is determined contextually.
-    node_offset_if_cond: i32,
-    /// The source location points to a binary expression, such as `a + b`, found
-    /// by taking this AST node index offset from the containing Decl AST node.
-    /// The Decl is determined contextually.
-    node_offset_bin_op: i32,
-    /// The source location points to the LHS of a binary expression, found
-    /// by taking this AST node index offset from the containing Decl AST node,
-    /// which points to a binary expression AST node. Next, navigate to the LHS.
-    /// The Decl is determined contextually.
-    node_offset_bin_lhs: i32,
-    /// The source location points to the RHS of a binary expression, found
-    /// by taking this AST node index offset from the containing Decl AST node,
-    /// which points to a binary expression AST node. Next, navigate to the RHS.
-    /// The Decl is determined contextually.
-    node_offset_bin_rhs: i32,
-    /// The source location points to the operand of a switch expression, found
-    /// by taking this AST node index offset from the containing Decl AST node,
-    /// which points to a switch expression AST node. Next, navigate to the operand.
-    /// The Decl is determined contextually.
-    node_offset_switch_operand: i32,
-    /// The source location points to the else/`_` prong of a switch expression, found
-    /// by taking this AST node index offset from the containing Decl AST node,
-    /// which points to a switch expression AST node. Next, navigate to the else/`_` prong.
-    /// The Decl is determined contextually.
-    node_offset_switch_special_prong: i32,
-    /// The source location points to all the ranges of a switch expression, found
-    /// by taking this AST node index offset from the containing Decl AST node,
-    /// which points to a switch expression AST node. Next, navigate to any of the
-    /// range nodes. The error applies to all of them.
-    /// The Decl is determined contextually.
-    node_offset_switch_range: i32,
-    /// The source location points to the capture of a switch_prong.
-    /// The Decl is determined contextually.
-    node_offset_switch_prong_capture: i32,
-    /// The source location points to the tag capture of a switch_prong.
-    /// The Decl is determined contextually.
-    node_offset_switch_prong_tag_capture: i32,
-    /// The source location points to the align expr of a function type
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function type AST node. Next, navigate to
-    /// the calling convention node.
-    /// The Decl is determined contextually.
-    node_offset_fn_type_align: i32,
-    /// The source location points to the addrspace expr of a function type
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function type AST node. Next, navigate to
-    /// the calling convention node.
-    /// The Decl is determined contextually.
-    node_offset_fn_type_addrspace: i32,
-    /// The source location points to the linksection expr of a function type
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function type AST node. Next, navigate to
-    /// the calling convention node.
-    /// The Decl is determined contextually.
-    node_offset_fn_type_section: i32,
-    /// The source location points to the calling convention of a function type
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function type AST node. Next, navigate to
-    /// the calling convention node.
-    /// The Decl is determined contextually.
-    node_offset_fn_type_cc: i32,
-    /// The source location points to the return type of a function type
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function type AST node. Next, navigate to
-    /// the return type node.
-    /// The Decl is determined contextually.
-    node_offset_fn_type_ret_ty: i32,
-    node_offset_param: i32,
-    token_offset_param: i32,
-    /// The source location points to the type expression of an `anyframe->T`
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a `anyframe->T` expression AST node. Next, navigate
-    /// to the type expression.
-    /// The Decl is determined contextually.
-    node_offset_anyframe_type: i32,
-    /// The source location points to the string literal of `extern "foo"`, found
-    /// by taking this AST node index offset from the containing
-    /// Decl AST node, which points to a function prototype or variable declaration
-    /// expression AST node. Next, navigate to the string literal of the `extern "foo"`.
-    /// The Decl is determined contextually.
-    node_offset_lib_name: i32,
-    /// The source location points to the len expression of an `[N:S]T`
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to an `[N:S]T` expression AST node. Next, navigate
-    /// to the len expression.
-    /// The Decl is determined contextually.
-    node_offset_array_type_len: i32,
-    /// The source location points to the sentinel expression of an `[N:S]T`
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to an `[N:S]T` expression AST node. Next, navigate
-    /// to the sentinel expression.
-    /// The Decl is determined contextually.
-    node_offset_array_type_sentinel: i32,
-    /// The source location points to the elem expression of an `[N:S]T`
-    /// expression, found by taking this AST node index offset from the containing
-    /// Decl AST node, which points to an `[N:S]T` expression AST node. Next, navigate
-    /// to the elem expression.
-    /// The Decl is determined contextually.
-    node_offset_array_type_elem: i32,
-    /// The source location points to the operand of an unary expression.
-    /// The Decl is determined contextually.
-    node_offset_un_op: i32,
-    /// The source location points to the elem type of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_elem: i32,
-    /// The source location points to the sentinel of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_sentinel: i32,
-    /// The source location points to the align expr of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_align: i32,
-    /// The source location points to the addrspace expr of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_addrspace: i32,
-    /// The source location points to the bit-offset of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_bitoffset: i32,
-    /// The source location points to the host size of a pointer.
-    /// The Decl is determined contextually.
-    node_offset_ptr_hostsize: i32,
-    /// The source location points to the tag type of an union or an enum.
-    /// The Decl is determined contextually.
-    node_offset_container_tag: i32,
-    /// The source location points to the default value of a field.
-    /// The Decl is determined contextually.
-    node_offset_field_default: i32,
-    /// The source location points to the type of an array or struct initializer.
-    /// The Decl is determined contextually.
-    node_offset_init_ty: i32,
-    /// The source location points to the LHS of an assignment.
-    /// The Decl is determined contextually.
-    node_offset_store_ptr: i32,
-    /// The source location points to the RHS of an assignment.
-    /// The Decl is determined contextually.
-    node_offset_store_operand: i32,
-    /// The source location points to the operand of a `return` statement, or
-    /// the `return` itself if there is no explicit operand.
-    /// The Decl is determined contextually.
-    node_offset_return_operand: i32,
-    /// The source location points to a for loop input.
-    /// The Decl is determined contextually.
-    for_input: struct {
-        /// Points to the for loop AST node.
-        for_node_offset: i32,
-        /// Picks one of the inputs from the condition.
-        input_index: u32,
-    },
-    /// The source location points to one of the captures of a for loop, found
-    /// by taking this AST node index offset from the containing
-    /// Decl AST node, which points to one of the input nodes of a for loop.
-    /// Next, navigate to the corresponding capture.
-    /// The Decl is determined contextually.
-    for_capture_from_input: i32,
-    /// The source location points to the argument node of a function call.
-    call_arg: struct {
-        decl: DeclIndex,
-        /// Points to the function call AST node.
-        call_node_offset: i32,
-        /// The index of the argument the source location points to.
-        arg_index: u32,
-    },
-    fn_proto_param: struct {
-        decl: DeclIndex,
-        /// Points to the function prototype AST node.
-        fn_proto_node_offset: i32,
-        /// The index of the parameter the source location points to.
-        param_index: u32,
-    },
-    array_cat_lhs: ArrayCat,
-    array_cat_rhs: ArrayCat,
-
-    const ArrayCat = struct {
-        /// Points to the array concat AST node.
-        array_cat_offset: i32,
-        /// The index of the element the source location points to.
-        elem_index: u32,
-    };
-
-    pub const nodeOffset = if (TracedOffset.want_tracing) nodeOffsetDebug else nodeOffsetRelease;
-
-    noinline fn nodeOffsetDebug(node_offset: i32) LazySrcLoc {
-        var result: LazySrcLoc = .{ .node_offset = .{ .x = node_offset } };
-        result.node_offset.trace.addAddr(@returnAddress(), "init");
-        return result;
-    }
-
-    fn nodeOffsetRelease(node_offset: i32) LazySrcLoc {
-        return .{ .node_offset = .{ .x = node_offset } };
-    }
-
-    /// This wraps a simple integer in debug builds so that later on we can find out
-    /// where in semantic analysis the value got set.
-    pub const TracedOffset = struct {
-        x: i32,
-        trace: std.debug.Trace = .{},
-
-        const want_tracing = false;
-    };
-};
-
-const std = @import("std.zig");
-const tokenizer = @import("zig/tokenizer.zig");
-const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
+/// Return a Formatter for a Zig identifier, escaping it with `@""` syntax if needed.
+///
+/// See also `fmtIdFlags`.
+pub fn fmtId(bytes: []const u8) FormatId {
+    return .{ .bytes = bytes, .flags = .{} };
+}
 
 /// Return a Formatter for a Zig identifier, escaping it with `@""` syntax if needed.
 ///
-/// - An empty `{}` format specifier escapes invalid identifiers, identifiers that shadow primitives
-///   and the reserved `_` identifier.
-/// - Add `p` to the specifier to render identifiers that shadow primitives unescaped.
-/// - Add `_` to the specifier to render the reserved `_` identifier unescaped.
-/// - `p` and `_` can be combined, e.g. `{p_}`.
-///
-pub fn fmtId(bytes: []const u8) std.fmt.Formatter(formatId) {
-    return .{ .data = bytes };
+/// See also `fmtId`.
+pub fn fmtIdFlags(bytes: []const u8, flags: FormatId.Flags) FormatId {
+    return .{ .bytes = bytes, .flags = flags };
+}
+
+pub fn fmtIdPU(bytes: []const u8) FormatId {
+    return .{ .bytes = bytes, .flags = .{ .allow_primitive = true, .allow_underscore = true } };
+}
+
+pub fn fmtIdP(bytes: []const u8) FormatId {
+    return .{ .bytes = bytes, .flags = .{ .allow_primitive = true } };
 }
 
 test fmtId {
     const expectFmt = std.testing.expectFmt;
-    try expectFmt("@\"while\"", "{}", .{fmtId("while")});
-    try expectFmt("@\"while\"", "{p}", .{fmtId("while")});
-    try expectFmt("@\"while\"", "{_}", .{fmtId("while")});
-    try expectFmt("@\"while\"", "{p_}", .{fmtId("while")});
-    try expectFmt("@\"while\"", "{_p}", .{fmtId("while")});
+    try expectFmt("@\"while\"", "{f}", .{fmtId("while")});
+    try expectFmt("@\"while\"", "{f}", .{fmtIdFlags("while", .{ .allow_primitive = true })});
+    try expectFmt("@\"while\"", "{f}", .{fmtIdFlags("while", .{ .allow_underscore = true })});
+    try expectFmt("@\"while\"", "{f}", .{fmtIdFlags("while", .{ .allow_primitive = true, .allow_underscore = true })});
 
-    try expectFmt("hello", "{}", .{fmtId("hello")});
-    try expectFmt("hello", "{p}", .{fmtId("hello")});
-    try expectFmt("hello", "{_}", .{fmtId("hello")});
-    try expectFmt("hello", "{p_}", .{fmtId("hello")});
-    try expectFmt("hello", "{_p}", .{fmtId("hello")});
+    try expectFmt("hello", "{f}", .{fmtId("hello")});
+    try expectFmt("hello", "{f}", .{fmtIdFlags("hello", .{ .allow_primitive = true })});
+    try expectFmt("hello", "{f}", .{fmtIdFlags("hello", .{ .allow_underscore = true })});
+    try expectFmt("hello", "{f}", .{fmtIdFlags("hello", .{ .allow_primitive = true, .allow_underscore = true })});
 
-    try expectFmt("@\"type\"", "{}", .{fmtId("type")});
-    try expectFmt("type", "{p}", .{fmtId("type")});
-    try expectFmt("@\"type\"", "{_}", .{fmtId("type")});
-    try expectFmt("type", "{p_}", .{fmtId("type")});
-    try expectFmt("type", "{_p}", .{fmtId("type")});
+    try expectFmt("@\"type\"", "{f}", .{fmtId("type")});
+    try expectFmt("type", "{f}", .{fmtIdFlags("type", .{ .allow_primitive = true })});
+    try expectFmt("@\"type\"", "{f}", .{fmtIdFlags("type", .{ .allow_underscore = true })});
+    try expectFmt("type", "{f}", .{fmtIdFlags("type", .{ .allow_primitive = true, .allow_underscore = true })});
 
-    try expectFmt("@\"_\"", "{}", .{fmtId("_")});
-    try expectFmt("@\"_\"", "{p}", .{fmtId("_")});
-    try expectFmt("_", "{_}", .{fmtId("_")});
-    try expectFmt("_", "{p_}", .{fmtId("_")});
-    try expectFmt("_", "{_p}", .{fmtId("_")});
+    try expectFmt("@\"_\"", "{f}", .{fmtId("_")});
+    try expectFmt("@\"_\"", "{f}", .{fmtIdFlags("_", .{ .allow_primitive = true })});
+    try expectFmt("_", "{f}", .{fmtIdFlags("_", .{ .allow_underscore = true })});
+    try expectFmt("_", "{f}", .{fmtIdFlags("_", .{ .allow_primitive = true, .allow_underscore = true })});
 
-    try expectFmt("@\"i123\"", "{}", .{fmtId("i123")});
-    try expectFmt("i123", "{p}", .{fmtId("i123")});
-    try expectFmt("@\"4four\"", "{}", .{fmtId("4four")});
-    try expectFmt("_underscore", "{}", .{fmtId("_underscore")});
-    try expectFmt("@\"11\\\"23\"", "{}", .{fmtId("11\"23")});
-    try expectFmt("@\"11\\x0f23\"", "{}", .{fmtId("11\x0F23")});
+    try expectFmt("@\"i123\"", "{f}", .{fmtId("i123")});
+    try expectFmt("i123", "{f}", .{fmtIdFlags("i123", .{ .allow_primitive = true })});
+    try expectFmt("@\"4four\"", "{f}", .{fmtId("4four")});
+    try expectFmt("_underscore", "{f}", .{fmtId("_underscore")});
+    try expectFmt("@\"11\\\"23\"", "{f}", .{fmtId("11\"23")});
+    try expectFmt("@\"11\\x0f23\"", "{f}", .{fmtId("11\x0F23")});
 
     // These are technically not currently legal in Zig.
-    try expectFmt("@\"\"", "{}", .{fmtId("")});
-    try expectFmt("@\"\\x00\"", "{}", .{fmtId("\x00")});
+    try expectFmt("@\"\"", "{f}", .{fmtId("")});
+    try expectFmt("@\"\\x00\"", "{f}", .{fmtId("\x00")});
 }
 
-/// Print the string as a Zig identifier, escaping it with `@""` syntax if needed.
-fn formatId(
+pub const FormatId = struct {
     bytes: []const u8,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    const allow_primitive, const allow_underscore = comptime parse_fmt: {
-        var allow_primitive = false;
-        var allow_underscore = false;
-        for (fmt) |char| {
-            switch (char) {
-                'p' => if (!allow_primitive) {
-                    allow_primitive = true;
-                    continue;
-                },
-                '_' => if (!allow_underscore) {
-                    allow_underscore = true;
-                    continue;
-                },
-                else => {},
-            }
-            @compileError("expected {}, {p}, {_}, {p_} or {_p}, found {" ++ fmt ++ "}");
-        }
-        break :parse_fmt .{ allow_primitive, allow_underscore };
+    flags: Flags,
+    pub const Flags = struct {
+        allow_primitive: bool = false,
+        allow_underscore: bool = false,
     };
 
-    if (isValidId(bytes) and
-        (allow_primitive or !std.zig.isPrimitive(bytes)) and
-        (allow_underscore or !isUnderscore(bytes)))
-    {
-        return writer.writeAll(bytes);
+    /// Print the string as a Zig identifier, escaping it with `@""` syntax if needed.
+    pub fn format(ctx: FormatId, writer: *Writer) Writer.Error!void {
+        const bytes = ctx.bytes;
+        if (isValidId(bytes) and
+            (ctx.flags.allow_primitive or !std.zig.isPrimitive(bytes)) and
+            (ctx.flags.allow_underscore or !isUnderscore(bytes)))
+        {
+            return writer.writeAll(bytes);
+        }
+        try writer.writeAll("@\"");
+        try stringEscape(bytes, writer);
+        try writer.writeByte('"');
     }
-    try writer.writeAll("@\"");
-    try stringEscape(bytes, "", options, writer);
-    try writer.writeByte('"');
-}
+};
 
-/// Return a Formatter for Zig Escapes of a double quoted string.
-/// The format specifier must be one of:
-///  * `{}` treats contents as a double-quoted string.
-///  * `{'}` treats contents as a single-quoted string.
-pub fn fmtEscapes(bytes: []const u8) std.fmt.Formatter(stringEscape) {
+/// Return a formatter for escaping a double quoted Zig string.
+pub fn fmtString(bytes: []const u8) std.fmt.Alt([]const u8, stringEscape) {
     return .{ .data = bytes };
 }
 
-test fmtEscapes {
-    const expectFmt = std.testing.expectFmt;
-    try expectFmt("\\x0f", "{}", .{fmtEscapes("\x0f")});
-    try expectFmt(
-        \\" \\ hi \x07 \x11 " derp \'"
-    , "\"{'}\"", .{fmtEscapes(" \\ hi \x07 \x11 \" derp '")});
-    try expectFmt(
-        \\" \\ hi \x07 \x11 \" derp '"
-    , "\"{}\"", .{fmtEscapes(" \\ hi \x07 \x11 \" derp '")});
+/// Return a formatter for escaping a single quoted Zig string.
+pub fn fmtChar(c: u21) std.fmt.Alt(u21, charEscape) {
+    return .{ .data = c };
 }
 
-/// Print the string as escaped contents of a double quoted or single-quoted string.
-/// Format `{}` treats contents as a double-quoted string.
-/// Format `{'}` treats contents as a single-quoted string.
-pub fn stringEscape(
-    bytes: []const u8,
-    comptime f: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = options;
+test fmtString {
+    try std.testing.expectFmt("\\x0f", "{f}", .{fmtString("\x0f")});
+    try std.testing.expectFmt(
+        \\" \\ hi \x07 \x11 \" derp '"
+    , "\"{f}\"", .{fmtString(" \\ hi \x07 \x11 \" derp '")});
+}
+
+test fmtChar {
+    try std.testing.expectFmt("c \\u{26a1}", "{f} {f}", .{ fmtChar('c'), fmtChar('⚡') });
+}
+
+/// Print the string as escaped contents of a double quoted string.
+pub fn stringEscape(bytes: []const u8, w: *Writer) Writer.Error!void {
     for (bytes) |byte| switch (byte) {
-        '\n' => try writer.writeAll("\\n"),
-        '\r' => try writer.writeAll("\\r"),
-        '\t' => try writer.writeAll("\\t"),
-        '\\' => try writer.writeAll("\\\\"),
-        '"' => {
-            if (f.len == 1 and f[0] == '\'') {
-                try writer.writeByte('"');
-            } else if (f.len == 0) {
-                try writer.writeAll("\\\"");
-            } else {
-                @compileError("expected {} or {'}, found {" ++ f ++ "}");
-            }
-        },
-        '\'' => {
-            if (f.len == 1 and f[0] == '\'') {
-                try writer.writeAll("\\'");
-            } else if (f.len == 0) {
-                try writer.writeByte('\'');
-            } else {
-                @compileError("expected {} or {'}, found {" ++ f ++ "}");
-            }
-        },
-        ' ', '!', '#'...'&', '('...'[', ']'...'~' => try writer.writeByte(byte),
-        // Use hex escapes for rest any unprintable characters.
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        '\\' => try w.writeAll("\\\\"),
+        '"' => try w.writeAll("\\\""),
+        '\'' => try w.writeByte('\''),
+        ' ', '!', '#'...'&', '('...'[', ']'...'~' => try w.writeByte(byte),
         else => {
-            try writer.writeAll("\\x");
-            try std.fmt.formatInt(byte, 16, .lower, .{ .width = 2, .fill = '0' }, writer);
+            try w.writeAll("\\x");
+            try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
         },
     };
+}
+
+/// Print as escaped contents of a single-quoted string.
+pub fn charEscape(codepoint: u21, w: *Writer) Writer.Error!void {
+    switch (codepoint) {
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        '\\' => try w.writeAll("\\\\"),
+        '\'' => try w.writeAll("\\'"),
+        '"', ' ', '!', '#'...'&', '('...'[', ']'...'~' => try w.writeByte(@intCast(codepoint)),
+        else => {
+            if (std.math.cast(u8, codepoint)) |byte| {
+                try w.writeAll("\\x");
+                try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
+            } else {
+                try w.writeAll("\\u{");
+                try w.printInt(codepoint, 16, .lower, .{});
+                try w.writeByte('}');
+            }
+        },
+    }
 }
 
 pub fn isValidId(bytes: []const u8) bool {
@@ -911,24 +598,20 @@ test isUnderscore {
     try std.testing.expect(!isUnderscore("\\x5f"));
 }
 
-pub fn readSourceFileToEndAlloc(
-    allocator: Allocator,
-    input: std.fs.File,
-    size_hint: ?usize,
-) ![:0]u8 {
-    const source_code = input.readToEndAllocOptions(
-        allocator,
-        max_src_size,
-        size_hint,
-        @alignOf(u16),
-        0,
-    ) catch |err| switch (err) {
-        error.ConnectionResetByPeer => unreachable,
-        error.ConnectionTimedOut => unreachable,
-        error.NotOpenForReading => unreachable,
-        else => |e| return e,
-    };
-    errdefer allocator.free(source_code);
+/// If the source can be UTF-16LE encoded, this function asserts that `gpa`
+/// will align a byte-sized allocation to at least 2. Allocators that don't do
+/// this are rare.
+pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![:0]u8 {
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
+
+    if (file_reader.getSize()) |size| {
+        const casted_size = std.math.cast(u32, size) orelse return error.StreamTooLong;
+        // +1 to avoid resizing for the null byte added in toOwnedSliceSentinel below.
+        try buffer.ensureTotalCapacityPrecise(gpa, casted_size + 1);
+    } else |_| {}
+
+    try file_reader.interface.appendRemaining(gpa, &buffer, .limited(max_src_size));
 
     // Detect unsupported file types with their Byte Order Mark
     const unsupported_boms = [_][]const u8{
@@ -937,26 +620,23 @@ pub fn readSourceFileToEndAlloc(
         "\xfe\xff", // UTF-16 big endian
     };
     for (unsupported_boms) |bom| {
-        if (std.mem.startsWith(u8, source_code, bom)) {
+        if (std.mem.startsWith(u8, buffer.items, bom)) {
             return error.UnsupportedEncoding;
         }
     }
 
     // If the file starts with a UTF-16 little endian BOM, translate it to UTF-8
-    if (std.mem.startsWith(u8, source_code, "\xff\xfe")) {
-        const source_code_utf16_le = std.mem.bytesAsSlice(u16, source_code);
-        const source_code_utf8 = std.unicode.utf16LeToUtf8AllocZ(allocator, source_code_utf16_le) catch |err| switch (err) {
+    if (std.mem.startsWith(u8, buffer.items, "\xff\xfe")) {
+        if (buffer.items.len % 2 != 0) return error.InvalidEncoding;
+        return std.unicode.utf16LeToUtf8AllocZ(gpa, @ptrCast(@alignCast(buffer.items))) catch |err| switch (err) {
             error.DanglingSurrogateHalf => error.UnsupportedEncoding,
             error.ExpectedSecondSurrogateHalf => error.UnsupportedEncoding,
             error.UnexpectedSecondSurrogateHalf => error.UnsupportedEncoding,
             else => |e| return e,
         };
-
-        allocator.free(source_code);
-        return source_code_utf8;
     }
 
-    return source_code;
+    return buffer.toOwnedSliceSentinel(gpa, 0);
 }
 
 pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color: Color) !void {
@@ -968,7 +648,7 @@ pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color
 
     var error_bundle = try wip_errors.toOwnedBundle("");
     defer error_bundle.deinit(gpa);
-    error_bundle.renderToStdErr(color.renderOptions());
+    error_bundle.renderToStdErr(.{}, color);
 }
 
 pub fn putAstErrorsIntoBundle(
@@ -983,9 +663,9 @@ pub fn putAstErrorsIntoBundle(
     try wip_errors.addZirErrorMessages(zir, tree, tree.source, path);
 }
 
-pub fn resolveTargetQueryOrFatal(target_query: std.Target.Query) std.Target {
-    return std.zig.system.resolveTargetQuery(target_query) catch |err|
-        fatal("unable to resolve target: {s}", .{@errorName(err)});
+pub fn resolveTargetQueryOrFatal(io: Io, target_query: std.Target.Query) std.Target {
+    return std.zig.system.resolveTargetQuery(io, target_query) catch |err|
+        std.process.fatal("unable to resolve target: {s}", .{@errorName(err)});
 }
 
 pub fn parseTargetQueryOrReportFatalError(
@@ -1000,50 +680,56 @@ pub fn parseTargetQueryOrReportFatalError(
     return std.Target.Query.parse(opts_with_diags) catch |err| switch (err) {
         error.UnknownCpuModel => {
             help: {
-                var help_text = std.ArrayList(u8).init(allocator);
+                var help_text = std.array_list.Managed(u8).init(allocator);
                 defer help_text.deinit();
                 for (diags.arch.?.allCpuModels()) |cpu| {
-                    help_text.writer().print(" {s}\n", .{cpu.name}) catch break :help;
+                    help_text.print(" {s}\n", .{cpu.name}) catch break :help;
                 }
                 std.log.info("available CPUs for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
                 });
             }
-            fatal("unknown CPU: '{s}'", .{diags.cpu_name.?});
+            std.process.fatal("unknown CPU: '{s}'", .{diags.cpu_name.?});
         },
         error.UnknownCpuFeature => {
             help: {
-                var help_text = std.ArrayList(u8).init(allocator);
+                var help_text = std.array_list.Managed(u8).init(allocator);
                 defer help_text.deinit();
                 for (diags.arch.?.allFeaturesList()) |feature| {
-                    help_text.writer().print(" {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
+                    help_text.print(" {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
                 }
                 std.log.info("available CPU features for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
                 });
             }
-            fatal("unknown CPU feature: '{s}'", .{diags.unknown_feature_name.?});
+            std.process.fatal("unknown CPU feature: '{s}'", .{diags.unknown_feature_name.?});
         },
         error.UnknownObjectFormat => {
             help: {
-                var help_text = std.ArrayList(u8).init(allocator);
+                var help_text = std.array_list.Managed(u8).init(allocator);
                 defer help_text.deinit();
-                inline for (@typeInfo(std.Target.ObjectFormat).Enum.fields) |field| {
-                    help_text.writer().print(" {s}\n", .{field.name}) catch break :help;
+                inline for (@typeInfo(std.Target.ObjectFormat).@"enum".fields) |field| {
+                    help_text.print(" {s}\n", .{field.name}) catch break :help;
                 }
                 std.log.info("available object formats:\n{s}", .{help_text.items});
             }
-            fatal("unknown object format: '{s}'", .{opts.object_format.?});
+            std.process.fatal("unknown object format: '{s}'", .{opts.object_format.?});
         },
-        else => |e| fatal("unable to parse target query '{s}': {s}", .{
+        error.UnknownArchitecture => {
+            help: {
+                var help_text = std.array_list.Managed(u8).init(allocator);
+                defer help_text.deinit();
+                inline for (@typeInfo(std.Target.Cpu.Arch).@"enum".fields) |field| {
+                    help_text.print(" {s}\n", .{field.name}) catch break :help;
+                }
+                std.log.info("available architectures:\n{s} native\n", .{help_text.items});
+            }
+            std.process.fatal("unknown architecture: '{s}'", .{diags.unknown_architecture_name.?});
+        },
+        else => |e| std.process.fatal("unable to parse target query '{s}': {s}", .{
             opts.arch_os_abi, @errorName(e),
         }),
     };
-}
-
-pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
-    std.log.err(format, args);
-    std.process.exit(1);
 }
 
 /// Collects all the environment variables that Zig could possibly inspect, so
@@ -1054,17 +740,20 @@ pub const EnvVar = enum {
     ZIG_LIB_DIR,
     ZIG_LIBC,
     ZIG_BUILD_RUNNER,
+    ZIG_BUILD_ERROR_STYLE,
+    ZIG_BUILD_MULTILINE_ERRORS,
     ZIG_VERBOSE_LINK,
     ZIG_VERBOSE_CC,
     ZIG_BTRFS_WORKAROUND,
     ZIG_DEBUG_CMD,
     CC,
     NO_COLOR,
+    CLICOLOR_FORCE,
     XDG_CACHE_HOME,
     HOME,
 
     pub fn isSet(comptime ev: EnvVar) bool {
-        return std.process.hasEnvVarConstant(@tagName(ev));
+        return std.process.hasNonEmptyEnvVarConstant(@tagName(ev));
     }
 
     pub fn get(ev: EnvVar, arena: std.mem.Allocator) !?[]u8 {
@@ -1078,6 +767,214 @@ pub const EnvVar = enum {
 
     pub fn getPosix(comptime ev: EnvVar) ?[:0]const u8 {
         return std.posix.getenvZ(@tagName(ev));
+    }
+};
+
+pub const SimpleComptimeReason = enum(u32) {
+    // Evaluating at comptime because a builtin operand must be comptime-known.
+    // These messages all mention a specific builtin.
+    operand_setEvalBranchQuota,
+    operand_setFloatMode,
+    operand_branchHint,
+    operand_setRuntimeSafety,
+    operand_embedFile,
+    operand_cImport,
+    operand_cDefine_macro_name,
+    operand_cDefine_macro_value,
+    operand_cInclude_file_name,
+    operand_cUndef_macro_name,
+    operand_shuffle_mask,
+    operand_atomicRmw_operation,
+    operand_reduce_operation,
+
+    // Evaluating at comptime because an operand must be comptime-known.
+    // These messages do not mention a specific builtin (and may not be about a builtin at all).
+    export_target,
+    export_options,
+    extern_options,
+    prefetch_options,
+    call_modifier,
+    compile_error_string,
+    inline_assembly_code,
+    atomic_order,
+    array_mul_factor,
+    slice_cat_operand,
+    inline_call_target,
+    generic_call_target,
+    wasm_memory_index,
+    work_group_dim_index,
+    clobber,
+
+    // Evaluating at comptime because types must be comptime-known.
+    // Reasons other than `.type` are just more specific messages.
+    type,
+    int_signedness,
+    int_bit_width,
+    array_sentinel,
+    array_length,
+    pointer_size,
+    pointer_attrs,
+    pointer_sentinel,
+    slice_sentinel,
+    vector_length,
+    fn_ret_ty,
+    fn_param_types,
+    fn_param_attrs,
+    fn_attrs,
+    struct_layout,
+    struct_field_names,
+    struct_field_types,
+    struct_field_attrs,
+    union_layout,
+    union_field_names,
+    union_field_types,
+    union_field_attrs,
+    tuple_field_types,
+    enum_field_names,
+    enum_field_values,
+
+    // Evaluating at comptime because decl/field name must be comptime-known.
+    decl_name,
+    field_name,
+    tuple_field_index,
+
+    // Evaluating at comptime because it is an attribute of a global declaration.
+    container_var_init,
+    @"callconv",
+    @"align",
+    @"addrspace",
+    @"linksection",
+
+    // Miscellaneous reasons.
+    comptime_keyword,
+    comptime_call_modifier,
+    inline_loop_operand,
+    switch_item,
+    tuple_field_default_value,
+    struct_field_default_value,
+    enum_field_tag_value,
+    slice_single_item_ptr_bounds,
+    stored_to_comptime_field,
+    stored_to_comptime_var,
+    casted_to_comptime_enum,
+    casted_to_comptime_int,
+    casted_to_comptime_float,
+    panic_handler,
+
+    pub fn message(r: SimpleComptimeReason) []const u8 {
+        return switch (r) {
+            // zig fmt: off
+            .operand_setEvalBranchQuota  => "operand to '@setEvalBranchQuota' must be comptime-known",
+            .operand_setFloatMode        => "operand to '@setFloatMode' must be comptime-known",
+            .operand_branchHint          => "operand to '@branchHint' must be comptime-known",
+            .operand_setRuntimeSafety    => "operand to '@setRuntimeSafety' must be comptime-known",
+            .operand_embedFile           => "operand to '@embedFile' must be comptime-known",
+            .operand_cImport             => "operand to '@cImport' is evaluated at comptime",
+            .operand_cDefine_macro_name  => "'@cDefine' macro name must be comptime-known",
+            .operand_cDefine_macro_value => "'@cDefine' macro value must be comptime-known",
+            .operand_cInclude_file_name  => "'@cInclude' file name must be comptime-known",
+            .operand_cUndef_macro_name   => "'@cUndef' macro name must be comptime-known",
+            .operand_shuffle_mask        => "'@shuffle' mask must be comptime-known",
+            .operand_atomicRmw_operation => "'@atomicRmw' operation must be comptime-known",
+            .operand_reduce_operation    => "'@reduce' operation must be comptime-known",
+
+            .export_target        => "export target must be comptime-known",
+            .export_options       => "export options must be comptime-known",
+            .extern_options       => "extern options must be comptime-known",
+            .prefetch_options     => "prefetch options must be comptime-known",
+            .call_modifier        => "call modifier must be comptime-known",
+            .compile_error_string => "compile error string must be comptime-known",
+            .inline_assembly_code => "inline assembly code must be comptime-known",
+            .atomic_order         => "atomic order must be comptime-known",
+            .array_mul_factor     => "array multiplication factor must be comptime-known",
+            .slice_cat_operand    => "slice being concatenated must be comptime-known",
+            .inline_call_target   => "function being called inline must be comptime-known",
+            .generic_call_target  => "generic function being called must be comptime-known",
+            .wasm_memory_index    => "wasm memory index must be comptime-known",
+            .work_group_dim_index => "work group dimension index must be comptime-known",
+            .clobber              => "clobber must be comptime-known",
+
+            .type                => "types must be comptime-known",
+            .int_signedness      => "integer signedness must be comptime-known",
+            .int_bit_width       => "integer bit width must be comptime-known",
+            .array_sentinel      => "array sentinel value must be comptime-known",
+            .array_length        => "array length must be comptime-known",
+            .pointer_size        => "pointer size must be comptime-known",
+            .pointer_attrs       => "pointer attributes must be comptime-known",
+            .pointer_sentinel    => "pointer sentinel value must be comptime-known",
+            .slice_sentinel      => "slice sentinel value must be comptime-known",
+            .vector_length       => "vector length must be comptime-known",
+            .fn_ret_ty           => "function return type must be comptime-known",
+            .fn_param_types      => "function parameter types must be comptime-known",
+            .fn_param_attrs      => "function parameter attributes must be comptime-known",
+            .fn_attrs            => "function attributes must be comptime-known",
+            .struct_layout       => "struct layout must be comptime-known",
+            .struct_field_names  => "struct field names must be comptime-known",
+            .struct_field_types  => "struct field types must be comptime-known",
+            .struct_field_attrs  => "struct field attributes must be comptime-known",
+            .union_layout        => "union layout must be comptime-known",
+            .union_field_names   => "union field names must be comptime-known",
+            .union_field_types   => "union field types must be comptime-known",
+            .union_field_attrs   => "union field attributes must be comptime-known",
+            .tuple_field_types   => "tuple field types must be comptime-known",
+            .enum_field_names    => "enum field names must be comptime-known",
+            .enum_field_values   => "enum field values must be comptime-known",
+
+            .decl_name         => "declaration name must be comptime-known",
+            .field_name        => "field name must be comptime-known",
+            .tuple_field_index => "tuple field index must be comptime-known",
+
+            .container_var_init => "initializer of container-level variable must be comptime-known",
+            .@"callconv"        => "calling convention must be comptime-known",
+            .@"align"           => "alignment must be comptime-known",
+            .@"addrspace"       => "address space must be comptime-known",
+            .@"linksection"     => "linksection must be comptime-known",
+
+            .comptime_keyword             => "'comptime' keyword forces comptime evaluation",
+            .comptime_call_modifier       => "'.compile_time' call modifier forces comptime evaluation",
+            .inline_loop_operand          => "inline loop condition must be comptime-known",
+            .switch_item                  => "switch prong values must be comptime-known",
+            .tuple_field_default_value    => "tuple field default value must be comptime-known",
+            .struct_field_default_value   => "struct field default value must be comptime-known",
+            .enum_field_tag_value         => "enum field tag value must be comptime-known",
+            .slice_single_item_ptr_bounds => "slice of single-item pointer must have comptime-known bounds",
+            .stored_to_comptime_field     => "value stored to a comptime field must be comptime-known",
+            .stored_to_comptime_var       => "value stored to a comptime variable must be comptime-known",
+            .casted_to_comptime_enum      => "value casted to enum with 'comptime_int' tag type must be comptime-known",
+            .casted_to_comptime_int       => "value casted to 'comptime_int' must be comptime-known",
+            .casted_to_comptime_float     => "value casted to 'comptime_float' must be comptime-known",
+            .panic_handler                => "panic handler must be comptime-known",
+            // zig fmt: on
+        };
+    }
+};
+
+/// Every kind of artifact which the compiler can emit.
+pub const EmitArtifact = enum {
+    bin,
+    @"asm",
+    implib,
+    llvm_ir,
+    llvm_bc,
+    docs,
+    pdb,
+    h,
+
+    /// If using `Server` to communicate with the compiler, it will place requested artifacts in
+    /// paths under the output directory, where those paths are named according to this function.
+    /// Returned string is allocated with `gpa` and owned by the caller.
+    pub fn cacheName(ea: EmitArtifact, gpa: Allocator, opts: BinNameOptions) Allocator.Error![]const u8 {
+        const suffix: []const u8 = switch (ea) {
+            .bin => return binNameAlloc(gpa, opts),
+            .@"asm" => ".s",
+            .implib => ".lib",
+            .llvm_ir => ".ll",
+            .llvm_bc => ".bc",
+            .docs => "-docs",
+            .pdb => ".pdb",
+            .h => ".h",
+        };
+        return std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.root_name, suffix });
     }
 };
 
@@ -1097,4 +994,5 @@ test {
     _ = system;
     _ = target;
     _ = c_translation;
+    _ = llvm;
 }

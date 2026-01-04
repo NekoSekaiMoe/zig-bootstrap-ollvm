@@ -2,9 +2,9 @@
 
 const std = @import("std");
 const fmt = std.fmt;
-const io = std.io;
 const mem = std.mem;
 const meta = std.meta;
+const Writer = std.Io.Writer;
 
 const fields_delimiter = "$";
 const fields_delimiter_scalar = '$';
@@ -75,6 +75,10 @@ pub fn BinValue(comptime max_len: usize) type {
 ///
 /// Other fields will also be deserialized from the function parameters section.
 pub fn deserialize(comptime HashResult: type, str: []const u8) Error!HashResult {
+    if (@hasField(HashResult, version_param_name)) {
+        @compileError("Field name '" ++ version_param_name ++ "'' is reserved for the algorithm version");
+    }
+
     var out = mem.zeroes(HashResult);
     var it = mem.splitScalar(u8, str, fields_delimiter_scalar);
     var set_fields: usize = 0;
@@ -90,12 +94,12 @@ pub fn deserialize(comptime HashResult: type, str: []const u8) Error!HashResult 
         if (kvSplit(field)) |opt_version| {
             if (mem.eql(u8, opt_version.key, version_param_name)) {
                 if (@hasField(HashResult, "alg_version")) {
-                    const value_type_info = switch (@typeInfo(@TypeOf(out.alg_version))) {
-                        .Optional => |opt| comptime @typeInfo(opt.child),
-                        else => |t| t,
+                    const ValueType = switch (@typeInfo(@TypeOf(out.alg_version))) {
+                        .optional => |opt| opt.child,
+                        else => @TypeOf(out.alg_version),
                     };
                     out.alg_version = fmt.parseUnsigned(
-                        @Type(value_type_info),
+                        ValueType,
                         opt_version.value,
                         10,
                     ) catch return Error.InvalidEncoding;
@@ -114,16 +118,16 @@ pub fn deserialize(comptime HashResult: type, str: []const u8) Error!HashResult 
             inline for (comptime meta.fields(HashResult)) |p| {
                 if (mem.eql(u8, p.name, param.key)) {
                     switch (@typeInfo(p.type)) {
-                        .Int => @field(out, p.name) = fmt.parseUnsigned(
+                        .int => @field(out, p.name) = fmt.parseUnsigned(
                             p.type,
                             param.value,
                             10,
                         ) catch return Error.InvalidEncoding,
-                        .Pointer => |ptr| {
+                        .pointer => |ptr| {
                             if (!ptr.is_const) @compileError("Value slice must be constant");
                             @field(out, p.name) = param.value;
                         },
-                        .Struct => try @field(out, p.name).fromB64(param.value),
+                        .@"struct" => try @field(out, p.name).fromB64(param.value),
                         else => std.debug.panic(
                             "Value for [{s}] must be an integer, a constant slice or a BinValue",
                             .{p.name},
@@ -164,7 +168,7 @@ pub fn deserialize(comptime HashResult: type, str: []const u8) Error!HashResult 
     // with default values
     var expected_fields: usize = 0;
     inline for (comptime meta.fields(HashResult)) |p| {
-        if (@typeInfo(p.type) != .Optional and p.default_value == null) {
+        if (@typeInfo(p.type) != .optional and p.default_value_ptr == null) {
             expected_fields += 1;
         }
     }
@@ -184,25 +188,31 @@ pub fn deserialize(comptime HashResult: type, str: []const u8) Error!HashResult 
 ///
 /// `params` can also include any additional parameters.
 pub fn serialize(params: anytype, str: []u8) Error![]const u8 {
-    var buf = io.fixedBufferStream(str);
-    try serializeTo(params, buf.writer());
-    return buf.getWritten();
+    var w: Writer = .fixed(str);
+    serializeTo(params, &w) catch return error.NoSpaceLeft;
+    return w.buffered();
 }
 
 /// Compute the number of bytes required to serialize `params`
 pub fn calcSize(params: anytype) usize {
-    var buf = io.countingWriter(io.null_writer);
-    serializeTo(params, buf.writer()) catch unreachable;
-    return @as(usize, @intCast(buf.bytes_written));
+    var trash: [128]u8 = undefined;
+    var d: Writer.Discarding = .init(&trash);
+    serializeTo(params, &d.writer) catch unreachable;
+    return @intCast(d.fullCount());
 }
 
-fn serializeTo(params: anytype, out: anytype) !void {
+fn serializeTo(params: anytype, out: *std.Io.Writer) !void {
     const HashResult = @TypeOf(params);
+
+    if (@hasField(HashResult, version_param_name)) {
+        @compileError("Field name '" ++ version_param_name ++ "'' is reserved for the algorithm version");
+    }
+
     try out.writeAll(fields_delimiter);
     try out.writeAll(params.alg_id);
 
     if (@hasField(HashResult, "alg_version")) {
-        if (@typeInfo(@TypeOf(params.alg_version)) == .Optional) {
+        if (@typeInfo(@TypeOf(params.alg_version)) == .optional) {
             if (params.alg_version) |alg_version| {
                 try out.print(
                     "{s}{s}{s}{}",
@@ -226,12 +236,12 @@ fn serializeTo(params: anytype, out: anytype) !void {
         {
             const value = @field(params, p.name);
             try out.writeAll(if (has_params) params_delimiter else fields_delimiter);
-            if (@typeInfo(p.type) == .Struct) {
+            if (@typeInfo(p.type) == .@"struct") {
                 var buf: [@TypeOf(value).max_encoded_length]u8 = undefined;
                 try out.print("{s}{s}{s}", .{ p.name, kv_delimiter, try value.toB64(&buf) });
             } else {
                 try out.print(
-                    if (@typeInfo(@TypeOf(value)) == .Pointer) "{s}{s}{s}" else "{s}{s}{}",
+                    if (@typeInfo(@TypeOf(value)) == .pointer) "{s}{s}{s}" else "{s}{s}{}",
                     .{ p.name, kv_delimiter, value },
                 );
             }
@@ -258,8 +268,7 @@ fn kvSplit(str: []const u8) !struct { key: []const u8, value: []const u8 } {
     var it = mem.splitScalar(u8, str, kv_delimiter_scalar);
     const key = it.first();
     const value = it.next() orelse return Error.InvalidEncoding;
-    const ret = .{ .key = key, .value = value };
-    return ret;
+    return .{ .key = key, .value = value };
 }
 
 test "phc format - encoding/decoding" {

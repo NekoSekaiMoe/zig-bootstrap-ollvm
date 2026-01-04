@@ -1,11 +1,11 @@
 allocator: Allocator,
-file: fs.File,
+file: ?fs.File,
 
 symtab_cmd: macho.symtab_command = .{},
 uuid_cmd: macho.uuid_command = .{ .uuid = [_]u8{0} ** 16 },
 
-segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
-sections: std.ArrayListUnmanaged(macho.section_64) = .{},
+segments: std.ArrayList(macho.segment_command_64) = .empty,
+sections: std.ArrayList(macho.section_64) = .empty,
 
 dwarf_segment_cmd_index: ?u8 = null,
 linkedit_segment_cmd_index: ?u8 = null,
@@ -15,12 +15,15 @@ debug_abbrev_section_index: ?u8 = null,
 debug_str_section_index: ?u8 = null,
 debug_aranges_section_index: ?u8 = null,
 debug_line_section_index: ?u8 = null,
+debug_line_str_section_index: ?u8 = null,
+debug_loclists_section_index: ?u8 = null,
+debug_rnglists_section_index: ?u8 = null,
 
-relocs: std.ArrayListUnmanaged(Reloc) = .{},
+relocs: std.ArrayList(Reloc) = .empty,
 
 /// Output synthetic sections
-symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
-strtab: std.ArrayListUnmanaged(u8) = .{},
+symtab: std.ArrayList(macho.nlist_64) = .empty,
+strtab: std.ArrayList(u8) = .empty,
 
 pub const Reloc = struct {
     type: enum {
@@ -56,13 +59,16 @@ pub fn initMetadata(self: *DebugSymbols, macho_file: *MachO) !void {
         });
     }
 
-    self.debug_str_section_index = try self.allocateSection("__debug_str", 200, 0);
-    self.debug_info_section_index = try self.allocateSection("__debug_info", 200, 0);
-    self.debug_abbrev_section_index = try self.allocateSection("__debug_abbrev", 128, 0);
-    self.debug_aranges_section_index = try self.allocateSection("__debug_aranges", 160, 4);
-    self.debug_line_section_index = try self.allocateSection("__debug_line", 250, 0);
+    self.debug_str_section_index = try self.createSection("__debug_str", 0);
+    self.debug_info_section_index = try self.createSection("__debug_info", 0);
+    self.debug_abbrev_section_index = try self.createSection("__debug_abbrev", 0);
+    self.debug_aranges_section_index = try self.createSection("__debug_aranges", 4);
+    self.debug_line_section_index = try self.createSection("__debug_line", 0);
+    self.debug_line_str_section_index = try self.createSection("__debug_line_str", 0);
+    self.debug_loclists_section_index = try self.createSection("__debug_loclists", 0);
+    self.debug_rnglists_section_index = try self.createSection("__debug_rnglists", 0);
 
-    self.linkedit_segment_cmd_index = @as(u8, @intCast(self.segments.items.len));
+    self.linkedit_segment_cmd_index = @intCast(self.segments.items.len);
     try self.segments.append(self.allocator, .{
         .segname = makeStaticString("__LINKEDIT"),
         .maxprot = macho.PROT.READ,
@@ -71,27 +77,17 @@ pub fn initMetadata(self: *DebugSymbols, macho_file: *MachO) !void {
     });
 }
 
-fn allocateSection(self: *DebugSymbols, sectname: []const u8, size: u64, alignment: u16) !u8 {
+fn createSection(self: *DebugSymbols, sectname: []const u8, alignment: u16) !u8 {
     const segment = self.getDwarfSegmentPtr();
     var sect = macho.section_64{
         .sectname = makeStaticString(sectname),
         .segname = segment.segname,
-        .size = @as(u32, @intCast(size)),
         .@"align" = alignment,
     };
-    const alignment_pow_2 = try math.powi(u32, 2, alignment);
-    const off = self.findFreeSpace(size, alignment_pow_2);
 
-    log.debug("found {s},{s} section free space 0x{x} to 0x{x}", .{
-        sect.segName(),
-        sect.sectName(),
-        off,
-        off + size,
-    });
+    log.debug("create {s},{s} section", .{ sect.segName(), sect.sectName() });
 
-    sect.offset = @as(u32, @intCast(off));
-
-    const index = @as(u8, @intCast(self.sections.items.len));
+    const index: u8 = @intCast(self.sections.items.len);
     try self.sections.append(self.allocator, sect);
     segment.cmdsize += @sizeOf(macho.section_64);
     segment.nsects += 1;
@@ -102,16 +98,17 @@ fn allocateSection(self: *DebugSymbols, sectname: []const u8, size: u64, alignme
 pub fn growSection(
     self: *DebugSymbols,
     sect_index: u8,
-    needed_size: u32,
+    needed_size: u64,
     requires_file_copy: bool,
     macho_file: *MachO,
 ) !void {
     const sect = self.getSectionPtr(sect_index);
 
-    if (needed_size > self.allocatedSize(sect.offset)) {
+    const allocated_size = self.allocatedSize(sect.offset);
+    if (needed_size > allocated_size) {
         const existing_size = sect.size;
         sect.size = 0; // free the space
-        const new_offset = self.findFreeSpace(needed_size, 1);
+        const new_offset = try self.findFreeSpace(needed_size, 1);
 
         log.debug("moving {s} section: {} bytes from 0x{x} to 0x{x}", .{
             sect.sectName(),
@@ -121,16 +118,18 @@ pub fn growSection(
         });
 
         if (requires_file_copy) {
-            const amt = try self.file.copyRangeAll(
+            const amt = try self.file.?.copyRangeAll(
                 sect.offset,
-                self.file,
+                self.file.?,
                 new_offset,
                 existing_size,
             );
             if (amt != existing_size) return error.InputOutput;
         }
 
-        sect.offset = @as(u32, @intCast(new_offset));
+        sect.offset = @intCast(new_offset);
+    } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
+        try self.file.?.setEndPos(sect.offset + needed_size);
     }
 
     sect.size = needed_size;
@@ -153,30 +152,36 @@ pub fn markDirty(self: *DebugSymbols, sect_index: u8, macho_file: *MachO) void {
     }
 }
 
-fn detectAllocCollision(self: *DebugSymbols, start: u64, size: u64) ?u64 {
+fn detectAllocCollision(self: *DebugSymbols, start: u64, size: u64) !?u64 {
+    var at_end = true;
     const end = start + padToIdeal(size);
+
     for (self.sections.items) |section| {
         const increased_size = padToIdeal(section.size);
         const test_end = section.offset + increased_size;
-        if (end > section.offset and start < test_end) {
-            return test_end;
+        if (start < test_end) {
+            if (end > section.offset) return test_end;
+            if (test_end < std.math.maxInt(u64)) at_end = false;
         }
     }
+
+    if (at_end) try self.file.?.setEndPos(end);
     return null;
 }
 
-fn findFreeSpace(self: *DebugSymbols, object_size: u64, min_alignment: u64) u64 {
+fn findFreeSpace(self: *DebugSymbols, object_size: u64, min_alignment: u64) !u64 {
     const segment = self.getDwarfSegmentPtr();
     var offset: u64 = segment.fileoff;
-    while (self.detectAllocCollision(offset, object_size)) |item_end| {
+    while (try self.detectAllocCollision(offset, object_size)) |item_end| {
         offset = mem.alignForward(u64, item_end, min_alignment);
     }
     return offset;
 }
 
-pub fn flushModule(self: *DebugSymbols, macho_file: *MachO) !void {
+pub fn flush(self: *DebugSymbols, macho_file: *MachO) !void {
+    const zo = macho_file.getZigObject().?;
     for (self.relocs.items) |*reloc| {
-        const sym = macho_file.getSymbol(reloc.target);
+        const sym = zo.symbols.items[reloc.target];
         const sym_name = sym.getName(macho_file);
         const addr = switch (reloc.type) {
             .direct_load => sym.getAddress(.{}, macho_file),
@@ -190,7 +195,7 @@ pub fn flushModule(self: *DebugSymbols, macho_file: *MachO) !void {
             sym_name,
             file_offset,
         });
-        try self.file.pwriteAll(mem.asBytes(&addr), file_offset);
+        try self.file.?.pwriteAll(mem.asBytes(&addr), file_offset);
     }
 
     self.finalizeDwarfSegment(macho_file);
@@ -203,7 +208,7 @@ pub fn flushModule(self: *DebugSymbols, macho_file: *MachO) !void {
 
 pub fn deinit(self: *DebugSymbols) void {
     const gpa = self.allocator;
-    self.file.close();
+    if (self.file) |file| file.close();
     self.segments.deinit(gpa);
     self.sections.deinit(gpa);
     self.relocs.deinit(gpa);
@@ -268,14 +273,13 @@ fn writeLoadCommands(self: *DebugSymbols, macho_file: *MachO) !struct { usize, u
     const buffer = try gpa.alloc(u8, needed_size);
     defer gpa.free(buffer);
 
-    var stream = std.io.fixedBufferStream(buffer);
-    const writer = stream.writer();
+    var writer: Writer = .fixed(buffer);
 
     var ncmds: usize = 0;
 
     // UUID comes first presumably to speed up lookup by the consumer like lldb.
     @memcpy(&self.uuid_cmd.uuid, &macho_file.uuid_cmd.uuid);
-    try writer.writeStruct(self.uuid_cmd);
+    try writer.writeStruct(self.uuid_cmd, .little);
     ncmds += 1;
 
     // Segment and section load commands
@@ -288,11 +292,11 @@ fn writeLoadCommands(self: *DebugSymbols, macho_file: *MachO) !struct { usize, u
             var out_seg = seg;
             out_seg.fileoff = 0;
             out_seg.filesize = 0;
-            try writer.writeStruct(out_seg);
+            try writer.writeStruct(out_seg, .little);
             for (slice.items(.header)[sect_id..][0..seg.nsects]) |header| {
                 var out_header = header;
                 out_header.offset = 0;
-                try writer.writeStruct(out_header);
+                try writer.writeStruct(out_header, .little);
             }
             sect_id += seg.nsects;
         }
@@ -301,21 +305,21 @@ fn writeLoadCommands(self: *DebugSymbols, macho_file: *MachO) !struct { usize, u
         // Next, commit DSYM's __LINKEDIT and __DWARF segments headers.
         sect_id = 0;
         for (self.segments.items) |seg| {
-            try writer.writeStruct(seg);
+            try writer.writeStruct(seg, .little);
             for (self.sections.items[sect_id..][0..seg.nsects]) |header| {
-                try writer.writeStruct(header);
+                try writer.writeStruct(header, .little);
             }
             sect_id += seg.nsects;
         }
         ncmds += self.segments.items.len;
     }
 
-    try writer.writeStruct(self.symtab_cmd);
+    try writer.writeStruct(self.symtab_cmd, .little);
     ncmds += 1;
 
-    assert(stream.pos == needed_size);
+    assert(writer.end == needed_size);
 
-    try self.file.pwriteAll(buffer, @sizeOf(macho.mach_header_64));
+    try self.file.?.pwriteAll(buffer, @sizeOf(macho.mach_header_64));
 
     return .{ ncmds, buffer.len };
 }
@@ -341,10 +345,11 @@ fn writeHeader(self: *DebugSymbols, macho_file: *MachO, ncmds: usize, sizeofcmds
 
     log.debug("writing Mach-O header {}", .{header});
 
-    try self.file.pwriteAll(mem.asBytes(&header), 0);
+    try self.file.?.pwriteAll(mem.asBytes(&header), 0);
 }
 
 fn allocatedSize(self: *DebugSymbols, start: u64) u64 {
+    if (start == 0) return 0;
     const seg = self.getDwarfSegmentPtr();
     assert(start >= seg.fileoff);
     var min_pos: u64 = std.math.maxInt(u64);
@@ -382,24 +387,23 @@ pub fn writeSymtab(self: *DebugSymbols, off: u32, macho_file: *MachO) !u32 {
     cmd.symoff = off;
 
     try self.symtab.resize(gpa, cmd.nsyms);
-    try self.strtab.ensureUnusedCapacity(gpa, cmd.strsize - 1);
+    try self.strtab.resize(gpa, cmd.strsize);
+    self.strtab.items[0] = 0;
 
     if (macho_file.getZigObject()) |zo| {
         zo.writeSymtab(macho_file, self);
     }
     for (macho_file.objects.items) |index| {
-        try macho_file.getFile(index).?.writeSymtab(macho_file, self);
+        macho_file.getFile(index).?.writeSymtab(macho_file, self);
     }
     for (macho_file.dylibs.items) |index| {
-        try macho_file.getFile(index).?.writeSymtab(macho_file, self);
+        macho_file.getFile(index).?.writeSymtab(macho_file, self);
     }
     if (macho_file.getInternalObject()) |internal| {
         internal.writeSymtab(macho_file, self);
     }
 
-    assert(self.strtab.items.len == cmd.strsize);
-
-    try self.file.pwriteAll(mem.sliceAsBytes(self.symtab.items), cmd.symoff);
+    try self.file.?.pwriteAll(@ptrCast(self.symtab.items), cmd.symoff);
 
     return off + cmd.nsyms * @sizeOf(macho.nlist_64);
 }
@@ -407,15 +411,15 @@ pub fn writeSymtab(self: *DebugSymbols, off: u32, macho_file: *MachO) !u32 {
 pub fn writeStrtab(self: *DebugSymbols, off: u32) !u32 {
     const cmd = &self.symtab_cmd;
     cmd.stroff = off;
-    try self.file.pwriteAll(self.strtab.items, cmd.stroff);
+    try self.file.?.pwriteAll(self.strtab.items, cmd.stroff);
     return off + cmd.strsize;
 }
 
 pub fn getSectionIndexes(self: *DebugSymbols, segment_index: u8) struct { start: u8, end: u8 } {
     var start: u8 = 0;
-    const nsects = for (self.segments.items, 0..) |seg, i| {
-        if (i == segment_index) break @as(u8, @intCast(seg.nsects));
-        start += @as(u8, @intCast(seg.nsects));
+    const nsects: u8 = for (self.segments.items, 0..) |seg, i| {
+        if (i == segment_index) break @intCast(seg.nsects);
+        start += @intCast(seg.nsects);
     } else 0;
     return .{ .start = start, .end = start + nsects };
 }
@@ -455,8 +459,9 @@ const math = std.math;
 const mem = std.mem;
 const padToIdeal = MachO.padToIdeal;
 const trace = @import("../../tracy.zig").trace;
+const Writer = std.Io.Writer;
 
 const Allocator = mem.Allocator;
 const MachO = @import("../MachO.zig");
 const StringTable = @import("../StringTable.zig");
-const Type = @import("../../type.zig").Type;
+const Type = @import("../../Type.zig");

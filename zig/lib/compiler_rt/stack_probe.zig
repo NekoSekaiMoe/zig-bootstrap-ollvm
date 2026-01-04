@@ -1,31 +1,26 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const common = @import("common.zig");
 const os_tag = builtin.os.tag;
 const arch = builtin.cpu.arch;
 const abi = builtin.abi;
-const is_test = builtin.is_test;
 
-const is_gnu = abi.isGnu();
-const is_mingw = os_tag == .windows and is_gnu;
-
-const linkage: std.builtin.GlobalLinkage = if (builtin.is_test) .internal else .weak;
-const strong_linkage: std.builtin.GlobalLinkage = if (builtin.is_test) .internal else .strong;
-pub const panic = @import("common.zig").panic;
+pub const panic = common.panic;
 
 comptime {
     if (builtin.os.tag == .windows) {
         // Default stack-probe functions emitted by LLVM
-        if (is_mingw) {
-            @export(_chkstk, .{ .name = "_alloca", .linkage = strong_linkage });
-            @export(___chkstk_ms, .{ .name = "___chkstk_ms", .linkage = strong_linkage });
-
-            if (arch.isAARCH64()) {
-                @export(__chkstk, .{ .name = "__chkstk", .linkage = strong_linkage });
-            }
+        if (builtin.target.isMinGW()) {
+            @export(&_chkstk, .{ .name = "_alloca", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&__chkstk, .{ .name = "__chkstk", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&___chkstk, .{ .name = "__alloca", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&___chkstk, .{ .name = "___chkstk", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&__chkstk_ms, .{ .name = "__chkstk_ms", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&___chkstk_ms, .{ .name = "___chkstk_ms", .linkage = common.linkage, .visibility = common.visibility });
         } else if (!builtin.link_libc) {
             // This symbols are otherwise exported by MSVCRT.lib
-            @export(_chkstk, .{ .name = "_chkstk", .linkage = strong_linkage });
-            @export(__chkstk, .{ .name = "__chkstk", .linkage = strong_linkage });
+            @export(&_chkstk, .{ .name = "_chkstk", .linkage = common.linkage, .visibility = common.visibility });
+            @export(&__chkstk, .{ .name = "__chkstk", .linkage = common.linkage, .visibility = common.visibility });
         }
     }
 
@@ -33,14 +28,14 @@ comptime {
         .x86,
         .x86_64,
         => {
-            @export(zig_probe_stack, .{ .name = "__zig_probe_stack", .linkage = linkage });
+            @export(&zig_probe_stack, .{ .name = "__zig_probe_stack", .linkage = common.linkage, .visibility = common.visibility });
         },
         else => {},
     }
 }
 
 // Zig's own stack-probe routine (available only on x86 and x86_64)
-pub fn zig_probe_stack() callconv(.Naked) void {
+pub fn zig_probe_stack() callconv(.naked) void {
     @setRuntimeSafety(false);
 
     // Versions of the Linux kernel before 5.1 treat any access below SP as
@@ -100,25 +95,54 @@ fn win_probe_stack_only() void {
     @setRuntimeSafety(false);
 
     switch (arch) {
+        .thumb => {
+            asm volatile (
+                \\ lsl r4, r4, #2
+                \\ mov r12, sp
+                \\ push {r5, r6}
+                \\ mov r5, r4
+                \\1:
+                \\ sub r12, r12, #4096
+                \\ subs r5, r5, #4096
+                \\ ldr r6, [r12]
+                \\ bgt 1b
+                \\ pop {r5, r6}
+                \\ bx lr
+            );
+        },
+        .aarch64 => {
+            asm volatile (
+                \\        lsl    x16, x15, #4
+                \\        mov    x17, sp
+                \\1:
+                \\
+                \\        sub    x17, x17, 4096
+                \\        subs   x16, x16, 4096
+                \\        ldr    xzr, [x17]
+                \\        b.gt   1b
+                \\
+                \\        ret
+            );
+        },
         .x86_64 => {
             asm volatile (
-                \\         push   %%rcx
-                \\         push   %%rax
-                \\         cmp    $0x1000,%%rax
-                \\         lea    24(%%rsp),%%rcx
+                \\         pushq  %%rcx
+                \\         pushq  %%rax
+                \\         cmpq   $0x1000,%%rax
+                \\         leaq   24(%%rsp),%%rcx
                 \\         jb     1f
                 \\ 2:
-                \\         sub    $0x1000,%%rcx
-                \\         test   %%rcx,(%%rcx)
-                \\         sub    $0x1000,%%rax
-                \\         cmp    $0x1000,%%rax
+                \\         subq   $0x1000,%%rcx
+                \\         testq  %%rcx,(%%rcx)
+                \\         subq   $0x1000,%%rax
+                \\         cmpq   $0x1000,%%rax
                 \\         ja     2b
                 \\ 1:
-                \\         sub    %%rax,%%rcx
-                \\         test   %%rcx,(%%rcx)
-                \\         pop    %%rax
-                \\         pop    %%rcx
-                \\         ret
+                \\         subq   %%rax,%%rcx
+                \\         testq  %%rcx,(%%rcx)
+                \\         popq   %%rax
+                \\         popq   %%rcx
+                \\         retq
             );
         },
         .x86 => {
@@ -144,21 +168,6 @@ fn win_probe_stack_only() void {
         },
         else => {},
     }
-    if (comptime arch.isAARCH64()) {
-        // NOTE: page size hardcoded to 4096 for now
-        asm volatile (
-            \\        lsl    x16, x15, #4
-            \\        mov    x17, sp
-            \\1:
-            \\
-            \\        sub    x17, x17, 4096
-            \\        subs   x16, x16, 4096
-            \\        ldr    xzr, [x17]
-            \\        b.gt   1b
-            \\
-            \\        ret
-        );
-    }
 
     unreachable;
 }
@@ -169,26 +178,26 @@ fn win_probe_stack_adjust_sp() void {
     switch (arch) {
         .x86_64 => {
             asm volatile (
-                \\         push   %%rcx
-                \\         cmp    $0x1000,%%rax
-                \\         lea    16(%%rsp),%%rcx
+                \\         pushq  %%rcx
+                \\         cmpq   $0x1000,%%rax
+                \\         leaq   16(%%rsp),%%rcx
                 \\         jb     1f
                 \\ 2:
-                \\         sub    $0x1000,%%rcx
-                \\         test   %%rcx,(%%rcx)
-                \\         sub    $0x1000,%%rax
-                \\         cmp    $0x1000,%%rax
+                \\         subq   $0x1000,%%rcx
+                \\         testq  %%rcx,(%%rcx)
+                \\         subq   $0x1000,%%rax
+                \\         cmpq   $0x1000,%%rax
                 \\         ja     2b
                 \\ 1:
-                \\         sub    %%rax,%%rcx
-                \\         test   %%rcx,(%%rcx)
+                \\         subq   %%rax,%%rcx
+                \\         testq  %%rcx,(%%rcx)
                 \\
-                \\         lea    8(%%rsp),%%rax
-                \\         mov    %%rcx,%%rsp
-                \\         mov    -8(%%rax),%%rcx
-                \\         push   (%%rax)
-                \\         sub    %%rsp,%%rax
-                \\         ret
+                \\         leaq   8(%%rsp),%%rax
+                \\         movq   %%rcx,%%rsp
+                \\         movq   -8(%%rax),%%rcx
+                \\         pushq  (%%rax)
+                \\         subq   %%rsp,%%rax
+                \\         retq
             );
         },
         .x86 => {
@@ -234,13 +243,13 @@ fn win_probe_stack_adjust_sp() void {
 // ___chkstk (__alloca) | yes    | yes    |
 // ___chkstk_ms         | no     | no     |
 
-pub fn _chkstk() callconv(.Naked) void {
+pub fn _chkstk() callconv(.naked) void {
     @setRuntimeSafety(false);
     @call(.always_inline, win_probe_stack_adjust_sp, .{});
 }
-pub fn __chkstk() callconv(.Naked) void {
+pub fn __chkstk() callconv(.naked) void {
     @setRuntimeSafety(false);
-    if (comptime arch.isAARCH64()) {
+    if (arch == .thumb or arch == .aarch64) {
         @call(.always_inline, win_probe_stack_only, .{});
     } else switch (arch) {
         .x86 => @call(.always_inline, win_probe_stack_adjust_sp, .{}),
@@ -248,15 +257,15 @@ pub fn __chkstk() callconv(.Naked) void {
         else => unreachable,
     }
 }
-pub fn ___chkstk() callconv(.Naked) void {
+pub fn ___chkstk() callconv(.naked) void {
     @setRuntimeSafety(false);
     @call(.always_inline, win_probe_stack_adjust_sp, .{});
 }
-pub fn __chkstk_ms() callconv(.Naked) void {
+pub fn __chkstk_ms() callconv(.naked) void {
     @setRuntimeSafety(false);
     @call(.always_inline, win_probe_stack_only, .{});
 }
-pub fn ___chkstk_ms() callconv(.Naked) void {
+pub fn ___chkstk_ms() callconv(.naked) void {
     @setRuntimeSafety(false);
     @call(.always_inline, win_probe_stack_only, .{});
 }

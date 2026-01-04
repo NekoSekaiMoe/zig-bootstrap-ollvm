@@ -1,28 +1,48 @@
 const std = @import("std.zig");
 const builtin = @import("builtin");
-
+const assert = std.debug.assert;
 const math = std.math;
 
-pub const FailingAllocator = @import("testing/failing_allocator.zig").FailingAllocator;
+/// Provides deterministic randomness in unit tests.
+/// Initialized on startup. Read-only after that.
+pub var random_seed: u32 = 0;
+
+pub const FailingAllocator = @import("testing/FailingAllocator.zig");
+pub const failing_allocator = failing_allocator_instance.allocator();
+var failing_allocator_instance = FailingAllocator.init(base_allocator_instance.allocator(), .{
+    .fail_index = 0,
+});
+var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 
 /// This should only be used in temporary test programs.
 pub const allocator = allocator_instance.allocator();
-pub var allocator_instance = b: {
-    if (!builtin.is_test)
-        @compileError("Cannot use testing allocator outside of test block");
-    break :b std.heap.GeneralPurposeAllocator(.{}){};
+pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
+    .stack_trace_frames = if (std.debug.sys_can_stack_trace) 10 else 0,
+    .resize_stack_traces = true,
+    // A unique value so that when a default-constructed
+    // GeneralPurposeAllocator is incorrectly passed to testing allocator, or
+    // vice versa, panic occurs.
+    .canary = @truncate(0x2731e675c3a701ba),
+}) = b: {
+    if (!builtin.is_test) @compileError("testing allocator used when not testing");
+    break :b .init;
 };
 
-pub const failing_allocator = failing_allocator_instance.allocator();
-pub var failing_allocator_instance = FailingAllocator.init(base_allocator_instance.allocator(), .{ .fail_index = 0 });
-
-pub var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
+pub var io_instance: std.Io.Threaded = undefined;
+pub const io = io_instance.io();
 
 /// TODO https://github.com/ziglang/zig/issues/5738
 pub var log_level = std.log.Level.warn;
 
 // Disable printing in tests for simple backends.
-pub const backend_can_print = builtin.zig_backend != .stage2_spirv64;
+pub const backend_can_print = switch (builtin.zig_backend) {
+    .stage2_aarch64,
+    .stage2_powerpc,
+    .stage2_riscv64,
+    .stage2_spirv,
+    => false,
+    else => true,
+};
 
 fn print(comptime fmt: []const u8, args: anytype) void {
     if (@inComptime()) {
@@ -37,14 +57,14 @@ fn print(comptime fmt: []const u8, args: anytype) void {
 pub fn expectError(expected_error: anyerror, actual_error_union: anytype) !void {
     if (actual_error_union) |actual_payload| {
         print("expected error.{s}, found {any}\n", .{ @errorName(expected_error), actual_payload });
-        return error.TestUnexpectedError;
+        return error.TestExpectedError;
     } else |actual_error| {
         if (expected_error != actual_error) {
             print("expected error.{s}, found error.{s}\n", .{
                 @errorName(expected_error),
                 @errorName(actual_error),
             });
-            return error.TestExpectedError;
+            return error.TestUnexpectedError;
         }
     }
 }
@@ -60,49 +80,49 @@ pub inline fn expectEqual(expected: anytype, actual: anytype) !void {
 
 fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
     switch (@typeInfo(@TypeOf(actual))) {
-        .NoReturn,
-        .Opaque,
-        .Frame,
-        .AnyFrame,
+        .noreturn,
+        .@"opaque",
+        .frame,
+        .@"anyframe",
         => @compileError("value of type " ++ @typeName(@TypeOf(actual)) ++ " encountered"),
 
-        .Undefined,
-        .Null,
-        .Void,
+        .undefined,
+        .null,
+        .void,
         => return,
 
-        .Type => {
+        .type => {
             if (actual != expected) {
                 print("expected type {s}, found type {s}\n", .{ @typeName(expected), @typeName(actual) });
                 return error.TestExpectedEqual;
             }
         },
 
-        .Bool,
-        .Int,
-        .Float,
-        .ComptimeFloat,
-        .ComptimeInt,
-        .EnumLiteral,
-        .Enum,
-        .Fn,
-        .ErrorSet,
+        .bool,
+        .int,
+        .float,
+        .comptime_float,
+        .comptime_int,
+        .enum_literal,
+        .@"enum",
+        .@"fn",
+        .error_set,
         => {
             if (actual != expected) {
-                print("expected {}, found {}\n", .{ expected, actual });
+                print("expected {any}, found {any}\n", .{ expected, actual });
                 return error.TestExpectedEqual;
             }
         },
 
-        .Pointer => |pointer| {
+        .pointer => |pointer| {
             switch (pointer.size) {
-                .One, .Many, .C => {
+                .one, .many, .c => {
                     if (actual != expected) {
                         print("expected {*}, found {*}\n", .{ expected, actual });
                         return error.TestExpectedEqual;
                     }
                 },
-                .Slice => {
+                .slice => {
                     if (actual.ptr != expected.ptr) {
                         print("expected slice ptr {*}, found {*}\n", .{ expected.ptr, actual.ptr });
                         return error.TestExpectedEqual;
@@ -115,29 +135,34 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
             }
         },
 
-        .Array => |array| try expectEqualSlices(array.child, &expected, &actual),
+        .array => |array| try expectEqualSlices(array.child, &expected, &actual),
 
-        .Vector => |info| {
-            var i: usize = 0;
-            while (i < info.len) : (i += 1) {
-                if (!std.meta.eql(expected[i], actual[i])) {
-                    print("index {} incorrect. expected {}, found {}\n", .{
-                        i, expected[i], actual[i],
-                    });
-                    return error.TestExpectedEqual;
-                }
-            }
+        .vector => |info| {
+            const expect_array: [info.len]info.child = expected;
+            const actual_array: [info.len]info.child = actual;
+            try expectEqualSlices(info.child, &expect_array, &actual_array);
         },
 
-        .Struct => |structType| {
+        .@"struct" => |structType| {
             inline for (structType.fields) |field| {
                 try expectEqual(@field(expected, field.name), @field(actual, field.name));
             }
         },
 
-        .Union => |union_info| {
+        .@"union" => |union_info| {
             if (union_info.tag_type == null) {
-                @compileError("Unable to compare untagged union values");
+                const first_size = @bitSizeOf(union_info.fields[0].type);
+                inline for (union_info.fields) |field| {
+                    if (@bitSizeOf(field.type) != first_size) {
+                        @compileError("Unable to compare untagged unions with varying field sizes for type " ++ @typeName(@TypeOf(actual)));
+                    }
+                }
+
+                const BackingInt = std.meta.Int(.unsigned, @bitSizeOf(T));
+                return expectEqual(
+                    @as(BackingInt, @bitCast(expected)),
+                    @as(BackingInt, @bitCast(actual)),
+                );
             }
 
             const Tag = std.meta.Tag(@TypeOf(expected));
@@ -147,21 +172,13 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
 
             try expectEqual(expectedTag, actualTag);
 
-            // we only reach this loop if the tags are equal
-            inline for (std.meta.fields(@TypeOf(actual))) |fld| {
-                if (std.mem.eql(u8, fld.name, @tagName(actualTag))) {
-                    try expectEqual(@field(expected, fld.name), @field(actual, fld.name));
-                    return;
-                }
+            // we only reach this switch if the tags are equal
+            switch (expected) {
+                inline else => |val, tag| try expectEqual(val, @field(actual, @tagName(tag))),
             }
-
-            // we iterate over *all* union fields
-            // => we should never get here as the loop above is
-            //    including all possible values.
-            unreachable;
         },
 
-        .Optional => {
+        .optional => {
             if (expected) |expected_payload| {
                 if (actual) |actual_payload| {
                     try expectEqual(expected_payload, actual_payload);
@@ -177,7 +194,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
             }
         },
 
-        .ErrorUnion => {
+        .error_union => {
             if (expected) |expected_payload| {
                 if (actual) |actual_payload| {
                     try expectEqual(expected_payload, actual_payload);
@@ -208,11 +225,53 @@ test "expectEqual.union(enum)" {
     try expectEqual(a10, a10);
 }
 
+test "expectEqual union with comptime-only field" {
+    const U = union(enum) {
+        a: void,
+        b: void,
+        c: comptime_int,
+    };
+
+    try expectEqual(U{ .a = {} }, .a);
+}
+
+test "expectEqual nested array" {
+    const a = [2][2]f32{
+        [_]f32{ 1.0, 0.0 },
+        [_]f32{ 0.0, 1.0 },
+    };
+
+    const b = [2][2]f32{
+        [_]f32{ 1.0, 0.0 },
+        [_]f32{ 0.0, 1.0 },
+    };
+
+    try expectEqual(a, b);
+}
+
+test "expectEqual vector" {
+    const a: @Vector(4, u32) = @splat(4);
+    const b: @Vector(4, u32) = @splat(4);
+
+    try expectEqual(a, b);
+}
+
+test "expectEqual null" {
+    const a = .{null};
+    const b = @Vector(1, ?*u8){null};
+
+    try expectEqual(a, b);
+}
+
 /// This function is intended to be used only in tests. When the formatted result of the template
 /// and its arguments does not equal the expected text, it prints diagnostics to stderr to show how
-/// they are not equal, then returns an error. It depends on `expectEqualStrings()` for printing
+/// they are not equal, then returns an error. It depends on `expectEqualStrings` for printing
 /// diagnostics.
 pub fn expectFmt(expected: []const u8, comptime template: []const u8, args: anytype) !void {
+    if (@inComptime()) {
+        var buffer: [std.fmt.count(template, args)]u8 = undefined;
+        return expectEqualStrings(expected, try std.fmt.bufPrint(&buffer, template, args));
+    }
     const actual = try std.fmt.allocPrint(allocator, template, args);
     defer allocator.free(actual);
     return expectEqualStrings(expected, actual);
@@ -231,12 +290,12 @@ pub inline fn expectApproxEqAbs(expected: anytype, actual: anytype, tolerance: a
 
 fn expectApproxEqAbsInner(comptime T: type, expected: T, actual: T, tolerance: T) !void {
     switch (@typeInfo(T)) {
-        .Float => if (!math.approxEqAbs(T, expected, actual, tolerance)) {
+        .float => if (!math.approxEqAbs(T, expected, actual, tolerance)) {
             print("actual {}, not within absolute tolerance {} of expected {}\n", .{ actual, tolerance, expected });
             return error.TestExpectedApproxEqAbs;
         },
 
-        .ComptimeFloat => @compileError("Cannot approximately compare two comptime_float values"),
+        .comptime_float => @compileError("Cannot approximately compare two comptime_float values"),
 
         else => @compileError("Unable to compare non floating point values"),
     }
@@ -267,12 +326,12 @@ pub inline fn expectApproxEqRel(expected: anytype, actual: anytype, tolerance: a
 
 fn expectApproxEqRelInner(comptime T: type, expected: T, actual: T, tolerance: T) !void {
     switch (@typeInfo(T)) {
-        .Float => if (!math.approxEqRel(T, expected, actual, tolerance)) {
+        .float => if (!math.approxEqRel(T, expected, actual, tolerance)) {
             print("actual {}, not within relative tolerance {} of expected {}\n", .{ actual, tolerance, expected });
             return error.TestExpectedApproxEqRel;
         },
 
-        .ComptimeFloat => @compileError("Cannot approximately compare two comptime_float values"),
+        .comptime_float => @compileError("Cannot approximately compare two comptime_float values"),
 
         else => @compileError("Unable to compare non floating point values"),
     }
@@ -296,12 +355,9 @@ test expectApproxEqRel {
 /// This function is intended to be used only in tests. When the two slices are not
 /// equal, prints diagnostics to stderr to show exactly how they are not equal (with
 /// the differences highlighted in red), then returns a test failure error.
-/// The colorized output is optional and controlled by the return of `std.io.tty.detectConfig()`.
+/// The colorized output is optional and controlled by the return of `std.Io.tty.Config.detect`.
 /// If your inputs are UTF-8 encoded strings, consider calling `expectEqualStrings` instead.
 pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
-    if (expected.ptr == actual.ptr and expected.len == actual.len) {
-        return;
-    }
     const diff_index: usize = diff_index: {
         const shortest = @min(expected.len, actual.len);
         var index: usize = 0;
@@ -310,12 +366,22 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
         }
         break :diff_index if (expected.len == actual.len) return else shortest;
     };
+    if (!backend_can_print) return error.TestExpectedEqual;
+    const stderr_w, const ttyconf = std.debug.lockStderrWriter(&.{});
+    defer std.debug.unlockStderrWriter();
+    failEqualSlices(T, expected, actual, diff_index, stderr_w, ttyconf) catch {};
+    return error.TestExpectedEqual;
+}
 
-    if (!backend_can_print) {
-        return error.TestExpectedEqual;
-    }
-
-    print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
+fn failEqualSlices(
+    comptime T: type,
+    expected: []const T,
+    actual: []const T,
+    diff_index: usize,
+    w: *std.Io.Writer,
+    ttyconf: std.Io.tty.Config,
+) !void {
+    try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
     // TODO: Should this be configurable by the caller?
     const max_lines: usize = 16;
@@ -333,8 +399,6 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
     const actual_window = actual[window_start..@min(actual.len, window_start + max_window_size)];
     const actual_truncated = window_start + actual_window.len < actual.len;
 
-    const stderr = std.io.getStdErr();
-    const ttyconf = std.io.tty.detectConfig(stderr);
     var differ = if (T == u8) BytesDiffer{
         .expected = expected_window,
         .actual = actual_window,
@@ -350,47 +414,47 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
     // that is usually useful.
     const index_fmt = if (T == u8) "0x{X}" else "{}";
 
-    print("\n============ expected this output: =============  len: {} (0x{X})\n\n", .{ expected.len, expected.len });
+    try w.print("\n============ expected this output: =============  len: {} (0x{X})\n\n", .{ expected.len, expected.len });
     if (window_start > 0) {
         if (T == u8) {
-            print("... truncated, start index: " ++ index_fmt ++ " ...\n", .{window_start});
+            try w.print("... truncated, start index: " ++ index_fmt ++ " ...\n", .{window_start});
         } else {
-            print("... truncated ...\n", .{});
+            try w.print("... truncated ...\n", .{});
         }
     }
-    differ.write(stderr.writer()) catch {};
+    differ.write(w) catch {};
     if (expected_truncated) {
         const end_offset = window_start + expected_window.len;
         const num_missing_items = expected.len - (window_start + expected_window.len);
         if (T == u8) {
-            print("... truncated, indexes [" ++ index_fmt ++ "..] not shown, remaining bytes: " ++ index_fmt ++ " ...\n", .{ end_offset, num_missing_items });
+            try w.print("... truncated, indexes [" ++ index_fmt ++ "..] not shown, remaining bytes: " ++ index_fmt ++ " ...\n", .{ end_offset, num_missing_items });
         } else {
-            print("... truncated, remaining items: " ++ index_fmt ++ " ...\n", .{num_missing_items});
+            try w.print("... truncated, remaining items: " ++ index_fmt ++ " ...\n", .{num_missing_items});
         }
     }
 
     // now reverse expected/actual and print again
     differ.expected = actual_window;
     differ.actual = expected_window;
-    print("\n============= instead found this: ==============  len: {} (0x{X})\n\n", .{ actual.len, actual.len });
+    try w.print("\n============= instead found this: ==============  len: {} (0x{X})\n\n", .{ actual.len, actual.len });
     if (window_start > 0) {
         if (T == u8) {
-            print("... truncated, start index: " ++ index_fmt ++ " ...\n", .{window_start});
+            try w.print("... truncated, start index: " ++ index_fmt ++ " ...\n", .{window_start});
         } else {
-            print("... truncated ...\n", .{});
+            try w.print("... truncated ...\n", .{});
         }
     }
-    differ.write(stderr.writer()) catch {};
+    differ.write(w) catch {};
     if (actual_truncated) {
         const end_offset = window_start + actual_window.len;
         const num_missing_items = actual.len - (window_start + actual_window.len);
         if (T == u8) {
-            print("... truncated, indexes [" ++ index_fmt ++ "..] not shown, remaining bytes: " ++ index_fmt ++ " ...\n", .{ end_offset, num_missing_items });
+            try w.print("... truncated, indexes [" ++ index_fmt ++ "..] not shown, remaining bytes: " ++ index_fmt ++ " ...\n", .{ end_offset, num_missing_items });
         } else {
-            print("... truncated, remaining items: " ++ index_fmt ++ " ...\n", .{num_missing_items});
+            try w.print("... truncated, remaining items: " ++ index_fmt ++ " ...\n", .{num_missing_items});
         }
     }
-    print("\n================================================\n\n", .{});
+    try w.print("\n================================================\n\n", .{});
 
     return error.TestExpectedEqual;
 }
@@ -400,16 +464,16 @@ fn SliceDiffer(comptime T: type) type {
         start_index: usize,
         expected: []const T,
         actual: []const T,
-        ttyconf: std.io.tty.Config,
+        ttyconf: std.Io.tty.Config,
 
         const Self = @This();
 
-        pub fn write(self: Self, writer: anytype) !void {
+        pub fn write(self: Self, writer: *std.Io.Writer) !void {
             for (self.expected, 0..) |value, i| {
                 const full_index = self.start_index + i;
                 const diff = if (i < self.actual.len) !std.meta.eql(self.actual[i], value) else true;
                 if (diff) try self.ttyconf.setColor(writer, .red);
-                if (@typeInfo(T) == .Pointer) {
+                if (@typeInfo(T) == .pointer) {
                     try writer.print("[{}]{*}: {any}\n", .{ full_index, value, value });
                 } else {
                     try writer.print("[{}]: {any}\n", .{ full_index, value });
@@ -423,9 +487,9 @@ fn SliceDiffer(comptime T: type) type {
 const BytesDiffer = struct {
     expected: []const u8,
     actual: []const u8,
-    ttyconf: std.io.tty.Config,
+    ttyconf: std.Io.tty.Config,
 
-    pub fn write(self: BytesDiffer, writer: anytype) !void {
+    pub fn write(self: BytesDiffer, writer: *std.Io.Writer) !void {
         var expected_iterator = std.mem.window(u8, self.expected, 16, 16);
         var row: usize = 0;
         while (expected_iterator.next()) |chunk| {
@@ -442,7 +506,7 @@ const BytesDiffer = struct {
             if (chunk.len < 16) {
                 var missing_columns = (16 - chunk.len) * 3;
                 if (chunk.len < 8) missing_columns += 1;
-                try writer.writeByteNTimes(' ', missing_columns);
+                try writer.splatByteAll(' ', missing_columns);
             }
             for (chunk, 0..) |byte, col| {
                 const diff = diffs.isSet(col);
@@ -471,7 +535,7 @@ const BytesDiffer = struct {
         }
     }
 
-    fn writeDiff(self: BytesDiffer, writer: anytype, comptime fmt: []const u8, args: anytype, diff: bool) !void {
+    fn writeDiff(self: BytesDiffer, writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype, diff: bool) !void {
         if (diff) try self.ttyconf.setColor(writer, .red);
         try writer.print(fmt, args);
         if (diff) try self.ttyconf.setColor(writer, .reset);
@@ -499,10 +563,10 @@ pub fn expectEqualSentinel(comptime T: type, comptime sentinel: T, expected: [:s
 
     const expected_value_sentinel = blk: {
         switch (@typeInfo(@TypeOf(expected))) {
-            .Pointer => {
+            .pointer => {
                 break :blk expected[expected.len];
             },
-            .Array => |array_info| {
+            .array => |array_info| {
                 const indexable_outside_of_bounds = @as([]const array_info.child, &expected);
                 break :blk indexable_outside_of_bounds[indexable_outside_of_bounds.len];
             },
@@ -512,10 +576,10 @@ pub fn expectEqualSentinel(comptime T: type, comptime sentinel: T, expected: [:s
 
     const actual_value_sentinel = blk: {
         switch (@typeInfo(@TypeOf(actual))) {
-            .Pointer => {
+            .pointer => {
                 break :blk actual[actual.len];
             },
-            .Array => |array_info| {
+            .array => |array_info| {
                 const indexable_outside_of_bounds = @as([]const array_info.child, &actual);
                 break :blk indexable_outside_of_bounds[indexable_outside_of_bounds.len];
             },
@@ -556,18 +620,18 @@ pub const TmpDir = struct {
     }
 };
 
-pub fn tmpDir(opts: std.fs.Dir.OpenDirOptions) TmpDir {
+pub fn tmpDir(opts: std.fs.Dir.OpenOptions) TmpDir {
     var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
     _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
 
     const cwd = std.fs.cwd();
-    var cache_dir = cwd.makeOpenPath("zig-cache", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open zig-cache dir");
+    var cache_dir = cwd.makeOpenPath(".zig-cache", .{}) catch
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
     defer cache_dir.close();
     const parent_dir = cache_dir.makeOpenPath("tmp", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open zig-cache/tmp dir");
+        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
     const dir = parent_dir.makeOpenPath(&sub_path, opts) catch
         @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
 
@@ -578,29 +642,13 @@ pub fn tmpDir(opts: std.fs.Dir.OpenDirOptions) TmpDir {
     };
 }
 
-test "expectEqual nested array" {
-    const a = [2][2]f32{
-        [_]f32{ 1.0, 0.0 },
-        [_]f32{ 0.0, 1.0 },
-    };
-
-    const b = [2][2]f32{
-        [_]f32{ 1.0, 0.0 },
-        [_]f32{ 0.0, 1.0 },
-    };
-
-    try expectEqual(a, b);
-}
-
-test "expectEqual vector" {
-    const a: @Vector(4, u32) = @splat(4);
-    const b: @Vector(4, u32) = @splat(4);
-
-    try expectEqual(a, b);
-}
-
 pub fn expectEqualStrings(expected: []const u8, actual: []const u8) !void {
     if (std.mem.indexOfDiff(u8, actual, expected)) |diff_index| {
+        if (@inComptime()) {
+            @compileError(std.fmt.comptimePrint("\nexpected:\n{s}\nfound:\n{s}\ndifference starts at index {d}", .{
+                expected, actual, diff_index,
+            }));
+        }
         print("\n====== expected this output: =========\n", .{});
         printWithVisibleNewlines(expected);
         print("\n======== instead found this: =========\n", .{});
@@ -683,53 +731,53 @@ pub inline fn expectEqualDeep(expected: anytype, actual: anytype) error{TestExpe
 
 fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpectedEqual}!void {
     switch (@typeInfo(@TypeOf(actual))) {
-        .NoReturn,
-        .Opaque,
-        .Frame,
-        .AnyFrame,
+        .noreturn,
+        .@"opaque",
+        .frame,
+        .@"anyframe",
         => @compileError("value of type " ++ @typeName(@TypeOf(actual)) ++ " encountered"),
 
-        .Undefined,
-        .Null,
-        .Void,
+        .undefined,
+        .null,
+        .void,
         => return,
 
-        .Type => {
+        .type => {
             if (actual != expected) {
                 print("expected type {s}, found type {s}\n", .{ @typeName(expected), @typeName(actual) });
                 return error.TestExpectedEqual;
             }
         },
 
-        .Bool,
-        .Int,
-        .Float,
-        .ComptimeFloat,
-        .ComptimeInt,
-        .EnumLiteral,
-        .Enum,
-        .Fn,
-        .ErrorSet,
+        .bool,
+        .int,
+        .float,
+        .comptime_float,
+        .comptime_int,
+        .enum_literal,
+        .@"enum",
+        .@"fn",
+        .error_set,
         => {
             if (actual != expected) {
-                print("expected {}, found {}\n", .{ expected, actual });
+                print("expected {any}, found {any}\n", .{ expected, actual });
                 return error.TestExpectedEqual;
             }
         },
 
-        .Pointer => |pointer| {
+        .pointer => |pointer| {
             switch (pointer.size) {
                 // We have no idea what is behind those pointers, so the best we can do is `==` check.
-                .C, .Many => {
+                .c, .many => {
                     if (actual != expected) {
                         print("expected {*}, found {*}\n", .{ expected, actual });
                         return error.TestExpectedEqual;
                     }
                 },
-                .One => {
+                .one => {
                     // Length of those pointers are runtime value, so the best we can do is `==` check.
                     switch (@typeInfo(pointer.child)) {
-                        .Fn, .Opaque => {
+                        .@"fn", .@"opaque" => {
                             if (actual != expected) {
                                 print("expected {*}, found {*}\n", .{ expected, actual });
                                 return error.TestExpectedEqual;
@@ -738,7 +786,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
                         else => try expectEqualDeep(expected.*, actual.*),
                     }
                 },
-                .Slice => {
+                .slice => {
                     if (expected.len != actual.len) {
                         print("Slice len not the same, expected {d}, found {d}\n", .{ expected.len, actual.len });
                         return error.TestExpectedEqual;
@@ -756,7 +804,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .Array => |_| {
+        .array => |_| {
             if (expected.len != actual.len) {
                 print("Array len not the same, expected {d}, found {d}\n", .{ expected.len, actual.len });
                 return error.TestExpectedEqual;
@@ -772,13 +820,12 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .Vector => |info| {
-            if (info.len != @typeInfo(@TypeOf(actual)).Vector.len) {
-                print("Vector len not the same, expected {d}, found {d}\n", .{ info.len, @typeInfo(@TypeOf(actual)).Vector.len });
+        .vector => |info| {
+            if (info.len != @typeInfo(@TypeOf(actual)).vector.len) {
+                print("Vector len not the same, expected {d}, found {d}\n", .{ info.len, @typeInfo(@TypeOf(actual)).vector.len });
                 return error.TestExpectedEqual;
             }
-            var i: usize = 0;
-            while (i < info.len) : (i += 1) {
+            inline for (0..info.len) |i| {
                 expectEqualDeep(expected[i], actual[i]) catch |e| {
                     print("index {d} incorrect. expected {any}, found {any}\n", .{
                         i, expected[i], actual[i],
@@ -788,7 +835,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .Struct => |structType| {
+        .@"struct" => |structType| {
             inline for (structType.fields) |field| {
                 expectEqualDeep(@field(expected, field.name), @field(actual, field.name)) catch |e| {
                     print("Field {s} incorrect. expected {any}, found {any}\n", .{ field.name, @field(expected, field.name), @field(actual, field.name) });
@@ -797,9 +844,9 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .Union => |union_info| {
+        .@"union" => |union_info| {
             if (union_info.tag_type == null) {
-                @compileError("Unable to compare untagged union values");
+                @compileError("Unable to compare untagged union values for type " ++ @typeName(@TypeOf(actual)));
             }
 
             const Tag = std.meta.Tag(@TypeOf(expected));
@@ -809,7 +856,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
 
             try expectEqual(expectedTag, actualTag);
 
-            // we only reach this loop if the tags are equal
+            // we only reach this switch if the tags are equal
             switch (expected) {
                 inline else => |val, tag| {
                     try expectEqualDeep(val, @field(actual, @tagName(tag)));
@@ -817,7 +864,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .Optional => {
+        .optional => {
             if (expected) |expected_payload| {
                 if (actual) |actual_payload| {
                     try expectEqualDeep(expected_payload, actual_payload);
@@ -833,7 +880,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .ErrorUnion => {
+        .error_union => {
             if (expected) |expected_payload| {
                 if (actual) |actual_payload| {
                     try expectEqualDeep(expected_payload, actual_payload);
@@ -876,6 +923,18 @@ test "expectEqualDeep primitive type" {
         }.foo;
         try expectEqualDeep(fnType, fnType);
     }
+    // enum with formatter
+    {
+        const TestEnum = enum {
+            a,
+            b,
+
+            pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+                try writer.writeAll(@tagName(self));
+            }
+        };
+        try expectEqualDeep(TestEnum.b, TestEnum.b);
+    }
 }
 
 test "expectEqualDeep pointer" {
@@ -913,6 +972,19 @@ test "expectEqualDeep composite type" {
         try expectEqualDeep(a, b);
         try expectEqualDeep(&a, &b);
     }
+
+    // inferred union
+    const TestStruct2 = struct {
+        const A = union(enum) { b: B, c: C };
+        const B = struct {};
+        const C = struct { a: *const A };
+    };
+
+    const union1 = TestStruct2.A{ .b = .{} };
+    try expectEqualDeep(
+        TestStruct2.A{ .c = .{ .a = &union1 } },
+        TestStruct2.A{ .c = .{ .a = &union1 } },
+    );
 }
 
 fn printIndicatorLine(source: []const u8, indicator_index: usize) void {
@@ -1030,20 +1102,20 @@ test {
 /// }
 /// ```
 pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime test_fn: anytype, extra_args: anytype) !void {
-    switch (@typeInfo(@typeInfo(@TypeOf(test_fn)).Fn.return_type.?)) {
-        .ErrorUnion => |info| {
+    switch (@typeInfo(@typeInfo(@TypeOf(test_fn)).@"fn".return_type.?)) {
+        .error_union => |info| {
             if (info.payload != void) {
                 @compileError("Return type must be !void");
             }
         },
         else => @compileError("Return type must be !void"),
     }
-    if (@typeInfo(@TypeOf(extra_args)) != .Struct) {
+    if (@typeInfo(@TypeOf(extra_args)) != .@"struct") {
         @compileError("Expected tuple or struct argument, found " ++ @typeName(@TypeOf(extra_args)));
     }
 
     const ArgsTuple = std.meta.ArgsTuple(@TypeOf(test_fn));
-    const fn_args_fields = @typeInfo(ArgsTuple).Struct.fields;
+    const fn_args_fields = @typeInfo(ArgsTuple).@"struct".fields;
     if (fn_args_fields.len == 0 or fn_args_fields[0].type != std.mem.Allocator) {
         @compileError("The provided function must have an " ++ @typeName(std.mem.Allocator) ++ " as its first argument");
     }
@@ -1055,11 +1127,11 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
     // Setup the tuple that will actually be used with @call (we'll need to insert
     // the failing allocator in field @"0" before each @call)
     var args: ArgsTuple = undefined;
-    inline for (@typeInfo(@TypeOf(extra_args)).Struct.fields, 0..) |field, i| {
+    inline for (@typeInfo(@TypeOf(extra_args)).@"struct".fields, 0..) |field, i| {
         const arg_i_str = comptime str: {
             var str_buf: [100]u8 = undefined;
             const args_i = i + 1;
-            const str_len = std.fmt.formatIntBuf(&str_buf, args_i, 10, .lower, .{});
+            const str_len = std.fmt.printInt(&str_buf, args_i, 10, .lower, .{});
             break :str str_buf[0..str_len];
         };
         @field(args, arg_i_str) = @field(extra_args, field.name);
@@ -1088,8 +1160,9 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         } else |err| switch (err) {
             error.OutOfMemory => {
                 if (failing_allocator_inst.allocated_bytes != failing_allocator_inst.freed_bytes) {
+                    const tty_config = std.Io.tty.detectConfig(.stderr());
                     print(
-                        "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {}",
+                        "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}",
                         .{
                             fail_index,
                             needed_alloc_count,
@@ -1097,7 +1170,10 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
                             failing_allocator_inst.freed_bytes,
                             failing_allocator_inst.allocations,
                             failing_allocator_inst.deallocations,
-                            failing_allocator_inst.getStackTrace(),
+                            std.debug.FormatStackTrace{
+                                .stack_trace = failing_allocator_inst.getStackTrace(),
+                                .tty_config = tty_config,
+                            },
                         },
                     );
                     return error.MemoryLeakDetected;
@@ -1123,10 +1199,125 @@ pub fn refAllDeclsRecursive(comptime T: type) void {
     inline for (comptime std.meta.declarations(T)) |decl| {
         if (@TypeOf(@field(T, decl.name)) == type) {
             switch (@typeInfo(@field(T, decl.name))) {
-                .Struct, .Enum, .Union, .Opaque => refAllDeclsRecursive(@field(T, decl.name)),
+                .@"struct", .@"enum", .@"union", .@"opaque" => refAllDeclsRecursive(@field(T, decl.name)),
                 else => {},
             }
         }
         _ = &@field(T, decl.name);
     }
 }
+
+pub const FuzzInputOptions = struct {
+    corpus: []const []const u8 = &.{},
+};
+
+/// Inline to avoid coverage instrumentation.
+pub inline fn fuzz(
+    context: anytype,
+    comptime testOne: fn (context: @TypeOf(context), input: []const u8) anyerror!void,
+    options: FuzzInputOptions,
+) anyerror!void {
+    return @import("root").fuzz(context, testOne, options);
+}
+
+/// A `std.Io.Reader` that writes a predetermined list of buffers during `stream`.
+pub const Reader = struct {
+    calls: []const Call,
+    interface: std.Io.Reader,
+    next_call_index: usize,
+    next_offset: usize,
+    /// Further reduces how many bytes are written in each `stream` call.
+    artificial_limit: std.Io.Limit = .unlimited,
+
+    pub const Call = struct {
+        buffer: []const u8,
+    };
+
+    pub fn init(buffer: []u8, calls: []const Call) Reader {
+        return .{
+            .next_call_index = 0,
+            .next_offset = 0,
+            .interface = .{
+                .vtable = &.{ .stream = stream },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+            .calls = calls,
+        };
+    }
+
+    fn stream(io_r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+        if (r.calls.len - r.next_call_index == 0) return error.EndOfStream;
+        const call = r.calls[r.next_call_index];
+        const buffer = r.artificial_limit.sliceConst(limit.sliceConst(call.buffer[r.next_offset..]));
+        const n = try w.write(buffer);
+        r.next_offset += n;
+        if (call.buffer.len - r.next_offset == 0) {
+            r.next_call_index += 1;
+            r.next_offset = 0;
+        }
+        return n;
+    }
+};
+
+/// A `std.Io.Reader` that gets its data from another `std.Io.Reader`, and always
+/// writes to its own buffer (and returns 0) during `stream` and `readVec`.
+pub const ReaderIndirect = struct {
+    in: *std.Io.Reader,
+    interface: std.Io.Reader,
+
+    pub fn init(in: *std.Io.Reader, buffer: []u8) ReaderIndirect {
+        return .{
+            .in = in,
+            .interface = .{
+                .vtable = &.{
+                    .stream = stream,
+                    .readVec = readVec,
+                },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+        };
+    }
+
+    fn readVec(r: *std.Io.Reader, _: [][]u8) std.Io.Reader.Error!usize {
+        try streamInner(r);
+        return 0;
+    }
+
+    fn stream(r: *std.Io.Reader, _: *std.Io.Writer, _: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        try streamInner(r);
+        return 0;
+    }
+
+    fn streamInner(r: *std.Io.Reader) std.Io.Reader.Error!void {
+        const r_indirect: *ReaderIndirect = @alignCast(@fieldParentPtr("interface", r));
+
+        // If there's no room remaining in the buffer at all, make room.
+        if (r.buffer.len == r.end) {
+            try r.rebase(r.buffer.len);
+        }
+
+        var writer: std.Io.Writer = .{
+            .buffer = r.buffer,
+            .end = r.end,
+            .vtable = &.{
+                .drain = std.Io.Writer.unreachableDrain,
+                .rebase = std.Io.Writer.unreachableRebase,
+            },
+        };
+        defer r.end = writer.end;
+
+        r_indirect.in.streamExact(&writer, r.buffer.len - r.end) catch |err| switch (err) {
+            // Only forward EndOfStream if no new bytes were written to the buffer
+            error.EndOfStream => |e| if (r.end == writer.end) {
+                return e;
+            },
+            error.WriteFailed => unreachable,
+            else => |e| return e,
+        };
+    }
+};
