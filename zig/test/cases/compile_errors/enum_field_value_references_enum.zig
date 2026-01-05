@@ -1,0 +1,15 @@
+pub const Foo = enum(c_int) {
+    A = Foo.B,
+    C = D,
+
+    pub const B = 0;
+};
+export fn entry() void {
+    const s: Foo = Foo.E;
+    _ = s;
+}
+const D = 1;
+
+// error
+//
+// :1:5: error: dependency loop detected
